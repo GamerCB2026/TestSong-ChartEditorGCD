@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>FNF Test ChartEditorGCD</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #000;
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+
+    #controls-bar {
+      position: absolute;
+      top: 10px;
+      z-index: 10;
+      display: flex;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px 15px;
+      border-radius: 8px;
+      border: 1px solid #333;
+    }
+
+    input[type="file"], select, button {
+      background: #222;
+      color: #fff;
+      border: 1px solid #555;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #333;
+    }
+
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    canvas {
+      background: #111;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    }
+
+    /* Controles Táctiles para Móvil */
+    #mobile-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none; /* Se activa con modo Celular */
+      gap: 15px;
+      z-index: 10;
+    }
+
+    .touch-btn {
+      width: 65px;
+      height: 65px;
+      border-radius: 50%;
+      border: 3px solid #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 20px;
+      opacity: 0.6;
+      touch-action: manipulation;
+    }
+
+    .touch-btn:active {
+      opacity: 1;
+      transform: scale(0.95);
+    }
+
+    .btn-left { background: #c24b99; }
+    .btn-down { background: #00ffff; }
+    .btn-up { background: #12fa05; }
+    .btn-right { background: #f9393f; }
+
+    #score-board {
+      position: absolute;
+      bottom: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px #000;
+      z-index: 5;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="controls-bar">
+    <input type="file" id="fnfc-upload" accept=".fnfc,.json">
+    <select id="mode-select">
+      <option value="keyboard">Modo 1: Teclado (PC)</option>
+      <option value="mobile">Modo 2: Botones Virtuales (Celular)</option>
+      <option value="botplay">Modo 3: Botplay (Automático)</option>
+    </select>
+    <button id="btn-play">Cargar y Jugar</button>
+  </div>
+
+  <div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="mobile-controls">
+      <div class="touch-btn btn-left" data-key="0">←</div>
+      <div class="touch-btn btn-down" data-key="1">↓</div>
+      <div class="touch-btn btn-up" data-key="2">↑</div>
+      <div class="touch-btn btn-right" data-key="3">→</div>
+    </div>
+
+    <div id="score-board">Score: <span id="score">0</span> | Accuracy: <span id="accuracy">100%</span></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Estado del Juego
+    let chartData = null;
+    let isPlaying = false;
+    let startTime = 0;
+    let songTime = 0;
+    let currentMode = 'keyboard';
+    let score = 0;
+    let hits = 0;
+    let totalNotes = 0;
+
+    // Configuración visual del Receptor y Notas
+    const STRUM_X = [250, 310, 370, 430]; // Posiciones Player 2 (Opponent)
+    const PLAYER_X = [500, 560, 620, 680]; // Posiciones Player 1 (BF)
+    const STRUM_Y = 100; // Altura del receptor de notas
+    const NOTE_SIZE = 50;
+    const NOTE_COLORS = ['#c24b99', '#00ffff', '#12fa05', '#f9393f'];
+    const SPEED = 2.5; // Velocidad del scroll
+
+    // Mapeo de Teclas PC (DFJK / Flechas)
+    const KEY_MAP = {
+      'ArrowLeft': 0, 'a': 0, 'A': 0,
+      'ArrowDown': 1, 's': 1, 'S': 1,
+      'ArrowUp': 2, 'w': 2, 'W': 2,
+      'ArrowRight': 3, 'd': 3, 'D': 3
+    };
+
+    let activeKeys = [false, false, false, false];
+
+    // Cargar Archivo .FNFC
+    document.getElementById('fnfc-upload').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          chartData = JSON.parse(event.target.result);
+          alert("¡Chart .fnfc cargado correctamente!");
+        } catch (err) {
+          alert("Error al leer el archivo .fnfc. Asegúrate de que sea un JSON válido.");
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Control del modo de juego
+    const modeSelect = document.getElementById('mode-select');
+    const mobileControls = document.getElementById('mobile-controls');
+
+    modeSelect.addEventListener('change', (e) => {
+      currentMode = e.target.value;
+      mobileControls.style.display = (currentMode === 'mobile') ? 'flex' : 'none';
+    });
+
+    document.getElementById('btn-play').addEventListener('click', () => {
+      if (!chartData) {
+        alert("Por favor carga un archivo .fnfc primero.");
+        return;
+      }
+      startGame();
+    });
+
+    function startGame() {
+      score = 0;
+      hits = 0;
+      totalNotes = 0;
+      document.getElementById('score').innerText = score;
+      document.getElementById('accuracy').innerText = '100%';
+      
+      // Parsear notas desde la estructura del .fnfc
+      prepareNotes();
+
+      startTime = performance.now();
+      isPlaying = true;
+      requestAnimationFrame(gameLoop);
+    }
+
+    let notesToRender = [];
+
+    function prepareNotes() {
+      notesToRender = [];
+      // Soporte para estructura .fnfc estándar / Psych Engine / V-Slice
+      let notesArray = [];
+      
+      if (chartData.song && chartData.song.notes) {
+        // Formato clásico Psych / FNF
+        chartData.song.notes.forEach(section => {
+          if (section.sectionNotes) {
+            section.sectionNotes.forEach(n => {
+              notesArray.push({
+                time: n[0],
+                column: n[1],
+                sustain: n[2] || 0,
+                hit: false
+              });
+            });
+          }
+        });
+      } else if (chartData.notes) {
+        // Formato directo de notas
+        notesArray = chartData.notes;
+      }
+
+      notesToRender = notesArray;
+    }
+
+    // Bucle Principal
+    function gameLoop(timestamp) {
+      if (!isPlaying) return;
+
+      songTime = timestamp - startTime;
+      
+      // Limpiar Canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Dibujar Receptores de Notas (Strumline)
+      drawStrumline();
+
+      // Dibujar y Actualizar Notas
+      drawNotes();
+
+      // Lógica Botplay
+      if (currentMode === 'botplay') {
+        handleBotplay();
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    function drawStrumline() {
+      // Oponente
+      for (let i = 0; i < 4; i++) {
+        ctx.strokeStyle = NOTE_COLORS[i];
+        ctx.lineWidth = 3;
+        ctx.strokeRect(STRUM_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
+      }
+      // Player 1 (BF)
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = activeKeys[i] ? NOTE_COLORS[i] : 'transparent';
+        ctx.fillRect(PLAYER_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
+        ctx.strokeStyle = NOTE_COLORS[i];
+        ctx.lineWidth = 3;
+        ctx.strokeRect(PLAYER_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
+      }
+    }
+
+    function drawNotes() {
+      notesToRender.forEach(note => {
+        if (note.hit) return;
+
+        // Calcular posición Y basada en el tiempo
+        const timeDiff = note.time - songTime;
+        const noteY = STRUM_Y + (timeDiff * SPEED * 0.4);
+
+        // Renderizar si está dentro de la pantalla
+        if (noteY > -50 && noteY < canvas.height) {
+          const isPlayer = note.column < 4; 
+          const dir = note.column % 4;
+          const targetX = isPlayer ? PLAYER_X[dir] : STRUM_X[dir];
+
+          ctx.fillStyle = NOTE_COLORS[dir];
+          ctx.beginPath();
+          ctx.roundRect(targetX, noteY, NOTE_SIZE, NOTE_SIZE, 8);
+          ctx.fill();
+        }
+
+        // Miss por dejar pasar la nota
+        if (songTime - note.time > 200 && !note.hit) {
+          note.hit = true; // Se marca como procesada
+        }
+      });
+    }
+
+    // Lógica Botplay (Auto)
+    function handleBotplay() {
+      notesToRender.forEach(note => {
+        if (!note.hit && Math.abs(note.time - songTime) < 10) {
+          const dir = note.column % 4;
+          registerHit(note, dir);
+        }
+      });
+    }
+
+    function registerHit(note, dir) {
+      note.hit = true;
+      score += 350;
+      hits++;
+      totalNotes++;
+      activeKeys[dir] = true;
+      setTimeout(() => activeKeys[dir] = false, 100);
+      updateScoreUI();
+    }
+
+    function updateScoreUI() {
+      document.getElementById('score').innerText = score;
+      const acc = totalNotes > 0 ? ((hits / totalNotes) * 100).toFixed(2) : 100;
+      document.getElementById('accuracy').innerText = `${acc}%`;
+    }
+
+    // Input Teclado (PC)
+    window.addEventListener('keydown', (e) => {
+      if (currentMode !== 'keyboard' || !isPlaying) return;
+      if (KEY_MAP[e.key] !== undefined) {
+        const dir = KEY_MAP[e.key];
+        activeKeys[dir] = true;
+        checkInputHit(dir);
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (KEY_MAP[e.key] !== undefined) {
+        activeKeys[KEY_MAP[e.key]] = false;
+      }
+    });
+
+    // Input Táctil (Celular)
+    const touchButtons = document.querySelectorAll('.touch-btn');
+    touchButtons.forEach(btn => {
+      const dir = parseInt(btn.getAttribute('data-key'));
+      
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (currentMode !== 'mobile' || !isPlaying) return;
+        activeKeys[dir] = true;
+        checkInputHit(dir);
+      });
+
+      btn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        activeKeys[dir] = false;
+      });
+    });
+
+    function checkInputHit(dir) {
+      // Buscar la nota más cercana en la columna correspondiente
+      const targetNote = notesToRender.find(n => !n.hit && (n.column % 4 === dir) && Math.abs(n.time - songTime) < 150);
+      if (targetNote) {
+        registerHit(targetNote, dir);
+      }
+    }
+  </script>
+</body>
+</html>
