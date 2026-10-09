@@ -258,7 +258,7 @@ class HxSprite {
     ctx.imageSmoothingEnabled = !!this.antialiasing;
     const fr = this.animation.frame();
     if (fr) { ctx.scale(this.scale.x, this.scale.y); drawSparrowFrame(ctx, fr, 0, 0); }
-    else if (this.img) ctx.drawImage(this.img, 0, 0, w, h);
+    else if (this.img) blitAll(ctx, this.img, 0, 0, w, h);
     else if (this.solid !== null) { ctx.fillStyle = cssColor(this.solid); ctx.fillRect(0, 0, w, h); }
   }
   render(view) {

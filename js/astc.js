@@ -212,15 +212,18 @@ function ASTC_CORE() {
   function makeCtx(bw, bh, srgb) {
     return { bw, bh, n: bw * bh, srgb: !!srgb, modes: new Array(2048), inf: new Map(), parts: new Map(),
       w: new Uint32Array(4), rw: new Uint32Array(4), q: new Int32Array(64), pw0: new Int32Array(144), pw1: new Int32Array(144),
-      cv: new Int32Array(32), E: new Int32Array(32), cem: [0, 0, 0, 0] };
+      cv: new Int32Array(32), E: new Int32Array(32), cem: [0, 0, 0, 0], hdr: 0, err: 0 };
   }
   function partTable(cx, seed, count) {
     const key = count * 1024 + seed; let t = cx.parts.get(key);
     if (!t) { t = new Uint8Array(cx.n); const small = cx.n < 31; for (let y = 0; y < cx.bh; y++) for (let x = 0; x < cx.bw; x++) t[y * cx.bw + x] = selectPartition(seed, x, y, 0, count, small); cx.parts.set(key, t); }
     return t;
   }
-  function errorBlock(cx, out, stride, x0, y0, mw, mh) {
-    for (let t = 0; t < mh; t++) for (let s = 0; s < mw; s++) { const o = (y0 + t) * stride + (x0 + s) * 4; out[o] = 255; out[o + 1] = 0; out[o + 2] = 255; out[o + 3] = 255; }
+  /* v3.3.0: un bloque que no se puede decodificar (HDR o no válido) ya no sale magenta: queda transparente y se
+     cuenta (cx.hdr / cx.err); el juego muestra un aviso claro y prueba la PNG si existe */
+  function errorBlock(cx, out, stride, x0, y0, mw, mh, hdr) {
+    if (hdr) cx.hdr++; else cx.err++;
+    for (let t = 0; t < mh; t++) for (let s = 0; s < mw; s++) { const o = (y0 + t) * stride + (x0 + s) * 4; out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0; }
   }
 
   /* decodifica un bloque (16 bytes en d[off]) a RGBA8 en out (stride en bytes), texeles visibles mw x mh */
@@ -229,7 +232,7 @@ function ASTC_CORE() {
     for (let i = 0; i < 4; i++) w[i] = (d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24)) >>> 0;
     const mode = w[0] & 0x7FF;
     if ((mode & 0x1FF) === 0x1FC) {   // void-extent: un solo color
-      if (mode & 0x200) return errorBlock(cx, out, stride, x0, y0, mw, mh);   // HDR
+      if (mode & 0x200) return errorBlock(cx, out, stride, x0, y0, mw, mh, true);   // HDR
       const c = [w[2] & 0xFFFF, w[2] >>> 16, w[3] & 0xFFFF, w[3] >>> 16].map(v => v >> 8);
       for (let t = 0; t < mh; t++) for (let s = 0; s < mw; s++) { const o = (y0 + t) * stride + (x0 + s) * 4; out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = c[3]; }
       return;
@@ -264,7 +267,7 @@ function ASTC_CORE() {
     const cu = CUNQ[cl]; for (let i = 0; i < nv; i++) cv[i] = cu[cv[i]];
     const E = cx.E; let k = 0;
     for (let p = 0; p < parts; p++) {
-      if (!endpoints(cem[p], cv, k, E, p * 8)) return errorBlock(cx, out, stride, x0, y0, mw, mh);
+      if (!endpoints(cem[p], cv, k, E, p * 8)) return errorBlock(cx, out, stride, x0, y0, mw, mh, true);   // modos de color HDR (2, 3, 7, 11, 14, 15)
       k += ((cem[p] >> 2) + 1) * 2;
     }
     // 8 bits → 16 bits (lineal: replicar; sRGB: |0x80)
@@ -298,13 +301,38 @@ function ASTC_CORE() {
   /* decodifica las filas de bloques [by0, by1) → RGBA (width x filas visibles) */
   function decodeRows(d, off, bw, bh, width, height, by0, by1, srgb, cx) {
     cx = cx && cx.bw === bw && cx.bh === bh && cx.srgb === !!srgb ? cx : makeCtx(bw, bh, srgb);
+    cx.hdr = 0; cx.err = 0;
     const nbx = Math.ceil(width / bw), y0 = by0 * bh, y1 = Math.min(height, by1 * bh), stride = width * 4;
     const out = new Uint8ClampedArray(stride * (y1 - y0));
     for (let by = by0; by < by1; by++) {
       const ty = by * bh - y0, mh = Math.min(bh, y1 - by * bh);
       for (let bx = 0; bx < nbx; bx++) decodeBlock(cx, d, off + (by * nbx + bx) * 16, out, stride, bx * bw, ty, Math.min(bw, width - bx * bw), mh);
     }
-    return { data: out, rows: y1 - y0, cx };
+    return { data: out, rows: y1 - y0, cx, hdr: cx.hdr, err: cx.err };
+  }
+
+  /* revisión rápida (sin decodificar los texeles): cuántos bloques son HDR. Sirve para subir la textura
+     comprimida directo a la GPU sabiendo que no tiene bloques que la GPU (perfil LDR) mostraría mal */
+  const HDR_CEM = [0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1];
+  function scanHdr(d, off, nblocks) {
+    let hdr = 0; const w = new Uint32Array(4);
+    for (let b = 0; b < nblocks; b++) {
+      const o = off + b * 16;
+      for (let i = 0; i < 4; i++) w[i] = (d[o + i * 4] | (d[o + i * 4 + 1] << 8) | (d[o + i * 4 + 2] << 16) | (d[o + i * 4 + 3] << 24)) >>> 0;
+      const mode = w[0] & 0x7FF;
+      if ((mode & 0x1FF) === 0x1FC) { if (mode & 0x200) hdr++; continue; }
+      const parts = ((w[0] >>> 11) & 3) + 1;
+      if (parts === 1) { if (HDR_CEM[gb(w, 13, 4)]) hdr++; continue; }
+      const sel = gb(w, 23, 2);
+      if (sel === 0) { if (HDR_CEM[gb(w, 25, 4)]) hdr++; continue; }
+      // CEM por partición: se necesita el tamaño de la rejilla de pesos (block mode) → se omite el detalle:
+      // clase base (sel-1) + bit por partición; HDR si algún CEM cae en la lista
+      const bm = blockMode(mode, 12, 12); if (!bm) continue;
+      let below = 128 - bm.wbits; const extra = 3 * parts - 4; below -= extra;
+      const enc = gb(w, 25, 4) | (gb(w, below, extra) << 4), base = sel - 1;
+      for (let i = 0; i < parts; i++) { const c = ((((enc >> i) & 1) + base) << 2) | ((enc >> (parts + 2 * i)) & 3); if (HDR_CEM[c]) { hdr++; break; } }
+    }
+    return hdr;
   }
 
   /* contenedores: .astc (cabecera de 16 bytes), KTX 1.1 y KTX 2.0 (sin supercompresión) */
@@ -314,6 +342,20 @@ function ASTC_CORE() {
     if (b.length >= 12 && b[0] === 0xAB && b[1] === 0x4B && b[2] === 0x54 && b[3] === 0x58 && b[4] === 0x20) return b[5] === 0x32 ? 'ktx2' : 'ktx';
     return null;
   }
+  /* pares clave/valor de KTX 1 y KTX 2 (p. ej. KTXorientation "S=r,T=d") */
+  function keyValues(b, off, len, le) {
+    const out = {}, dv = new DataView(b.buffer, b.byteOffset, b.byteLength); let p = off;
+    const end = Math.min(b.length, off + len);
+    while (p + 4 <= end) {
+      const n = dv.getUint32(p, le); p += 4; if (!n || p + n > end) break;
+      const raw = b.subarray(p, p + n), z = raw.indexOf(0);
+      if (z > 0) { const k = String.fromCharCode(...raw.subarray(0, z)), v = String.fromCharCode(...raw.subarray(z + 1)).replace(/\0+$/, ''); out[k] = v; }
+      p += n + ((4 - (n % 4)) % 4);
+    }
+    return out;
+  }
+  /* T=u: la primera fila guardada es la de ABAJO (convención de OpenGL) → hay que voltear */
+  const flipFrom = kv => /T\s*=\s*u/i.test(kv.KTXorientation || '');
   function parse(buf) {
     const b = new Uint8Array(buf), kind = sniff(b), dv = new DataView(buf);
     if (!kind) throw new Error('no es ASTC/KTX');
@@ -321,35 +363,40 @@ function ASTC_CORE() {
       if (b.length < 16) throw new Error('archivo .astc corto');
       const bw = b[4], bh = b[5], bd = b[6], u24 = o => b[o] | (b[o + 1] << 8) | (b[o + 2] << 16);
       const width = u24(7), height = u24(10), depth = u24(13);
-      if (bd > 1) throw new Error(`ASTC 3D (bloque ${bw}x${bh}x${bd}) no soportado`);
-      if (bw < 4 || bh < 4 || bw > 12 || bh > 12) throw new Error(`tamaño de bloque ${bw}x${bh} no válido`);
-      return { kind, width, height, depth, bw, bh, offset: 16, srgb: false };
+      if (bd > 1) throw new Error(`ASTC 3D (bloque ${bw}x${bh}x${bd}) no soportado: exporta la textura en 2D`);
+      if (bw < 4 || bh < 4 || bw > 12 || bh > 12 || !FOOT.some(f => f[0] === bw && f[1] === bh)) throw new Error(`tamaño de bloque ${bw}x${bh} no válido`);
+      return { kind, width, height, depth, bw, bh, offset: 16, srgb: false, flipY: false };
     }
     if (kind === 'ktx') {
       const le = dv.getUint32(12, true) === 0x04030201, u = o => dv.getUint32(o, le);
-      const fmt = u(28), width = u(36), height = Math.max(1, u(40)), depth = u(44), kv = u(60);
+      const fmt = u(28), width = u(36), height = Math.max(1, u(40)), depth = u(44), kvLen = u(60);
       let fi = -1, srgb = false;
       if (fmt >= 0x93B0 && fmt <= 0x93BD) fi = fmt - 0x93B0; else if (fmt >= 0x93D0 && fmt <= 0x93DD) { fi = fmt - 0x93D0; srgb = true; }
-      if (fi < 0) throw new Error('KTX sin formato ASTC 2D LDR (glInternalFormat 0x' + fmt.toString(16) + ')');
+      if (fi < 0) throw new Error('KTX sin formato ASTC 2D (glInternalFormat 0x' + fmt.toString(16) + '): usa astcenc o toktx con ASTC');
       if (depth > 1) throw new Error('KTX 3D no soportado');
-      return { kind, width, height, depth: 1, bw: FOOT[fi][0], bh: FOOT[fi][1], offset: 64 + kv + 4, srgb };
+      const kv = keyValues(b, 64, kvLen, le);
+      return { kind, width, height, depth: 1, bw: FOOT[fi][0], bh: FOOT[fi][1], offset: 64 + kvLen + 4, srgb, flipY: flipFrom(kv) };
     }
-    const vk = dv.getUint32(12, true), width = dv.getUint32(20, true), height = Math.max(1, dv.getUint32(24, true)), sc = dv.getUint32(44, true);
+    const vk = dv.getUint32(12, true), width = dv.getUint32(20, true), height = Math.max(1, dv.getUint32(24, true)), depth = dv.getUint32(28, true), sc = dv.getUint32(44, true);
+    if (vk >= 1000066000 && vk <= 1000066013) throw new Error('KTX2 con ASTC HDR (SFLOAT) no soportado: vuelve a exportar en LDR (astcenc -cl / -cs)');
     if (vk < 157 || vk > 184) throw new Error('KTX2 sin formato ASTC LDR (vkFormat ' + vk + ')');
-    if (sc !== 0) throw new Error('KTX2 supercomprimido (zstd/BasisLZ) no soportado');
-    const fi = (vk - 157) >> 1;
-    return { kind, width, height, depth: 1, bw: FOOT[fi][0], bh: FOOT[fi][1], offset: Number(dv.getBigUint64(80, true)), srgb: ((vk - 157) & 1) === 1 };
+    if (sc !== 0) throw new Error('KTX2 supercomprimido (' + (sc === 1 ? 'BasisLZ' : sc === 2 ? 'zstd' : 'esquema ' + sc) + ') no soportado: exporta sin supercompresión');
+    if (depth > 1) throw new Error('KTX2 3D no soportado');
+    const fi = (vk - 157) >> 1, kv = keyValues(b, dv.getUint32(56, true), dv.getUint32(60, true), true);
+    return { kind, width, height, depth: 1, bw: FOOT[fi][0], bh: FOOT[fi][1], offset: Number(dv.getBigUint64(80, true)), srgb: ((vk - 157) & 1) === 1, flipY: flipFrom(kv) };
   }
-  return { parse, sniff, decodeRows, FOOT, _t: { CUNQ, WUNQ, TRITS, QUINTS, blockMode, selectPartition } };
+  return { parse, sniff, decodeRows, scanHdr, FOOT, _t: { CUNQ, WUNQ, TRITS, QUINTS, blockMode, selectPartition } };
 }
 
-/* ---------- integración con el juego ---------- */
+/* ---------- integración con el juego ----------
+   v3.3.0: el resultado ya no es un <canvas> (putImageData en un lienzo enorme lo sacaba de la GPU y cada
+   frame se volvía a subir → lag). Ahora se devuelve RGBA y js/texturas.js lo convierte en ImageBitmap
+   (o lo sube comprimido directo a la GPU si el renderizador WebGL tiene WEBGL_compressed_texture_astc). */
 const ASTC_ACCEPT = '.astc,.ktx,.ktx2';   // para los selectores de archivos
 const ASTC = (() => {
   const core = ASTC_CORE();
-  const stats = { n: 0, ms: 0, px: 0, gpu: 0, sw: 0, workers: 0, errors: [], last: null };
+  const stats = { n: 0, ms: 0, px: 0, gpu: 0, sw: 0, direct: 0, workers: 0, errors: [], last: null, notices: [] };
   const mode = (typeof params !== 'undefined' && params.get('astc')) || '';
-  const cache = new Map(), blobCache = new WeakMap();
 
   /* ---- Workers (código del núcleo + mensaje) ---- */
   let pool = null;
@@ -358,7 +405,7 @@ const ASTC = (() => {
     pool = [];
     if (mode === 'main' || typeof Worker === 'undefined') return pool;
     try {
-      const src = `const C=(${ASTC_CORE.toString()})();let cx=null;onmessage=e=>{const m=e.data;try{const r=C.decodeRows(new Uint8Array(m.buf),0,m.bw,m.bh,m.width,m.height,0,m.nby,m.srgb,cx);cx=r.cx;postMessage({id:m.id,data:r.data,rows:r.rows},[r.data.buffer]);}catch(err){postMessage({id:m.id,error:String(err&&err.message||err)});}};`;
+      const src = `const C=(${ASTC_CORE.toString()})();let cx=null;onmessage=e=>{const m=e.data;try{if(m.op==='scan'){postMessage({id:m.id,hdr:C.scanHdr(new Uint8Array(m.buf),0,m.n)});return;}const r=C.decodeRows(new Uint8Array(m.buf),0,m.bw,m.bh,m.width,m.height,0,m.nby,m.srgb,cx);cx=r.cx;postMessage({id:m.id,data:r.data,rows:r.rows,hdr:r.hdr,err:r.err},[r.data.buffer]);}catch(err){postMessage({id:m.id,error:String(err&&err.message||err)});}};`;
       const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
       const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
       for (let i = 0; i < n; i++) { const wk = new Worker(url); wk.busy = 0; wk.jobs = new Map(); wk.onmessage = e => { const j = wk.jobs.get(e.data.id); wk.jobs.delete(e.data.id); wk.busy--; if (j) (e.data.error ? j.bad(new Error(e.data.error)) : j.ok(e.data)); };
@@ -368,43 +415,44 @@ const ASTC = (() => {
     return pool;
   }
   let jobId = 0;
-  function runJob(msg) {
+  function runJob(msg, transfer) {
     const live = getPool().filter(w => !w.dead);
     if (!live.length) return Promise.reject(new Error('sin workers'));
     const wk = live.reduce((a, b) => (b.busy < a.busy ? b : a));
-    return new Promise((ok, bad) => { const id = ++jobId; wk.busy++; wk.jobs.set(id, { ok, bad }); wk.postMessage(Object.assign(msg, { id }), [msg.buf]); });
+    return new Promise((ok, bad) => { const id = ++jobId; wk.busy++; wk.jobs.set(id, { ok, bad }); wk.postMessage(Object.assign(msg, { id }), transfer || []); });
   }
+  const yieldTask = () => new Promise(ok => setTimeout(ok, 0));
 
-  /* ---- hilo principal por partes (sin Workers) ---- */
-  async function decodeMain(info, u8, put) {
-    // por tiempo: franjas de ~8 ms (se mide la primera y se ajusta) y se cede el hilo (el juego sigue dibujando)
+  /* ---- hilo principal por partes (sin Workers): franjas de ~6 ms y se cede el hilo ---- */
+  async function decodeMain(info, u8, out, acc) {
     const nby = Math.ceil(info.height / info.bh); let cx = null, by = 0, n = 1;
     while (by < nby) {
       const t0 = performance.now(), end = Math.min(nby, by + n);
       const r = core.decodeRows(u8, info.offset, info.bw, info.bh, info.width, info.height, by, end, info.srgb, cx); cx = r.cx;
-      put(r.data, r.rows, by * info.bh);
-      const dt = performance.now() - t0; n = Math.max(1, Math.floor((end - by) * 8 / Math.max(dt, 0.5))); by = end;
-      if (by < nby) await new Promise(ok => setTimeout(ok, 0));
+      out.set(r.data, by * info.bh * info.width * 4); acc.hdr += r.hdr; acc.err += r.err;
+      const dt = performance.now() - t0; n = Math.max(1, Math.floor((end - by) * 6 / Math.max(dt, 0.5))); by = end;
+      if (by < nby) await yieldTask();
     }
   }
-  async function decodeSoftware(info, buf, put) {
+  async function decodeSoftware(info, buf, out, acc) {
     const nbx = Math.ceil(info.width / info.bw), nby = Math.ceil(info.height / info.bh), bytesRow = nbx * 16;
     const live = getPool().filter(w => !w.dead);
-    if (!live.length) return decodeMain(info, new Uint8Array(buf), put);
+    if (!live.length) return decodeMain(info, new Uint8Array(buf), out, acc);
     // franjas: varias por worker para repartir la carga (las imágenes grandes van en paralelo)
-    const px = info.width * info.height, parts = px < 300000 ? 1 : Math.min(nby, live.length * 2);
+    const px = info.width * info.height, parts = px < 300000 ? 1 : Math.min(nby, live.length * 3);
     const per = Math.ceil(nby / parts), jobs = [];
     for (let by = 0; by < nby; by += per) {
       const n = Math.min(per, nby - by), y = by * info.bh;
       const slice = buf.slice(info.offset + by * bytesRow, info.offset + (by + n) * bytesRow);
-      jobs.push(runJob({ buf: slice, bw: info.bw, bh: info.bh, width: info.width, height: Math.min(info.height - y, n * info.bh), nby: n, srgb: info.srgb })
-        .then(r => put(r.data, r.rows, y)));
+      // cada franja llega en su propia tarea (no se bloquea un frame copiando todo de golpe)
+      jobs.push(runJob({ buf: slice, bw: info.bw, bh: info.bh, width: info.width, height: Math.min(info.height - y, n * info.bh), nby: n, srgb: info.srgb }, [slice])
+        .then(r => { out.set(r.data, y * info.width * 4); acc.hdr += r.hdr; acc.err += r.err; }));
     }
     try { await Promise.all(jobs); }
-    catch (e) { console.warn('[ASTC] worker falló, se decodifica en el hilo principal', e); for (const w of pool) w.dead = true; return decodeMain(info, new Uint8Array(buf), put); }
+    catch (e) { console.warn('[ASTC] worker falló, se decodifica en el hilo principal', e); for (const w of pool) w.dead = true; acc.hdr = acc.err = 0; return decodeMain(info, new Uint8Array(buf), out, acc); }
   }
 
-  /* ---- GPU (WebGL2 + WEBGL_compressed_texture_astc) ---- */
+  /* ---- GPU (WebGL2 + WEBGL_compressed_texture_astc) → readPixels: solo con la pantalla de carga ---- */
   let gpu = null;
   function getGpu() {
     if (gpu !== null) return gpu;
@@ -451,72 +499,74 @@ const ASTC = (() => {
     finally { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(tex); gl.deleteTexture(rt); }
   }
 
-  /* ---- decodificar un ArrayBuffer: put(rgba, filas, y) recibe franjas; devuelve info + vía (GPU/software) ---- */
-  async function decodeTo(buf, put, force) {
-    const info = core.parse(buf);
-    const need = info.offset + Math.ceil(info.width / info.bw) * Math.ceil(info.height / info.bh) * 16;
+  /* volteo vertical por partes (KTXorientation T=u) */
+  async function flipRows(out, w, h) {
+    const row = w * 4, tmp = new Uint8ClampedArray(row);
+    for (let y = 0; y < h >> 1; y++) {
+      const a = y * row, b = (h - 1 - y) * row;
+      tmp.set(out.subarray(a, a + row)); out.copyWithin(a, b, b + row); out.set(tmp, b);
+      if ((y & 511) === 511) await yieldTask();
+    }
+  }
+  function checkSize(buf, info) {
     if (!info.width || !info.height) throw new Error('tamaño 0');
+    const need = info.offset + Math.ceil(info.width / info.bw) * Math.ceil(info.height / info.bh) * 16;
     if (buf.byteLength < need) throw new Error(`datos incompletos (${buf.byteLength} de ${need} bytes)`);
+  }
+  const hdrMsg = (name, n) => `${name}: ${n} bloque(s) ASTC HDR — el navegador no muestra HDR; vuelve a exportarla en LDR (astcenc -cl o -cs)`;
+  const fail = (name, e) => {
+    stats.errors.push(`${name}: ${e.message}`); console.warn('[ASTC]', name, e.message);
+    if (typeof AssetLog !== 'undefined') AssetLog.set('astc-error', false, `ASTC sin mostrar (se usa la PNG si existe): ${stats.errors.slice(-3).join(' · ')}`);
+  };
+  const note = msg => { if (!stats.notices.includes(msg)) { stats.notices.push(msg); if (typeof toast === 'function') setTimeout(() => toast('⚠ ' + msg, 6000), 0); } };
+  function logStats() {
+    if (typeof AssetLog === 'undefined') return;
+    AssetLog.set('astc', true, `ASTC: ${stats.n} textura(s) · ${stats.direct ? stats.direct + ' subida(s) comprimida(s) directo a la GPU (sin decodificar), ' : ''}${stats.gpu ? stats.gpu + ' por GPU, ' : ''}${stats.sw} por software${stats.workers ? ' (' + stats.workers + ' workers)' : ''} · ${Math.round(stats.ms)} ms sumando cada una`);
+  }
+
+  /* ArrayBuffer → { data RGBA (sin premultiplicar), width, height, via }. Lanza error si es HDR / no válido */
+  async function decode(buf, name, opts = {}) {
+    const t0 = performance.now(), info = core.parse(buf); checkSize(buf, info);
+    const out = new Uint8ClampedArray(info.width * info.height * 4), acc = { hdr: 0, err: 0 };
     let via = 'software';
-    const px = force === 'sw' ? null : decodeGpu(info, buf);
+    // la lectura desde la GPU (readPixels) bloquea el hilo: solo mientras se ve la pantalla de carga
+    const px = opts.force === 'sw' || !(opts.allowGpu || mode === 'gpu') ? null : decodeGpu(info, buf);
     if (px) {
       let ok = gpu.verified;
       if (!ok) {   // primera vez: comparar unas filas con el software (diferencia ≤ 1)
         const nb = Math.min(Math.ceil(info.height / info.bh), 2), r = core.decodeRows(new Uint8Array(buf), info.offset, info.bw, info.bh, info.width, info.height, 0, nb, info.srgb);
         let md = 0; for (let i = 0; i < r.data.length; i++) { const d = Math.abs(r.data[i] - px[i]); if (d > md) md = d; }
-        ok = gpu.verified = md <= 1;
+        ok = gpu.verified = md <= 1 && !r.hdr;
         if (!ok) { console.warn('[ASTC] la GPU no coincide con el decodificador (dif ' + md + '): se usa software'); gpu = false; }
       }
-      if (ok) { put(px, info.height, 0); via = 'GPU'; }
+      if (ok) { out.set(px); via = 'GPU'; acc.hdr = core.scanHdr(new Uint8Array(buf), info.offset, Math.ceil(info.width / info.bw) * Math.ceil(info.height / info.bh)); }
     }
-    if (via !== 'GPU') await decodeSoftware(info, buf, put);
-    return { info, via };
-  }
-  /* → <canvas> con naturalWidth/naturalHeight (se dibuja como una imagen) */
-  async function decodeBuffer(buf, name) {
-    const t0 = performance.now();
-    const info0 = core.parse(buf);
-    const c = document.createElement('canvas'); c.width = info0.width; c.height = info0.height;
-    const x = c.getContext('2d');
-    const { info, via } = await decodeTo(buf, (data, rows, y) => x.putImageData(new ImageData(data, info0.width, rows), 0, y));
+    if (via !== 'GPU') await decodeSoftware(info, buf, out, acc);
+    if (acc.hdr) { const m = hdrMsg(name, acc.hdr); note(m); throw new Error(m); }
+    if (acc.err) note(`${name}: ${acc.err} bloque(s) ASTC dañados o no válidos (se ven transparentes)`);
+    if (info.flipY) await flipRows(out, info.width, info.height);
     const ms = performance.now() - t0;
     stats.n++; stats.ms += ms; stats.px += info.width * info.height; via === 'GPU' ? stats.gpu++ : stats.sw++;
     stats.last = { name, w: info.width, h: info.height, block: `${info.bw}x${info.bh}`, kind: info.kind, ms: Math.round(ms), via };
-    c.naturalWidth = info.width; c.naturalHeight = info.height; c.astc = stats.last;
-    if (typeof AssetLog !== 'undefined') AssetLog.set('astc', true, `ASTC: ${stats.n} textura(s) decodificada(s) · ${Math.round(stats.ms)} ms sumando cada una (${stats.gpu ? stats.gpu + ' por GPU, ' : ''}${stats.sw} por software${stats.workers ? ', ' + stats.workers + ' workers' : ''})`);
-    return c;
+    logStats();
+    return { data: out, width: info.width, height: info.height, via, info, ms };
   }
-  /* pruebas: RGBA sin pasar por el canvas (sin pérdidas de alfa premultiplicado) */
-  async function decodeRaw(buf, force) {
-    const t0 = performance.now(), info0 = core.parse(buf), out = new Uint8ClampedArray(info0.width * info0.height * 4);
-    const r = await decodeTo(buf, (data, rows, y) => out.set(data, y * info0.width * 4), force);
-    return { data: out, width: info0.width, height: info0.height, via: r.via, ms: performance.now() - t0 };
+  /* ¿se puede subir comprimida tal cual? (revisión de bloques HDR en un worker) */
+  async function hdrBlocks(buf, info) {
+    const n = Math.ceil(info.width / info.bw) * Math.ceil(info.height / info.bh), slice = buf.slice(info.offset, info.offset + n * 16);
+    try { return (await runJob({ op: 'scan', buf: slice, n }, [slice])).hdr; } catch (e) { return core.scanHdr(new Uint8Array(buf), info.offset, n); }
   }
-  const fail = (name, e) => { stats.errors.push(`${name}: ${e.message}`); console.warn('[ASTC]', name, e.message);
-    if (typeof AssetLog !== 'undefined') AssetLog.set('astc-error', false, `ASTC no válido: ${stats.errors.slice(-3).join(' · ')}`); };
-  async function headOf(blob) { return new Uint8Array(await blob.slice(0, 12).arrayBuffer()); }
+  async function headOf(blob) { return new Uint8Array(await blob.slice(0, 16).arrayBuffer()); }
   return {
-    core, stats,
+    core, stats, fail, note, hdrMsg, logStats, hdrBlocks,
     EXT: /\.(astc|ktx2?)$/i,
     isName: n => /\.(astc|ktx2?)$/i.test(String(n || '')),
     sniff: u8 => core.sniff(u8),
+    parse: buf => { const info = core.parse(buf); checkSize(buf, info); return info; },
     async isBlob(blob) { try { return !!core.sniff(await headOf(blob)); } catch (e) { return false; } },
-    decodeBuffer, decodeRaw,
-    /* Blob (archivo del usuario o descarga) → canvas; se guarda en caché por objeto */
-    decodeBlob(blob, name) {
-      let p = blobCache.get(blob);
-      if (!p) { p = blob.arrayBuffer().then(b => decodeBuffer(b, name)); blobCache.set(blob, p); p.catch(e => { blobCache.delete(blob); fail(name, e); }); }
-      return p;
-    },
-    /* URL (red) → canvas o null si no existe */
-    decodeUrl(url, name) {
-      let p = cache.get(url);
-      if (!p) {
-        p = fetch(url).then(r => r.ok ? r.arrayBuffer() : null).then(b => b ? decodeBuffer(b, name) : null)
-          .catch(e => { fail(name, e); return null; });
-        cache.set(url, p); p.then(v => { if (!v) cache.delete(url); });
-      }
-      return p;
-    },
+    decode,
+    /* pruebas: RGBA exacto (sin premultiplicar) */
+    async decodeRaw(buf, force) { const r = await decode(buf, 'prueba', { force, allowGpu: force === 'gpu' }); return { data: r.data, width: r.width, height: r.height, via: r.via, ms: r.ms }; },
+    countDirect() { stats.direct++; stats.n++; logStats(); },
   };
 })();

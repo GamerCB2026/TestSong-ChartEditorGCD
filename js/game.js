@@ -66,6 +66,12 @@ async function loadScene(ids) {
   for (const [k, ic] of [['jugador', iP1], ['rival', iP2]]) st.push(ic.ok ? `✔ icono ${k}: ${ic.where} — ${ic.kind}${ic.id !== ic.where ? '' : ''}` : `✘ icono ${k}: falta images/icons/icon-${ic.id}.png → cara improvisada`);
   Scene.status = st;
   Scene.world = !!(stage && (loadedProps.length || bf instanceof RealChar || dad instanceof RealChar));
+  // v3.3.0: se liberan las hojas enormes ya recortadas y se suben/calientan todas las texturas
+  // mientras se ve "Cargando…" (antes la primera vez que aparecía cada imagen había un tirón)
+  TexLoad.endScene();
+  try { Render.forgetTextures(); const n = Render.prewarm(worldTextures()); st.push(`✔ render: ${Render.name()} · ${n} texturas precargadas · calidad ${Optim.s.preset} (texturas ${Optim.s.tex}%, mundo ${Optim.s.res}%)`); }
+  catch (e) { console.warn('[TestSong] precarga', e); }
+  st.push(...TexLoad.statusLines());
   Cam.init = false; Scene.loading = false;
   const any = Scene.world || notes.ok || iP1.ok || iP2.ok;
   if (isFile && !(bf instanceof RealChar && dad instanceof RealChar)) toast('Abierto como archivo (file://): el navegador bloquea los assets. Usa GitHub Pages o un servidor local (python -m http.server).', 7000);
@@ -137,7 +143,7 @@ function restart(paused) {
   G.songPos = start;
   G.health = G.healthLerp = FNF.HEALTH_START;
   G.score = G.misses = G.combo = G.judged = G.accSum = 0;
-  G.lastBeat = Math.floor(G.songPos / c.crochet); G.hudZoom = 1; Cam.bop = 1;
+  G.lastBeat = Math.floor(G.songPos / c.crochet); G.hudZoom = 1; Cam.bop = 1; G.noteIdx = 0;
   Popups.length = 0; Splashes.length = 0;
   resetActors();
   Cam.init = false; Scene.focus = 'dad';
@@ -157,6 +163,7 @@ function resetActors() {
 }
 /* notas anteriores a la posición: se saltan sin contar fallos ni tocar la vida */
 function skipNotesBefore(pos) {
+  G.noteIdx = 0;
   for (const n of G.chart.notes) {
     const skip = n.time < pos;
     n.judged = n.skipped = skip; n.hit = n.missed = n.holding = n.dropped = n.passed = false;
@@ -281,7 +288,7 @@ function demoShouldMiss(n) {
 function onBeat(beat) {
   for (const c of Object.values(Scene.chars)) if (c) c.onBeat(beat);
   for (const ic of Object.values(Scene.icons)) if (ic) ic.bop();                // HealthIcon.onStepHit (cada 4 steps)
-  if (Cam.zoomRate > 0 && beat % Cam.zoomRate === 0 && G.hudZoom < 1.35) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }   // SetCameraBop
+  if (Optim.s.bop && Cam.zoomRate > 0 && beat % Cam.zoomRate === 0 && G.hudZoom < 1.35) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }   // SetCameraBop
   if (beat >= -4 && beat <= -1) Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME);   // introTHREE/TWO/ONE/GO
   if (Mods.modules.size) Mods.hook('onBeatHit', { beat });
 }
@@ -305,7 +312,12 @@ function update(dt) {
 
   let focusSet = false;
   G.strums.opponent.hold.fill(0);
-  for (const n of c.notes) {
+  // v3.3.0: índice de la primera nota sin terminar (antes se recorrían todas las ya jugadas cada frame)
+  if (G.noteArr !== c.notes) { G.noteArr = c.notes; G.noteIdx = 0; }
+  const notes = c.notes;
+  while (G.noteIdx < notes.length && notes[G.noteIdx].judged && !notes[G.noteIdx].holding && notes[G.noteIdx].time < G.songPos - 1000) G.noteIdx++;
+  for (let ni = G.noteIdx; ni < notes.length; ni++) {
+    const n = notes[ni];
     if (n.time - G.songPos > 3000) break;
     if (n.judged) {
       if (n.holding) {
@@ -344,8 +356,12 @@ function press(lane) {
   if (G.mode === 'demo') { setMode('keyboard'); toast('Modo Teclado activado ⌨'); }
   if (isBot()) return;
   const st = G.strums.player; st.pressed[lane] = true; st.pressAt[lane] = G.gameTime; st.confirmHeld[lane] = false;
+  // posición exacta del audio en el momento de la tecla (no la del último frame: con pocos FPS eso desfasaba el juicio)
+  if (Music.playing) G.songPos = Music.position();
   let best = null;
-  for (const n of G.chart.notes) {
+  const notes = G.chart.notes;
+  for (let ni = G.noteIdx || 0; ni < notes.length; ni++) {
+    const n = notes[ni];
     if (n.time - G.songPos > FNF.HIT_WINDOW_MS) break;
     if (n.judged || n.side !== 'player' || n.lane !== lane) continue;
     if (Math.abs(n.time - G.songPos) <= FNF.HIT_WINDOW_MS) { best = n; break; }
@@ -425,14 +441,21 @@ function drawHudLayer() {
 }
 function render(dt = 16) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  if (Loader.active || !G.chart) { drawLoading(); return; }
+  if (Loader.active || !G.chart) { Render.showGL(false); drawLoading(); return; }
   // efectos de cámara de los scripts (rotar/mover/alpha/shake de camHUD): el HUD se dibuja aparte y se pega transformado
   let hudLayer = null;
   if (CamFX.active('hud')) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); drawHudLayer(); hudLayer = CamFX.snapshot('hud'); }
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, W, H);
-  if (Scene.world) renderWorld(G.paused ? 0 : dt, Cam.bop);
-  else {
+  if (Scene.world) {
+    // v3.3.0: el mundo se dibuja con WebGL (lotes) o con el lienzo 2D (directo o a menor resolución)
+    let R = null;
+    try { R = Render.beginWorld(worldNeedsDirect()); renderWorld(G.paused ? 0 : dt, Optim.s.bop ? Cam.bop : 1, R); }
+    catch (e) { reportOnce('mundo', e); }
+    try { if (R) Render.endWorld(R); } catch (e) { reportOnce('fin del mundo', e); }
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.globalAlpha = 1; ctx.filter = 'none';
+  } else {
+    Render.showGL(false);
     ctx.save();
     const z = Cam.bop; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
     drawStage();
@@ -450,16 +473,31 @@ function render(dt = 16) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
 
-let lastFrame = performance.now();
+/* bucle principal (v3.3.0):
+   · la lógica sigue al reloj del AUDIO (Music.position), así que notas y música no se desfasan aunque baje el FPS
+   · dt nunca es negativo (antes un dt negativo tras cerrar la pausa daba un índice de frame negativo → error → sin HUD)
+   · límite de FPS opcional, contador, tirones y vigilante del audio
+   · un error en la lógica no impide dibujar, y un error al dibujar no detiene la lógica */
+let lastFrame = performance.now(), lastPerfNow = 0;
 function frame(now) {
-  const dt = Math.min(50, now - lastFrame); lastFrame = now;
-  try {
-    if (!G.paused && !Loader.active && G.chart) update(dt);
-    render(dt);
-    uiTick();
-  } catch (e) { console.error(e); }
-  document.body.classList.toggle('cargando', Loader.active);
   requestAnimationFrame(frame);
+  if (!(now >= 0)) now = performance.now();
+  if (!Perf.shouldDraw(now)) return;
+  const raw = now - lastFrame;
+  const dt = raw > 0 ? Math.min(100, raw) : 0; lastFrame = now;
+  if (lastPerfNow) Perf.sample(Math.max(0, now - lastPerfNow), now); lastPerfNow = now;
+  const playing = !G.paused && !Loader.active && G.chart;
+  if (playing) {
+    try {
+      // tirón: la canción avanzó más de 250 ms entre dos frames (se mide con el reloj del audio, no con rAF)
+      if (Music.playing) { const p = Music.position(); if (p - G.songPos > 250) Perf.hitch(p - G.songPos, G.songPos, p); }
+      update(dt);
+    } catch (e) { reportOnce('update:' + (e && e.message), e); }
+    Perf.watchAudio(now);
+  }
+  try { render(dt); } catch (e) { reportOnce('render:' + (e && e.message), e); }
+  try { uiTick(); } catch (e) { reportOnce('ui:' + (e && e.message), e); }
+  document.body.classList.toggle('cargando', Loader.active);
 }
 
 /* ---------- canción por defecto: "test" (data/songs/test/test.json + songs/test/*.ogg) ---------- */
@@ -498,6 +536,7 @@ window.GCDPlay = {
   loadChart(raw, meta, audioBlobs = []) { G.raw = raw; G.meta = meta; return loadChart(Chart.parse(raw, meta), audioBlobs.map((b, i) => b && (b.blob ? b : { blob: b, role: i ? 'voices' : 'inst' }))); },
   restart, pause: () => openOverlay('pause'), resume: () => closeOverlay(), setMode, seek: seekTo, state: G, scene: Scene, layout: LAYOUT,
   music: Music, events: Events, cam: Cam, opts: Opts, loader: Loader, version: VERSION,
+  perf: Perf, optim: Optim, tex: TexLoad, render: Render, astc: ASTC,
   mods: Mods, camfx: CamFX, noteKinds: NoteKinds, userAssets: UserAssets, modUI: ModUI, vfs: VFS, movil: Movil, hx: HX,
   get pack() { return G.pack; }, get variation() { return G.variation; },
   reloadAssets: ids => { Scene.ids = null; Scene.notes = null; return loadScene(ids); },
@@ -511,8 +550,10 @@ window.addEventListener('message', e => {
 /* ---------- inicio: pantalla negra de carga → todo listo a la vez ---------- */
 async function boot() {
   resize();
+  Optim.applyLive();
   requestAnimationFrame(frame);
   Loader.reset('Cargando…');
+  await TexLoad.loadManifest().catch(() => {});
   Mods.ready = Mods.restore().catch(e => console.warn('[hxc] restore', e));   // scripts .hxc y archivos guardados (IndexedDB)
   const [, , , song] = await Promise.all([
     Fonts.load(), loadHudAssets(), loadSounds(),

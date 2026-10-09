@@ -10,12 +10,12 @@ async function loadStage(id) {
   const sj = await fetchFirst(ASSET_CFG.stageDataPaths.map(t => fillT(t, { id })));
   const data = sj ? sj.data : DEFAULT_DATA.stages[id];
   if (!data) return null;
-  const props = [];
-  for (const p of data.props || []) {
+  // v3.3.0: los props se cargan en paralelo (antes uno por uno) y sus imágenes se decodifican fuera del hilo principal
+  const props = await Promise.all((data.props || []).map(async p => {
     const ap = String(p.assetPath || '');
     const prop = { name: p.name || ap, pos: p.position || [0, 0], scale: p.scale === undefined ? [1, 1] : (Array.isArray(p.scale) ? p.scale : [p.scale, p.scale]),
       scroll: p.scroll || [1, 1], alpha: p.alpha ?? 1, z: p.zIndex ?? 0, flipX: !!p.flipX, flipY: !!p.flipY, isPixel: !!p.isPixel, danceEvery: p.danceEvery || 0 };
-    if (ap.startsWith('#')) { prop.color = ap; props.push(prop); continue; }
+    if (ap.startsWith('#')) { prop.color = ap; return prop; }
     const pa = parseAssetPath(ap);
     const cands = ASSET_CFG.stageImagePaths.map(t => fillT(t, { stage: id, path: pa.path, dir: data.directory || 'shared' }));
     if (ap.includes(':')) cands.unshift(`${pa.lib}/images/${pa.path}.png`);
@@ -23,19 +23,36 @@ async function loadStage(id) {
       const xml = await fetchFirst(cands.map(c => c.replace(/\.png$/, '.xml')), 'text');
       if (xml) {
         try {
-          const atlas = parseSparrow(xml.data), img = await loadImg([xml.path.replace(/\.xml$/, '.png')]);
+          const atlas = parseSparrow(xml.data), img = await loadImg([xml.path.replace(/\.xml$/, '.png')], { world: true });
           const a = p.animations.find(a => a.name === p.startingAnimation) || p.animations.find(a => a.name === 'idle') || p.animations[0];
           const frames = img ? sparrowFrames(atlas, a.prefix || '', a.frameIndices, img) : [];
-          if (frames.length) { Object.assign(prop, { frames, fps: +a.frameRate || 24, loop: a.looped !== false, img, path: xml.path, off: a.offsets || [0, 0] }); props.push(prop); continue; }
+          if (frames.length) { Object.assign(prop, { frames, fps: +a.frameRate || 24, loop: a.looped !== false, img: null, sheet: img, path: xml.path, off: a.offsets || [0, 0] }); return prop; }
         } catch (e) { console.warn(e); }
       }
     }
-    const img = await loadImg(cands);
+    const img = await loadImg(cands, { world: true });
     prop.img = img; prop.path = img ? img.assetPath : null; prop.tried = cands[0];
-    props.push(prop);
-  }
-  return { id, data, props, from: sj ? sj.path : '(JSON incluido en js/assets.js)' };
+    return prop;
+  }));
+  await TexLoad.cropFrames(props.flatMap(p => p.frames || []));
+  const st = { id, data, props, from: sj ? sj.path : '(JSON incluido en js/assets.js)' };
+  stageModeFor(st);
+  return st;
 }
+/* Optimización → Escenario: completo / simple (solo el fondo) / oculto */
+function stageModeFor(st) {
+  const mode = Optim.s.stage, props = st.props.filter(p => p.img || p.color || p.frames);
+  for (const p of props) p.optHidden = false;
+  if (mode === 'oculto') for (const p of props) p.optHidden = true;
+  else if (mode === 'simple') {
+    // fondo = props quietos detrás de los personajes; de ellos, los 3 más grandes (en su orden de capas)
+    const sc = st.data.characters || {}, minZ = Math.min(...['bf', 'dad', 'gf'].map(r => sc[r]?.zIndex ?? (r === 'gf' ? 100 : r === 'dad' ? 200 : 300)));
+    const area = p => p.color ? Math.abs(p.scale[0] * p.scale[1]) : p.img ? p.img.naturalWidth * p.img.naturalHeight * Math.abs(p.scale[0] * p.scale[1]) : 0;
+    const back = props.filter(p => !p.frames && p.z < minZ).sort((a, b) => area(b) - area(a)).slice(0, 3);
+    for (const p of props) p.optHidden = !back.includes(p);
+  }
+}
+function Stage_applyMode() { if (Scene.stage) stageModeFor(Scene.stage); }
 
 /* ---------- Cámara del mundo (FlxG.camera de 1280x720 con zoom del escenario) ----------
    Como PlayState de V-Slice: la cámara sigue a cameraFollowPoint con lerp (CLASSIC) o se mueve con
@@ -79,69 +96,93 @@ function worldView(dt) {
   return { k, vx, vy, zoom };
 }
 /* matriz mundo -> canvas (px de dispositivo) para un scroll factor dado */
-function worldMatrix(v, zoom, sfx, sfy) {
+function worldMatrix(v, zoom, sfx, sfy, out) {
   const kz = v.k * zoom * DPR;
   const sx = Cam.x - 640, sy = Cam.y - 360;
-  return [kz, 0, 0, kz, DPR * (v.vx + v.k * 640) - kz * (sx * sfx + 640), DPR * (v.vy + v.k * 360) - kz * (sy * sfy + 360)];
+  const e = DPR * (v.vx + v.k * 640) - kz * (sx * sfx + 640), f = DPR * (v.vy + v.k * 360) - kz * (sy * sfy + 360);
+  return out ? mset(out, kz, 0, 0, kz, e, f) : [kz, 0, 0, kz, e, f];
 }
 
-function drawProp(p, v, zoom) {
-  if (p.visible === false) return;
-  const M = worldMatrix(v, zoom, p.scroll[0], p.scroll[1]);
-  ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
-  ctx.globalAlpha = p.alpha; ctx.imageSmoothingEnabled = !p.isPixel;
-  ctx.translate(p.pos[0], p.pos[1]);
-  if (p.color) { ctx.fillStyle = p.color; ctx.fillRect(0, 0, p.scale[0], p.scale[1]); }
-  else if (p.frames) {
-    const n = p.frames.length, i = p.loop ? Math.floor(G.gameTime / 1000 * p.fps) % n : Math.min(n - 1, Math.floor(G.gameTime / 1000 * p.fps));
-    const fr = p.frames[i]; ctx.scale(p.scale[0], p.scale[1]);
-    ctx.translate(fr.offX - p.off[0], fr.offY - p.off[1]);
-    if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
-    ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
+const _pM = [1, 0, 0, 1, 0, 0], _pL = [1, 0, 0, 1, 0, 0];
+function drawProp(p, v, zoom, R) {
+  if (p.visible === false || p.optHidden) return;
+  const M = worldMatrix(v, zoom, p.scroll[0], p.scroll[1], _pM), smooth = !p.isPixel && Optim.s.aa;
+  mmul(M, M, mset(_pL, 1, 0, 0, 1, p.pos[0], p.pos[1]));
+  if (p.color) { R.rect(p.color, M, p.scale[0], p.scale[1], p.alpha); return; }
+  if (p.frames) {
+    const n = p.frames.length, i0 = animFrame(G.gameTime, p.fps), i = p.loop ? ((i0 % n) + n) % n : clamp(i0, 0, n - 1);
+    const fr = p.frames[i]; if (!fr) return;
+    mmul(M, M, mset(_pL, p.scale[0], 0, 0, p.scale[1], 0, 0));
+    mmul(M, M, mset(_pL, 1, 0, 0, 1, fr.offX - p.off[0], fr.offY - p.off[1]));
+    if (fr.rot) mmul(M, M, mset(_pL, 0, -1, 1, 0, 0, fr.dh));
+    R.img(fr.img, fr.x, fr.y, fr.w, fr.h, M, p.alpha, smooth, false);
   } else if (p.img) {
-    const w = p.img.naturalWidth * p.scale[0], h = p.img.naturalHeight * p.scale[1];
-    if (p.flipX || p.flipY) { ctx.translate(p.flipX ? w : 0, p.flipY ? h : 0); ctx.scale(p.flipX ? -1 : 1, p.flipY ? -1 : 1); }
-    ctx.drawImage(p.img, 0, 0, w, h);
+    const nw = p.img.naturalWidth, nh = p.img.naturalHeight, w = nw * p.scale[0], h = nh * p.scale[1];
+    if (p.flipX || p.flipY) mmul(M, M, mset(_pL, p.flipX ? -1 : 1, 0, 0, p.flipY ? -1 : 1, p.flipX ? w : 0, p.flipY ? h : 0));
+    mmul(M, M, mset(_pL, w / nw, 0, 0, h / nh, 0, 0));
+    R.img(p.img, 0, 0, nw, nh, M, p.alpha, smooth, false);
   }
-  ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = true;
 }
 
-function renderWorld(dt, bump) {
+/* ¿el mundo de este frame necesita el lienzo 2D directo? (cosas que solo sabe dibujar el 2D) */
+function worldNeedsDirect() {
+  const st = Scene.stage;
+  if (!st || !st.props.some(p => p.img || p.color || p.frames)) return true;   // escenario improvisado
+  if (!Scene.chars.bf || !Scene.chars.dad) return true;                         // personaje improvisado
+  if (CamFX.active('game')) return true;                                        // efectos de cámara de scripts
+  for (const sp of ModRT.sprites) if (!sp.onHud) return true;                   // sprites de scripts en el mundo
+  return false;
+}
+
+const _layers = [];
+function renderWorld(dt, bump, R) {
   const v = worldView(dt), zoom = v.zoom * bump;
   const st = Scene.stage, sd = st ? st.data : {};
-  const props = st ? st.props.filter(p => p.img || p.color || p.frames) : [];
+  const direct = R.kind === 'canvas' && R.c === ctx;
   // fondo base (por si los props no cubren la pantalla)
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  R.clear();
   const M1 = worldMatrix(v, zoom, 1, 1);
   const toScreen = (wx, wy) => [(M1[0] * wx + M1[4]) / DPR, (M1[3] * wy + M1[5]) / DPR];
-  if (!props.length) {
+  const hasProps = !!st && st.props.some(p => p.img || p.color || p.frames);
+  if (!hasProps && direct) {
     // escenario improvisado alineado con los pies de los personajes
     const feetY = sd.characters?.bf?.position?.[1] ?? 885;
     const save = { floorY: L.floorY, horizon: L.horizon, charH: L.charH };
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     L.floorY = toScreen(0, feetY)[1]; L.charH = M1[3] / DPR * 400; L.horizon = L.floorY - L.charH * 0.55;
     ctx.save(); drawStage(!Scene.chars.gf); ctx.restore();
     Object.assign(L, save);
   }
-  // capas ordenadas por zIndex
-  const layers = props.map(p => ({ z: p.z, draw: () => drawProp(p, v, zoom) }));
+  // capas ordenadas por zIndex (sin crear funciones por frame)
+  const layers = _layers; layers.length = 0;
+  if (st) for (const p of st.props) if (p.img || p.color || p.frames) layers.push({ z: p.z, k: 0, o: p });
   for (const role of ['gf', 'dad', 'bf']) {
     const c = Scene.chars[role], sc = sd.characters?.[role];
-    if (c) layers.push({ z: c.z, draw: () => { c.update(); c.draw(worldMatrix(v, zoom, c.scroll[0], c.scroll[1])); } });
-    else if (role !== 'gf' && sc) layers.push({ z: sc.zIndex ?? 0, draw: () => {
-      // personaje improvisado en la posición del escenario (bf mira a la izquierda, dad a la derecha)
-      const [x, y] = toScreen(sc.position[0], sc.position[1]);
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      const s = M1[3] / DPR * 400 / 215;
-      if (role === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
-    } });
+    if (role === 'gf' && !Optim.s.gf) continue;                                 // Optimización → GF oculta
+    if (c) layers.push({ z: c.z, k: 1, o: c });
+    else if (role !== 'gf' && sc && direct) layers.push({ z: sc.zIndex ?? 0, k: 2, o: role, sc });
   }
   // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)
-  for (const sp of ModRT.sprites) if (!sp.onHud) layers.push({ z: sp.zIndex ?? 5000, draw: () => { ctx.save(); sp.render({ v, zoom }); ctx.restore(); } });
+  if (direct) for (const sp of ModRT.sprites) if (!sp.onHud) layers.push({ z: sp.zIndex ?? 5000, k: 3, o: sp });
   Cam.lastView = { v, zoom };
-  layers.sort((a, b) => a.z - b.z).forEach(l => l.draw());
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  layers.sort((a, b) => a.z - b.z);
+  for (const l of layers) {
+    try {
+      if (l.k === 0) drawProp(l.o, v, zoom, R);
+      else if (l.k === 1) { const c = l.o; c.update(); c.draw(worldMatrix(v, zoom, c.scroll[0], c.scroll[1], _cM), R); }
+      else if (l.k === 2) {
+        // personaje improvisado en la posición del escenario (bf mira a la izquierda, dad a la derecha)
+        const [x, y] = toScreen(l.sc.position[0], l.sc.position[1]);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.globalAlpha = 1;
+        const s = M1[3] / DPR * 400 / 215;
+        if (l.o === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
+      } else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
+    } catch (e) { reportOnce('capa ' + (l.o && (l.o.name || l.o.id) || l.k), e); }   // una capa rota no deja sin HUD al juego
+  }
 }
+const _cM = [1, 0, 0, 1, 0, 0];
+const _reported = new Set();
+function reportOnce(key, e) { if (_reported.has(key)) return; _reported.add(key); console.error('[TestSong] error dibujando ' + key + ' (se omite):', e); }
 
 /* ---------- Escenario improvisado (sin assets) ---------- */
 const L = {};   // medidas del escenario improvisado

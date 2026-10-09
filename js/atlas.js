@@ -362,11 +362,35 @@ function atlasDibujar(ctx, modelo, timeline, frame, base) {
         const t = atlasMultiplicar(m, atlasMatrizPieza(sp));
         ctx.setTransform(t[0], t[1], t[2], t[3], t[4], t[5]);
         ctx.globalAlpha = alphaPrevio * alpha;
-        ctx.drawImage(sp.img, sp.x, sp.y, sp.w, sp.h, 0, 0, sp.w, sp.h);
+        blit(ctx, sp.img, sp.x, sp.y, sp.w, sp.h, 0, 0, sp.w, sp.h);
         piezas++;
     }, 0);
     ctx.globalAlpha = alphaPrevio;
     return piezas;
 }
 
+/* v3.3.0: lista de piezas de un frame (matriz local × matriz de la pieza) calculada UNA vez y guardada.
+   Antes cada frame recorría todos los símbolos creando arrays nuevos (basura → pausas del recolector). */
+function atlasLista(modelo, timeline, frame) {
+    const cache = timeline._dl || (timeline._dl = []);
+    let l = cache[frame];
+    if (l) return l;
+    l = [];
+    atlasRecorrer(modelo, timeline, frame, ATLAS_IDENTIDAD, 1, (sp, m, alpha) => {
+        l.push({ sp, t: atlasMultiplicar(m, atlasMatrizPieza(sp)), a: alpha });
+    }, 0);
+    cache[frame] = l;
+    return l;
+}
+// dibuja en un destino de render.js (Canvas o WebGL) sin crear objetos por frame
+const _atlasM = [1, 0, 0, 1, 0, 0];
+function atlasDibujarR(R, modelo, timeline, frame, base, alpha, smooth, tint) {
+    const l = atlasLista(modelo, timeline, frame), m = _atlasM;
+    for (let i = 0; i < l.length; i++) {
+        const it = l[i], sp = it.sp;
+        mmul(m, base, it.t);
+        R.img(sp.img, sp.x, sp.y, sp.w, sp.h, m, alpha * it.a, smooth, tint);
+    }
+    return l.length;
+}
 

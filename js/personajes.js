@@ -67,7 +67,8 @@ class RealChar {
     this.curName = name; this.cur = a; this.t0 = G.gameTime; return true;
   }
   frameIdx() {
-    const a = this.cur, n = a.frames.length; let i = Math.floor((G.gameTime - this.t0) / 1000 * a.fps);
+    const a = this.cur, n = a.frames.length;
+    const i = animFrame(G.gameTime - this.t0, a.fps);
     return a.loop ? ((i % n) + n) % n : clamp(i, 0, n - 1);
   }
   finished() { return !this.cur.loop && (G.gameTime - this.t0) / 1000 * this.cur.fps >= this.cur.frames.length; }
@@ -113,26 +114,29 @@ class RealChar {
     if (G.gameTime < this.holdUntil && this.finished() && this.anims.has(this.curName + '-hold')) this.play(this.curName + '-hold', true);
     else if (G.gameTime >= this.holdUntil && this.curName.endsWith('-hold') && !this.curName.startsWith('idle')) this.play(this.curName.replace(/-hold$/, ''), false);
   }
-  draw(M) {   // M = matriz mundo -> píxeles del canvas
+  /* M = matriz mundo -> píxeles del canvas; R = destino (render.js: Canvas o WebGL) */
+  draw(M, R) {
     const a = this.cur; if (!a || this.visible === false) return;
     const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off = a.off || [0, 0];
-    ctx.save();
-    ctx.globalAlpha = this.alpha ?? 1;
-    ctx.imageSmoothingEnabled = !this.isPixel;
-    if (this.missTint && 'filter' in ctx) ctx.filter = 'grayscale(.4) sepia(.6) hue-rotate(220deg) saturate(2) brightness(.75)';
+    const alpha = this.alpha ?? 1, smooth = !this.isPixel && Optim.s.aa, tint = !!this.missTint, m = _charM;
     if (a.type === 'atlas') {
-      const local = [flip ? -s : s, 0, 0, s, this.bx - off[0] + (flip ? this.ref.maxX * s : -this.ref.minX * s), this.by - off[1] - this.ref.minY * s];
-      atlasDibujar(ctx, a.model, a.timeline, fr, atlasMultiplicar(M, local));
+      mmul(m, M, mset(_charL, flip ? -s : s, 0, 0, s, this.bx - off[0] + (flip ? this.ref.maxX * s : -this.ref.minX * s), this.by - off[1] - this.ref.minY * s));
+      atlasDibujarR(R, a.model, a.timeline, fr, m, alpha, smooth, tint);
     } else if (fr) {
       const rx = flip ? (fr.fw - fr.offX - fr.dw) : fr.offX;
-      ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
-      ctx.translate(this.bx + rx * s - off[0] + (flip ? fr.dw * s : 0), this.by + fr.offY * s - off[1]);
-      ctx.scale(flip ? -s : s, s);
-      if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
-      ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
+      mmul(m, M, mset(_charL, flip ? -s : s, 0, 0, s, this.bx + rx * s - off[0] + (flip ? fr.dw * s : 0), this.by + fr.offY * s - off[1]));
+      if (fr.rot) mmul(m, m, mset(_charL, 0, -1, 1, 0, 0, fr.dh));
+      R.img(fr.img, fr.x, fr.y, fr.w, fr.h, m, alpha, smooth, tint);
     }
-    ctx.restore();
   }
+}
+const _charM = [1, 0, 0, 1, 0, 0], _charL = [1, 0, 0, 1, 0, 0];
+/* frame de una animación según Optimización → Animaciones (normal / reducida a 12 fps / estática) */
+function animFrame(ms, fps) {
+  const mode = Optim.s.anim;
+  if (mode === 'estatica') return 0;
+  if (mode === 'reducida' && fps > 12) { const q = Math.floor(ms / 1000 * 12) / 12; return Math.floor(q * fps + 1e-6); }
+  return Math.floor(ms / 1000 * fps);
 }
 
 async function loadCharacter(role, id) {
@@ -163,6 +167,10 @@ async function loadCharacter(role, id) {
     missing.push(a.name);
   }
   if (!anims.size) return { error: 'ninguna animación del JSON coincide con el atlas', data };
+  // v3.3.0: de las hojas enormes (8192x4096…) solo quedan en memoria los frames que se usan
+  const objs = [];
+  for (const a of anims.values()) { if (a.type === 'atlas') objs.push(...a.model.sprites.values()); else objs.push(...a.frames); }
+  await TexLoad.cropFrames(uniq(objs));
   const ch = new RealChar(role, id, data, anims, missing, main.type, main.where);
   ch.dataFrom = dj ? dj.path : '(JSON incluido en js/assets.js)';
   return ch;

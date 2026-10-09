@@ -50,6 +50,13 @@ async function fetchFirst(list, kind) {
   Loader.begin();
   try { return await fetchFirstRaw(list, kind); } finally { Loader.end(); }
 }
+/* v3.3.0: si dos cargas piden la misma ruta a la vez (p. ej. bf y dad con el mismo personaje) se hace UNA petición */
+const _inflight = new Map();
+async function fetchShared(p) {
+  let pr = _inflight.get(p);
+  if (!pr) { pr = fetch(assetUrl(p), { cache: 'no-cache' }); _inflight.set(p, pr); pr.finally(() => _inflight.delete(p)).catch(() => {}); }
+  return (await pr).clone();
+}
 async function fetchFirstRaw(list, kind) {
   for (const p of uniq(list)) {
     const f = VFS.get(p); if (!f) continue;
@@ -61,9 +68,11 @@ async function fetchFirstRaw(list, kind) {
     } catch (e) { console.warn('[VFS] archivo inválido', p, e); }
   }
   for (const p of uniq(list)) {
+    // v3.3.0: una ruta que ya dio 404 no se vuelve a pedir; con texturas.json "completo" solo se piden las que existen
+    if (TexLoad.missing.has(p) || (TexLoad.manifestAll && /\.(xml|json|txt|png|astc|ktx2?|jpe?g|webp)$/i.test(p) && !TexLoad.inManifest(p))) { TexLoad.stats.avoided++; continue; }
     try {
-      const r = await fetch(assetUrl(p), { cache: 'no-cache' });
-      if (!r.ok) continue;
+      const r = await fetchShared(p);
+      if (!r.ok) { if (r.status === 404) TexLoad.missing.add(p); continue; }
       if (kind === 'text') return { data: await r.text(), path: p };
       if (kind === 'blob') return { data: await r.blob(), path: p };
       if (kind === 'buffer') return { data: await r.arrayBuffer(), path: p };
@@ -72,48 +81,7 @@ async function fetchFirstRaw(list, kind) {
   }
   return null;
 }
-/* Imágenes: PNG/JPG/WebP con <img>; texturas ASTC (.astc, .ktx/.ktx2 con ASTC) de los ports móviles se
-   decodifican (js/astc.js) a un <canvas> con naturalWidth/naturalHeight, que se dibuja igual que una imagen.
-   Por cada "x.png" pedido se prueba también "x.astc" (y "x.ktx"/"x.ktx2" si el usuario los cargó).
-   Los archivos del usuario se reconocen por su contenido (un .astc guardado con ruta .png también sirve). */
-const IMG_USER_ALT = ['.astc', '.ktx', '.ktx2'];
-const ASTC_FIRST = params.get('tex') === 'astc';
-function imgCandidates(list) {
-  const out = [];
-  for (const p of uniq(list)) {
-    out.push(p);
-    if (/\.png$/i.test(p)) {
-      const b = p.slice(0, -4);
-      if (ASTC_FIRST) out.splice(out.length - 1, 0, b + '.astc'); else out.push(b + '.astc');   // ?tex=astc: primero .astc (menos 404 en carpetas de ports móviles)
-      for (const e of IMG_USER_ALT) if (VFS.has(b + e)) out.push(b + e);
-    }
-  }
-  return uniq(out);
-}
-const imgFromUrl = url => new Promise(ok => { const img = new Image(); img.onload = () => ok(img.naturalWidth ? img : null); img.onerror = () => ok(null); img.src = url; });
-/* Blob (archivo cargado) → <img> o <canvas> (ASTC) o null */
-async function decodeImageBlob(blob, name, url) {
-  if (await ASTC.isBlob(blob)) return ASTC.decodeBlob(blob, name).catch(() => null);
-  return imgFromUrl(url || URL.createObjectURL(blob));
-}
-function loadOneImg(p) {
-  const vf = VFS.get(p);
-  if (vf) return decodeImageBlob(vf.blob, vf.name, VFS.url(vf));
-  if (ASTC.isName(p)) return ASTC.decodeUrl(assetUrl(p), p);
-  return imgFromUrl(assetUrl(p));
-}
-function loadImg(list) {
-  list = imgCandidates(list);
-  const user = list.find(p => VFS.has(p));
-  if (user) list = [user, ...list.filter(p => p !== user)];
-  return Loader.track((async () => {
-    for (const p of list) {
-      const img = await loadOneImg(p).catch(() => null);
-      if (img) { img.assetPath = p; return img; }
-    }
-    return null;
-  })());
-}
+/* Imágenes (PNG/JPG/WebP y ASTC/KTX): js/texturas.js (loadImg, Tex, blit) */
 function parseAssetPath(ap) {
   const s = String(ap || ''); const i = s.indexOf(':');
   return i > 0 ? { lib: s.slice(0, i), path: s.slice(i + 1) } : { lib: 'shared', path: s };
@@ -153,17 +121,17 @@ function sparrowFrames(atlas, prefijo, indices, img) {
 function drawSparrowFrame(ctx, fr, x, y, sx = 1, sy = sx) {
   ctx.save(); ctx.translate(x, y); ctx.scale(sx, sy); ctx.translate(fr.offX, fr.offY);
   if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
-  ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
+  blit(ctx, fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
   ctx.restore();
 }
 /* Busca <base>.xml + <base>.png/.astc (también imagePath del XML). Devuelve { atlas, img, where } o null */
-async function loadSparrowSheet(bases) {
+async function loadSparrowSheet(bases, opts) {
   for (const b of uniq(bases)) {
     const xml = await fetchFirst([b + '.xml'], 'text');
     if (!xml) continue;
     let atlas; try { atlas = parseSparrow(xml.data); } catch (e) { console.warn(b, e); continue; }
     const dir = b.includes('/') ? b.slice(0, b.lastIndexOf('/') + 1) : '';
-    const img = await loadImg([b + '.png', ...(atlas.imagePath ? [dir + atlas.imagePath] : [])]);
+    const img = await loadImg([b + '.png', ...(atlas.imagePath ? [dir + atlas.imagePath] : [])], opts);
     if (img) return { atlas, img, where: b };
   }
   return null;
@@ -182,7 +150,7 @@ async function loadGraphic(ap, renderType) {
         if (!sm) break;
         let spm; try { spm = atlasLeerSpritemap(sm.data); } catch (e) { break; }
         const png = sm.path.replace(/\.json$/, '.png');
-        const img = await loadImg([spm.imagen ? b + '/' + spm.imagen : png, png]);
+        const img = await loadImg([spm.imagen ? b + '/' + spm.imagen : png, png], { world: true });
         if (img) atlasAgregarSpritemap(model, spm, img);
       }
       if (!model.sprites.size) continue;
@@ -191,7 +159,7 @@ async function loadGraphic(ap, renderType) {
     return null;
   };
   const trySparrow = async () => {
-    const s = await loadSparrowSheet(bases);
+    const s = await loadSparrowSheet(bases, { world: true });
     return s ? { type: 'sparrow', atlas: s.atlas, img: s.img, where: s.where } : null;
   };
   const rt = String(renderType || '').toLowerCase();
@@ -201,7 +169,7 @@ async function loadGraphic(ap, renderType) {
 /* Tinte por luminancia (para crear receptores grises a partir de la nota de color) */
 function tintCanvas(img, dark, light) {
   const c = document.createElement('canvas'); c.width = img.naturalWidth || img.width; c.height = img.naturalHeight || img.height;
-  const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+  const x = c.getContext('2d'); blitAll(x, img, 0, 0);
   try {
     const d = x.getImageData(0, 0, c.width, c.height), p = d.data;
     for (let i = 0; i < p.length; i += 4) {

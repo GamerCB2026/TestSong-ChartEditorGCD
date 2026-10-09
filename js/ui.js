@@ -10,15 +10,71 @@
 const overlay = $('overlay');
 const UI = { kind: null, menu: null, items: [], sel: 0, panel: null, waitKey: null, lastToggle: 0, openedAt: 0 };
 
-const BASE_MENUS = {
-  pause: [['resume', 'Reanudar'], ['restart', 'Reiniciar'], ['options', 'Opciones'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
-  ready: [['resume', 'Jugar'], ['options', 'Opciones'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
-  over:  [['restart', 'Reintentar'], ['options', 'Opciones'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
-  end:   [['restart', 'Otra vez'], ['options', 'Opciones'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
-};
-const TITLES = { pause: '', over: 'Perdiste', end: 'Cancion terminada', ready: 'Listo', options: 'Opciones', difficulty: 'Dificultad', keybinds: 'Asignar Teclas' };
-const PARENT = { options: null, difficulty: 'options', keybinds: 'options' };   // null = menú base (pausa/listo…)
 const onOff = b => b ? 'On' : 'Off';
+const BASE_MENUS = {
+  pause: [['resume', 'Reanudar'], ['restart', 'Reiniciar'], ['options', 'Opciones'], ['optimizacion', 'Optimización'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
+  ready: [['resume', 'Jugar'], ['options', 'Opciones'], ['optimizacion', 'Optimización'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
+  over:  [['restart', 'Reintentar'], ['options', 'Opciones'], ['optimizacion', 'Optimización'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
+  end:   [['restart', 'Otra vez'], ['options', 'Opciones'], ['optimizacion', 'Optimización'], ['chart', 'Chart y modo'], ['assets', 'Assets cargados']],
+};
+const TITLES = { pause: '', over: 'Perdiste', end: 'Cancion terminada', ready: 'Listo', options: 'Opciones', difficulty: 'Dificultad', keybinds: 'Asignar Teclas', optimizacion: 'Optimización' };
+// menú Optimización: se abre desde la pausa (vuelve a la pausa) o desde Opciones (vuelve a Opciones)
+const PARENT = { options: null, difficulty: 'options', keybinds: 'options', optimizacion: null };   // null = menú base (pausa/listo…)
+
+/* ---------- Optimización: valores de cada ajuste (← → o Enter los recorren) ---------- */
+const OPT_ITEMS = {
+  preset:   { name: 'Calidad', vals: ['alta', 'media', 'baja', 'personalizado'], lab: { alta: 'Alta', media: 'Media', baja: 'Baja', personalizado: 'Personalizado' },
+              hint: 'Alta: todo al máximo · Media: texturas 75 %, escenario simple, 60 FPS · Baja: texturas 50 %, mundo 75 %, sin GF, animaciones reducidas, sin bop ni splashes' },
+  tex:      { name: 'Texturas', vals: [100, 75, 50], lab: v => v + '%', hint: 'Resolución de las imágenes de personajes y escenario (menos memoria y menos trabajo). Al cambiarla se recargan con pantalla de carga' },
+  res:      { name: 'Resolución', vals: [100, 75, 50], lab: v => v + '%', hint: 'Resolución a la que se dibuja el mundo (escenario + personajes). Las notas y el HUD siguen nítidos' },
+  stage:    { name: 'Escenario', vals: ['completo', 'simple', 'oculto'], lab: { completo: 'Completo', simple: 'Simple', oculto: 'Oculto' }, hint: 'Simple: solo el fondo (hasta 3 capas grandes, sin props animados ni de primer plano) · Oculto: fondo negro' },
+  gf:       { name: 'GF', vals: [true, false], lab: v => v ? 'Visible' : 'Oculta', hint: 'Oculta a GF (un personaje grande menos que dibujar)' },
+  anim:     { name: 'Animaciones', vals: ['normal', 'reducida', 'estatica'], lab: { normal: 'Normal', reducida: 'Reducidas', estatica: 'Estáticas' }, hint: 'Reducidas: personajes y props a 12 fps · Estáticas: primer frame de cada animación' },
+  bop:      { name: 'Bop De Cámara', vals: [true, false], lab: onOff, hint: 'Zoom de la cámara y del HUD con el ritmo' },
+  splashes: { name: 'Splashes', vals: [true, false], lab: onOff, hint: 'Salpicaduras al acertar SICK' },
+  aa:       { name: 'Antialiasing', vals: [true, false], lab: onOff, hint: 'Suavizado de las imágenes al escalarlas (Off = más rápido, bordes pixelados)' },
+  fps:      { name: 'Límite FPS', vals: [30, 60, 120, 0], lab: v => v ? String(v) : 'Sin límite', hint: 'Máximo de cuadros por segundo. 60 o 30 ahorran batería y dan un ritmo más estable en equipos lentos' },
+  contador: { name: 'Contador FPS', vals: [false, true], lab: onOff, hint: 'Muestra FPS, tiempo por cuadro, el peor cuadro y el renderizador arriba a la izquierda' },
+  renderer: { name: 'Render', vals: ['auto', 'webgl', 'canvas'], lab: v => ({ auto: 'Auto', webgl: 'WebGL', canvas: 'Canvas' }[v]),
+              hint: 'Auto: WebGL si hay tarjeta gráfica (sube las texturas ASTC comprimidas a la GPU), si no Canvas' },
+  auto:     { name: 'Bajo Rendimiento Auto', vals: [true, false], lab: onOff, hint: 'Si el juego va por debajo de ~40 FPS unos segundos, baja la calidad sola (te avisa)' },
+  tirones:  { name: 'Anti Tirones', vals: [true, false], lab: onOff, hint: 'Si la pantalla se congela un momento, las notas que pasaron mientras tanto no cuentan como fallo' },
+};
+function optLabel(k) {
+  const o = OPT_ITEMS[k], v = Optim.s[k], lab = typeof o.lab === 'function' ? o.lab(v) : o.lab[v];
+  if (k === 'renderer' && v === 'auto') return `${o.name}: Auto (${Render.wantGL() ? 'WebGL' : 'Canvas'})`;
+  return `${o.name}: ${lab}`;
+}
+function optCycle(k, dir = 1) {
+  const o = OPT_ITEMS[k]; let vals = o.vals;
+  if (k === 'preset') vals = vals.filter(v => v !== 'personalizado');
+  const i = vals.indexOf(Optim.s[k]), v = vals[((i < 0 ? -1 : i) + dir + vals.length * 2) % vals.length];
+  const oldTex = Optim.s.tex, oldRenderer = Optim.s.renderer;
+  if (k === 'preset') Optim.setPreset(v);
+  else { Optim.s[k] = v; Optim.touch(); }
+  if (k === 'renderer' && v !== oldRenderer) {
+    if (v === 'webgl' && !(GLW.init() && !GLW.lost)) toast('WebGL no está disponible en este navegador: se usa Canvas', 3500);
+    reloadTextures('Cambiando renderizador…');
+  } else if (Optim.s.tex !== oldTex) reloadTextures(`Texturas al ${Optim.s.tex}%…`);
+  if (k === 'aa') toast('Antialiasing ' + onOff(v), 1500);
+  buildMenu('optimizacion', true); Sfx.play('scrollMenu', 0.4);
+}
+/* recarga personajes/escenario (otra resolución de texturas u otro renderizador) sin perder la posición */
+async function reloadTextures(label) {
+  if (!G.chart) return;
+  const pos = G.songPos, kind = UI.kind || 'pause', sel = UI.sel, from = UI.optFrom;
+  Loader.reset(label); Loader.active = true; hideOverlay(); G.paused = true;
+  try {
+    TexLoad.reset(); Render.forgetTextures();
+    Scene.ids = null; Scene.notes = null;
+    const ids = Object.assign({}, G.chart.scene || {}, UserAssets.overrides());
+    await Promise.all([loadScene(ids), new Promise(ok => setTimeout(ok, 300))]);
+  } catch (e) { console.error(e); toast('Error al recargar: ' + e.message); }
+  Loader.finish();
+  G.songPos = pos; Music.seek(pos);
+  openOverlay(kind === 'ready' ? 'ready' : 'pause', 'optimizacion');
+  UI.optFrom = from; select(sel, true);
+}
 
 /* elementos de cada menú: [id, texto] */
 function menuItems(menu) {
@@ -30,7 +86,9 @@ function menuItems(menu) {
       ['downscroll', Opts.isDown() ? 'Downscroll' : 'Upscroll'],
       ['keybinds', 'Asignar Teclas'],
       ['vslice', 'Controles V-Slice: ' + ({ off: 'Off', arrows: 'Flechas', hitbox: 'Hitbox' }[Opts.vslice] || 'Off')],
+      ['optimizacion', 'Optimización'],
     ];
+    case 'optimizacion': return [['back', 'Back'], ...Object.keys(OPT_ITEMS).map(k => ['opt:' + k, optLabel(k)])];
     case 'difficulty': {
       // canción con variaciones (.fnfc): "normal", "erect (erect)", "normal (pico)"…
       if (G.pack) return [['back', 'Back'], ...G.pack.entries.map(en => ['diff:' + en.v + '|' + en.d, (en.v === G.variation && en.d === G.chart.difficulty ? '> ' : '') + en.label])];
@@ -47,15 +105,24 @@ function menuItems(menu) {
 }
 
 function buildMenu(menu, keepSel) {
+  if (menu === 'optimizacion' && !keepSel) UI.optFrom = UI.menu === 'options' ? 'options' : null;
   UI.menu = menu;
   const box = $('pauseItems'); box.innerHTML = '';
   box.classList.toggle('submenu', menu in PARENT);
+  box.classList.toggle('largo', menu === 'optimizacion');
   UI.items = menuItems(menu).map(([id, label], i) => {
     const b = document.createElement('button'); b.className = 'pitem'; b.dataset.id = id; b.type = 'button';
     const cv2 = document.createElement('canvas'); const sp = document.createElement('span'); sp.textContent = label;
     b.append(cv2, sp);
-    b.addEventListener('mouseenter', () => { if (UI.waitKey === null) select(i, true); });
-    b.addEventListener('click', e => { e.stopPropagation(); if (UI.waitKey !== null) return; select(i, true); activate(id); });
+    // solo con ratón (en táctil el "mouseenter" simulado elegía y cambiaba la opción con un solo toque)
+    b.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse' && UI.waitKey === null && performance.now() - (UI.scrollAt || 0) > 300) select(i, true); });
+    b.addEventListener('click', e => {
+      e.stopPropagation(); if (UI.waitKey !== null) return;
+      if (UI.swiped) { UI.swiped = false; return; }   // fue un deslizamiento, no un toque
+      // lista larga (Optimización): el primer toque elige la opción (y la centra), el segundo cambia su valor
+      if (menu === 'optimizacion' && i !== UI.sel && id !== 'back') { select(i); return; }
+      select(i, true); activate(id);
+    });
     box.appendChild(b);
     return { id, label, el: b, canvas: cv2, span: sp };
   });
@@ -63,6 +130,7 @@ function buildMenu(menu, keepSel) {
   UI.sel = -1; select(sel, true);
   $('optHint').textContent = menu === 'keybinds' ? (UI.waitKey !== null ? `Presiona una tecla para ${LANE_ES[UI.waitKey]} (Esc cancela)` : 'Enter: cambiar tecla · Las flechas ← ↓ ↑ → siempre funcionan · Esc: volver')
     : menu === 'options' ? 'Enter / clic: cambiar · Esc: volver · Se guarda en este navegador'
+    : menu === 'optimizacion' ? optHintText()
     : menu === 'difficulty' ? (G.pack && G.pack.vars.length > 1 ? 'Dificultad (variación): cambiar de variación recarga chart, audio, personajes y escenario' : 'Elige una dificultad: la canción se reinicia con esas notas') : '';
   $('optHint').hidden = !(menu in PARENT);
   syncTimeBar();
@@ -73,12 +141,31 @@ function select(i, silent) {
   const n = UI.items.length; i = ((i % n) + n) % n;
   if (i !== UI.sel && !silent) Sfx.play('scrollMenu', 0.4);
   UI.sel = i;
-  UI.items.forEach((it, k) => { it.el.classList.toggle('sel', k === i); it.el.style.setProperty('--d', k - i); });
+  const largo = $('pauseItems').classList.contains('largo');
+  UI.items.forEach((it, k) => {
+    it.el.classList.toggle('sel', k === i);
+    // lista larga: las opciones se alejan en curva a ambos lados y se desvanecen lejos de la elegida
+    const d = k - i; it.el.style.setProperty('--d', largo ? Math.min(Math.abs(d), 4) : d);
+    it.el.style.opacity = largo ? (d === 0 ? '' : String(Math.max(0, 0.6 - Math.max(0, Math.abs(d) - 2) * 0.2))) : '';
+  });
+  // lista larga (Optimización): se desplaza para que la opción elegida quede al centro
+  const box = $('pauseItems');
+  if (box.classList.contains('largo')) {
+    const el = UI.items[i].el, y = el.offsetTop + el.offsetHeight / 2;
+    const tr = `translateY(${-Math.round(y)}px)`;
+    if (box.style.transform !== tr) { box.style.transform = tr; UI.scrollAt = performance.now(); }
+    if (UI.menu === 'optimizacion') $('optHint').textContent = optHintText();
+  } else box.style.transform = '';
+}
+function optHintText() {
+  const it = UI.items[UI.sel], k = it && it.id.startsWith('opt:') ? it.id.slice(4) : null;
+  const tip = k ? OPT_ITEMS[k].hint : 'Ajustes para que el juego vaya fluido en equipos lentos';
+  return `${tip} · ← → / Enter: cambiar · Esc: volver · ${Render.name()}`;
 }
 function goBack() {
   if (UI.waitKey !== null) { UI.waitKey = null; buildMenu('keybinds', true); return; }
   if (UI.menu in PARENT) {
-    const p = PARENT[UI.menu], from = UI.menu;
+    const p = UI.menu === 'optimizacion' && UI.optFrom === 'options' ? 'options' : PARENT[UI.menu], from = UI.menu;
     buildMenu(p || UI.kind);
     const idx = UI.items.findIndex(it => it.id === from); if (idx >= 0) select(idx, true);
     return;
@@ -90,6 +177,8 @@ function activate(id) {
   else if (id === 'restart') restart();
   else if (id === 'chart' || id === 'assets') togglePanel(id);
   else if (id === 'options') { togglePanel(null); buildMenu('options'); }
+  else if (id === 'optimizacion') { if (UI.panel) togglePanel(null); buildMenu('optimizacion'); }
+  else if (id.startsWith('opt:')) optCycle(id.slice(4), 1);
   else if (id === 'back') goBack();
   else if (id === 'difficulty') buildMenu('difficulty');
   else if (id === 'keybinds') buildMenu('keybinds');
@@ -151,10 +240,14 @@ function uiTick() {
   if (!UI.kind) return;
   const t = performance.now();
   const base = clamp(Math.min(innerWidth * 0.06, innerHeight * 0.075), 24, 52);
-  for (const it of UI.items) {
-    const c = Fonts.toCanvas('bold', it.label, it.el.classList.contains('sel') ? base * 1.08 : base, t, it.canvas);
+  const largo = UI.menu === 'optimizacion', bs = largo ? base * 0.72 : base;
+  for (let k = 0; k < UI.items.length; k++) {
+    const it = UI.items[k];
+    if (largo && Math.abs(k - UI.sel) > 7 && it.canvas.width > 1) continue;   // las lejanas (fuera de pantalla) no se redibujan
+    const c = Fonts.toCanvas('bold', it.label, it.el.classList.contains('sel') ? bs * 1.08 : bs, t, it.canvas);
     it.el.classList.toggle('alfabeto', !!c);
   }
+  if (largo && UI.items[UI.sel]) { const el = UI.items[UI.sel].el, tr = `translateY(${-Math.round(el.offsetTop + el.offsetHeight / 2)}px)`, box = $('pauseItems'); if (box.style.transform !== tr) { box.style.transform = tr; UI.scrollAt = t; } }
   const title = TITLES[UI.menu in PARENT ? UI.menu : UI.kind];
   const tc = title ? Fonts.toCanvas('bold', title, clamp(innerWidth * 0.07, 30, 64), t, $('ovTitleCanvas')) : null;
   $('ovTitleText').textContent = title ? title.toUpperCase() : '';
@@ -302,6 +395,9 @@ window.addEventListener('keydown', e => {
     if (e.repeat && (e.key === 'Escape' || e.key === 'Enter')) { e.preventDefault(); return; }
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); select(UI.sel - 1); return; }
     if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); select(UI.sel + 1); return; }
+    if (UI.menu === 'optimizacion' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D')) {
+      e.preventDefault(); const id = UI.items[UI.sel].id; if (id.startsWith('opt:')) optCycle(id.slice(4), /Right|d|D/.test(e.key) ? 1 : -1); return;
+    }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(UI.items[UI.sel].id); return; }
     if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'p' || e.key === 'P') { e.preventDefault(); goBack(); return; }
     return;
@@ -324,3 +420,14 @@ window.addEventListener('keyup', e => {
 });
 
 /* táctil: ver js/movil.js (zonas de toque, controles V-Slice, orientación y pantalla completa) */
+/* lista larga: rueda del ratón / deslizar el dedo para recorrerla */
+overlay.addEventListener('wheel', e => { if (UI.menu !== 'optimizacion') return; e.preventDefault(); if (Math.abs(e.deltaY) > 4) select(UI.sel + Math.sign(e.deltaY)); }, { passive: false });
+let _swipeY = null;
+overlay.addEventListener('touchstart', e => { if (UI.menu === 'optimizacion' && e.touches.length === 1) { _swipeY = e.touches[0].clientY; UI.swiped = false; } }, { passive: true });
+overlay.addEventListener('touchmove', e => {
+  if (_swipeY === null || UI.menu !== 'optimizacion') return;
+  const dy = e.touches[0].clientY - _swipeY, step = 36;
+  if (Math.abs(dy) >= step) { select(UI.sel + (dy < 0 ? 1 : -1)); _swipeY = e.touches[0].clientY; UI.scrollAt = performance.now(); UI.swiped = true; }
+}, { passive: true });
+overlay.addEventListener('touchend', () => { _swipeY = null; }, { passive: true });
+

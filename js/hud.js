@@ -27,7 +27,7 @@ async function loadHudAssets() {
 /* ---------- barra de vida + iconos ---------- */
 function drawHealthBar() {
   const b = LAYOUT.bar, bw = FNF.HEALTH_BAR_W, bh = FNF.HEALTH_BAR_H;
-  if (HudImg.bar) ctx.drawImage(HudImg.bar, b.x, b.y, HudImg.bar.naturalWidth, HudImg.bar.naturalHeight);
+  if (HudImg.bar) blitAll(ctx, HudImg.bar, b.x, b.y);
   else { ctx.fillStyle = '#000'; ctx.fillRect(b.x, b.y, bw, bh); }
   const ix = b.x + 4, iy = b.y + 4, iw = bw - 8, ih = bh - 8;
   const hv = clamp(G.healthLerp, 0, FNF.HEALTH_MAX), split = iw * (1 - hv / FNF.HEALTH_MAX);   // FlxBar RIGHT_TO_LEFT
@@ -87,7 +87,7 @@ function drawPopups() {
   for (const p of Popups) {
     const a = p.t < p.delay ? 1 : clamp(1 - (p.t - p.delay) / 200, 0, 1);
     ctx.save(); ctx.globalAlpha = a;
-    if (p.img) ctx.drawImage(p.img, p.x, p.y, p.w, p.h);
+    if (p.img) blitAll(ctx, p.img, p.x, p.y, p.w, p.h);
     else text(p.txt, p.x + p.w / 2, p.y + p.h / 2, p.h * 0.8, p.color);
     ctx.restore();
   }
@@ -101,7 +101,7 @@ function drawCountdown() {
   const f = (G.songPos / G.chart.crochet) - b, alpha = 1 - cubeInOut(f);
   const anyImg = HudImg.countdown.some(Boolean), img = HudImg.countdown[step];
   ctx.save(); ctx.globalAlpha = alpha;
-  if (img) ctx.drawImage(img, (V.w - img.naturalWidth) / 2, (V.h - img.naturalHeight) / 2);
+  if (img) blitAll(ctx, img, (V.w - img.naturalWidth) / 2, (V.h - img.naturalHeight) / 2);
   else if (!anyImg) text(['3', '2', '1', '¡YA!'][step], V.w / 2, V.h / 2, 110, step === 3 ? '#ffe27a' : '#fff');
   ctx.restore();
 }

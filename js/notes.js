@@ -119,6 +119,7 @@ function drawSustain(side, lane, x, yA, yB, alpha) {
 /* --- splashes --- */
 const Splashes = [];
 function spawnSplash(side, lane) {
+  if (!Optim.s.splashes) return;   // Optimización → Splashes desactivados
   const sk = Scene.notes, list = sk && sk.splash[lane];
   Splashes.push({ side, lane, t0: G.gameTime, frames: list && list.length ? list[randInt(0, list.length - 1)] : null, fps: 24 + randInt(-2, 2) });
   if (Splashes.length > 12) Splashes.shift();
