@@ -98,3 +98,16 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
 #pauseItems.largo { top: 50%; gap: 6px; transition: transform .15s ease-out; }
 #pauseItems.largo .pitem span { font-size: 26px; }
 @media (max-height: 500px) { #pauseItems.largo { gap: 2px; } #pauseItems.largo .pitem span { font-size: 20px; } }
+/* v3.4.0: Chart y modo → Asignar Chart / Metadata / Song y otros motores; Assets → iconos, parlante, shaders */
+#impBox h4, #uaBox h4 { margin: 12px 0 4px; font-size: 13px; color: #ffd86b; letter-spacing: .5px; }
+.imp-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.imp-row .btn { flex: 1 1 40%; width: auto; margin: 4px 0; }
+.imp-st { font-size: 12px; color: #c9bbef; line-height: 1.4; margin: 4px 0 6px; word-break: break-word; }
+.imp-vars { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.imp-var { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; border: 2px solid #4b3a78; border-radius: 8px; font-size: 13px; cursor: pointer; background: rgba(29, 16, 54, .6); }
+.imp-var.sel { border-color: #ffd86b; background: rgba(80, 50, 140, .6); }
+.imp-var.falta { opacity: .55; cursor: default; }
+.imp-var small { color: #c9bbef; font-size: 11px; }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+.ua-off { font-size: 12px; margin-top: 4px; }
+.ua-off input { width: 64px; background: #1d1036; color: #fff; border: 2px solid #8e6bd6; border-radius: 6px; padding: 2px 4px; font: inherit; }
