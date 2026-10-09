@@ -71,7 +71,8 @@ const ModUI = {
   reqLabel(r) {
     if (r.type === 'res') {
       const exp = ModRes.expected(r.kind, r.key, r.lib);
-      if (r.kind === 'sparrow') return `${exp} + ${exp.replace(/\.xml$/, '.png')}`;
+      if (r.kind === 'sparrow') return `${exp} + ${exp.replace(/\.xml$/, '.png')} (o .astc)`;
+      if (r.kind === 'image') return exp + (/\.png$/i.test(exp) ? ' (o .astc)' : '');
       return exp;
     }
     if (r.type === 'module') return `módulo "${r.key}" (ModuleHandler.getModule) → su .hxc`;
@@ -79,14 +80,14 @@ const ModUI = {
     if (r.type === 'class') return `import ${r.key} → el .hxc que define "${r.short}"`;
     if (r.type === 'hxcfile') return `${r.key}`;
     if (r.type === 'notestyle') {
-      const s = NoteStyles.map.get(r.key), need = s && s.sheetKey && s.status !== 'ok' ? ` + images/${s.sheetKey}.xml + images/${s.sheetKey}.png` : '';
+      const s = NoteStyles.map.get(r.key), need = s && s.sheetKey && s.status !== 'ok' ? ` + images/${s.sheetKey}.xml + images/${s.sheetKey}.png/.astc` : '';
       return `data/notestyles/${r.key}.json${need}`;
     }
     return r.key;
   },
   reqAccept(r) {
-    if (r.type !== 'res') return r.type === 'notestyle' ? '.json,.xml,.png' : '.hxc';
-    return { image: '.png,.jpg,.jpeg,.webp', sparrow: '.xml,.png', sound: '.ogg,.mp3,.wav', music: '.ogg,.mp3,.wav', video: '.mp4,.webm', frag: '.frag,.glsl', font: '.ttf,.otf,.woff,.woff2', json: '.json' }[r.kind] || '';
+    if (r.type !== 'res') return r.type === 'notestyle' ? '.json,.xml,.png,' + ASTC_ACCEPT : '.hxc';
+    return { image: '.png,.jpg,.jpeg,.webp,' + ASTC_ACCEPT, sparrow: '.xml,.png,' + ASTC_ACCEPT, sound: '.ogg,.mp3,.wav', music: '.ogg,.mp3,.wav', video: '.mp4,.webm', frag: '.frag,.glsl', font: '.ttf,.otf,.woff,.woff2', json: '.json' }[r.kind] || '';
   },
 
   /* ---- carga de archivos ---- */
@@ -135,7 +136,7 @@ const ModUI = {
         else { const s = NoteStyles.map.get(r.key); const base = 'images/' + (s && s.sheetKey ? s.sheetKey : f.name.replace(/\.\w+$/, '')); path = base + '.' + ext; }
       } else {
         path = ModRes.expected(r.kind, r.key, r.lib);
-        if (r.kind === 'sparrow') path = path.replace(/\.xml$/, '.' + ext);
+        if (r.kind === 'sparrow') path = path.replace(/\.xml$/, '.' + (ASTC.isName(f.name) ? 'png' : ext));   // .astc/.ktx: misma ruta que la PNG (se reconoce por el contenido)
         else if (!/\.\w+$/.test(path.split('/').pop())) path += '.' + ext;
         else if (r.kind === 'sound' || r.kind === 'music') path = path.replace(/\.\w+$/, '.' + ext);
       }

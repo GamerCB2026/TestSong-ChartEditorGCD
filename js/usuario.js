@@ -19,6 +19,18 @@ const UserAssets = {
   /* ---------- selector de archivos ---------- */
   pick(accept, multiple, dir) { return ModUI.pick(accept, multiple, dir); },
   rel: f => (f.webkitRelativePath || f.name).replace(/\\/g, '/'),
+  /* imágenes: la PNG pedida también vale como .astc / .ktx / .ktx2 (texturas de los ports móviles); se empareja por nombre sin extensión */
+  IMG: /\.(png|astc|ktx2?)$/i,
+  stem: s => String(s).toLowerCase().replace(/\.(png|astc|ktx2?)$/i, ''),
+  findFile(files, rel, name, ext) {
+    if (ext !== 'png') return files.find(f => this.rel(f).toLowerCase().endsWith('/' + rel) || this.rel(f).toLowerCase() === rel) || files.find(f => f.name.toLowerCase() === name);
+    const imgs = files.filter(f => this.IMG.test(f.name)), r = this.stem(rel), n = this.stem(name);
+    const pref = list => list.find(f => /\.png$/i.test(f.name)) || list[0];   // si están las dos, la PNG
+    const byRel = imgs.filter(f => { const x = this.stem(this.rel(f)); return x.endsWith('/' + r) || x === r; });
+    return pref(byRel.length ? byRel : imgs.filter(f => this.stem(f.name) === n));
+  },
+  /* ruta de VFS con la extensión real del archivo elegido (x.png → x.astc si se eligió un .astc) */
+  realExt(path, file) { const m = /\.(astc|ktx2?)$/i.exec(file && file.name || ''); return m ? path.replace(/\.png$/i, m[0].toLowerCase()) : path; },
 
   /* ---------- escenario ---------- */
   async loadStageJson() {
@@ -34,7 +46,7 @@ const UserAssets = {
       const anim = Array.isArray(p.animations) && p.animations.length && p.animType !== 'animateatlas';
       for (const ext of anim ? ['xml', 'png'] : ['png']) {
         const k = pa.path + '.' + ext; if (seen.has(k)) continue; seen.add(k);
-        needs.push({ ext, rel: k.toLowerCase(), name: (name + '.' + ext).toLowerCase(), label: k, prop: p.name || ap,
+        needs.push({ ext, rel: k.toLowerCase(), name: (name + '.' + ext).toLowerCase(), label: ext === 'png' ? k + ' (o .astc)' : k, prop: p.name || ap,
           paths: uniq([`${pa.lib}/images/${k}`, `shared/images/${k}`, `${data.directory || 'shared'}/images/${k}`, `shared/images/${id}/${k}`]), file: null });
       }
     }
@@ -45,7 +57,7 @@ const UserAssets = {
   matchStage(files) {
     const st = this.stage; if (!st) return 0; let n = 0;
     for (const nd of st.needs) {
-      const f = files.find(f => this.rel(f).toLowerCase().endsWith('/' + nd.rel) || this.rel(f).toLowerCase() === nd.rel) || files.find(f => f.name.toLowerCase() === nd.name);
+      const f = this.findFile(files, nd.rel, nd.name, nd.ext);
       if (f) { nd.file = f; n++; }
     }
     return n;
@@ -72,8 +84,8 @@ const UserAssets = {
     aps.forEach((ap, idx) => {
       const pa = parseAssetPath(ap), name = pa.path.split('/').pop(), base = `${pa.lib}/images/${pa.path}`;
       const optional = idx > 0 && !data.animations.some(a => a.assetPath === ap && NEEDED_ANIM.test(a.name));
-      if (atlas) needs.push({ kind: 'atlas', ap, base, dir: name.toLowerCase(), main: idx === 0, optional, label: `${pa.path}/ (Animation.json + spritemap1.json + spritemap1.png…)`, files: null });
-      else for (const ext of ['xml', 'png']) needs.push({ kind: ext, ap, base, main: idx === 0, optional, name: (name + '.' + ext).toLowerCase(), rel: (pa.path + '.' + ext).toLowerCase(), label: `${pa.path}.${ext}`, file: null });
+      if (atlas) needs.push({ kind: 'atlas', ap, base, dir: name.toLowerCase(), main: idx === 0, optional, label: `${pa.path}/ (Animation.json + spritemap1.json + spritemap1.png/.astc…)`, files: null });
+      else for (const ext of ['xml', 'png']) needs.push({ kind: ext, ap, base, main: idx === 0, optional, name: (name + '.' + ext).toLowerCase(), rel: (pa.path + '.' + ext).toLowerCase(), label: `${pa.path}.${ext}${ext === 'png' ? ' (o .astc)' : ''}`, file: null });
     });
     const notes = [];
     if (rt === 'packer') notes.push('renderType "packer" (txt) no se imita: se intenta como Sparrow');
@@ -92,17 +104,17 @@ const UserAssets = {
       for (const nd of c.needs) {
         let g = withAnim.find(([d]) => !used.has(d) && d.split('/').pop().toLowerCase() === nd.dir);
         if (!g && nd.main) g = withAnim.find(([d]) => !used.has(d) && (withAnim.length === 1 || d === ''));
-        if (g) { used.add(g[0]); nd.files = g[1].filter(f => /\.(json|png)$/i.test(f.name)); n++; }
+        if (g) { used.add(g[0]); nd.files = g[1].filter(f => /\.(json|png|astc|ktx2?)$/i.test(f.name)); n++; }
       }
       return n;
     }
-    const xmls = files.filter(f => /\.xml$/i.test(f.name)), pngs = files.filter(f => /\.png$/i.test(f.name));
+    const xmls = files.filter(f => /\.xml$/i.test(f.name)), pngs = files.filter(f => this.IMG.test(f.name));
     for (const nd of c.needs) {
-      let f = files.find(f => this.rel(f).toLowerCase().endsWith('/' + nd.rel)) || files.find(f => f.name.toLowerCase() === nd.name);
+      let f = this.findFile(files, nd.rel, nd.name, nd.kind);
       if (!f && nd.main) {
         // un solo .xml/.png elegido para el gráfico principal: se usa aunque el nombre no coincida
         if (nd.kind === 'xml' && xmls.length === 1) f = xmls[0];
-        if (nd.kind === 'png') { const x = c.needs.find(o => o.main && o.kind === 'xml'); const same = x && x.file && pngs.find(p => p.name.replace(/\.png$/i, '') === x.file.name.replace(/\.xml$/i, '')); f = same || (pngs.length === 1 ? pngs[0] : null); }
+        if (nd.kind === 'png') { const x = c.needs.find(o => o.main && o.kind === 'xml'); const same = x && x.file && pngs.find(p => this.stem(p.name) === x.file.name.replace(/\.xml$/i, '').toLowerCase()); f = same || (pngs.length === 1 ? pngs[0] : null); }
       }
       if (f) { nd.file = f; n++; }
     }
@@ -110,7 +122,7 @@ const UserAssets = {
   },
   async charFiles(role, dir) {
     const c = this.roles[role]; if (!c) { toast(`Primero "Cargar ${this.ROLE_ES[role]}" (su JSON)`); return; }
-    const files = await this.pick(dir ? '' : (c.atlas ? '.json,.png' : '.xml,.png,.txt'), true, dir); if (!files.length) return;
+    const files = await this.pick(dir ? '' : (c.atlas ? '.json,.png,' + ASTC_ACCEPT : '.xml,.png,.txt,' + ASTC_ACCEPT), true, dir); if (!files.length) return;
     const n = this.matchChar(role, files); this.render();
     toast(`${this.ROLE_ES[role]}: ${n} coincidencia(s)`);
   },
@@ -124,14 +136,14 @@ const UserAssets = {
     const st = this.stage;
     if (st) {
       this.put(`data/stages/${st.id}.json`, st.json, st.fileName);
-      for (const nd of st.needs) if (nd.file) for (const p of nd.paths) this.put(p, nd.file, nd.file.name);
+      for (const nd of st.needs) if (nd.file) for (const p of nd.paths) this.put(this.realExt(p, nd.file), nd.file, nd.file.name);
       ov.stage = st.id;
     }
     for (const role of ['bf', 'gf', 'dad']) {
       const c = this.roles[role]; if (!c) continue;
       this.put(`data/characters/${c.id}.json`, c.json, c.json.name);
       for (const nd of c.needs) {
-        if (nd.file) this.put(`${nd.base}.${nd.kind}`, nd.file, nd.file.name);
+        if (nd.file) this.put(this.realExt(`${nd.base}.${nd.kind}`, nd.file), nd.file, nd.file.name);
         if (nd.files) for (const f of nd.files) this.put(`${nd.base}/${f.name}`, f, f.name);
       }
       ov[role] = c.id;

@@ -72,22 +72,47 @@ async function fetchFirstRaw(list, kind) {
   }
   return null;
 }
+/* Imágenes: PNG/JPG/WebP con <img>; texturas ASTC (.astc, .ktx/.ktx2 con ASTC) de los ports móviles se
+   decodifican (js/astc.js) a un <canvas> con naturalWidth/naturalHeight, que se dibuja igual que una imagen.
+   Por cada "x.png" pedido se prueba también "x.astc" (y "x.ktx"/"x.ktx2" si el usuario los cargó).
+   Los archivos del usuario se reconocen por su contenido (un .astc guardado con ruta .png también sirve). */
+const IMG_USER_ALT = ['.astc', '.ktx', '.ktx2'];
+const ASTC_FIRST = params.get('tex') === 'astc';
+function imgCandidates(list) {
+  const out = [];
+  for (const p of uniq(list)) {
+    out.push(p);
+    if (/\.png$/i.test(p)) {
+      const b = p.slice(0, -4);
+      if (ASTC_FIRST) out.splice(out.length - 1, 0, b + '.astc'); else out.push(b + '.astc');   // ?tex=astc: primero .astc (menos 404 en carpetas de ports móviles)
+      for (const e of IMG_USER_ALT) if (VFS.has(b + e)) out.push(b + e);
+    }
+  }
+  return uniq(out);
+}
+const imgFromUrl = url => new Promise(ok => { const img = new Image(); img.onload = () => ok(img.naturalWidth ? img : null); img.onerror = () => ok(null); img.src = url; });
+/* Blob (archivo cargado) → <img> o <canvas> (ASTC) o null */
+async function decodeImageBlob(blob, name, url) {
+  if (await ASTC.isBlob(blob)) return ASTC.decodeBlob(blob, name).catch(() => null);
+  return imgFromUrl(url || URL.createObjectURL(blob));
+}
+function loadOneImg(p) {
+  const vf = VFS.get(p);
+  if (vf) return decodeImageBlob(vf.blob, vf.name, VFS.url(vf));
+  if (ASTC.isName(p)) return ASTC.decodeUrl(assetUrl(p), p);
+  return imgFromUrl(assetUrl(p));
+}
 function loadImg(list) {
-  list = uniq(list);
+  list = imgCandidates(list);
   const user = list.find(p => VFS.has(p));
   if (user) list = [user, ...list.filter(p => p !== user)];
-  return Loader.track(new Promise(resolve => {
-    let i = 0;
-    const next = () => {
-      if (i >= list.length) return resolve(null);
-      const p = list[i++], img = new Image();
-      img.onload = () => { img.assetPath = p; img.naturalWidth ? resolve(img) : next(); };
-      img.onerror = next;
-      const vf = VFS.get(p);
-      img.src = vf ? VFS.url(vf) : assetUrl(p);
-    };
-    next();
-  }));
+  return Loader.track((async () => {
+    for (const p of list) {
+      const img = await loadOneImg(p).catch(() => null);
+      if (img) { img.assetPath = p; return img; }
+    }
+    return null;
+  })());
 }
 function parseAssetPath(ap) {
   const s = String(ap || ''); const i = s.indexOf(':');
@@ -131,7 +156,7 @@ function drawSparrowFrame(ctx, fr, x, y, sx = 1, sy = sx) {
   ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
   ctx.restore();
 }
-/* Busca <base>.xml + <base>.png (también imagePath del XML). Devuelve { atlas, img, where } o null */
+/* Busca <base>.xml + <base>.png/.astc (también imagePath del XML). Devuelve { atlas, img, where } o null */
 async function loadSparrowSheet(bases) {
   for (const b of uniq(bases)) {
     const xml = await fetchFirst([b + '.xml'], 'text');

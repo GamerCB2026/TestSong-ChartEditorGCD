@@ -139,7 +139,7 @@ const ModRes = {
   expected(kind, key, lib) {
     const [dir, ext] = this.DIRS[kind] || ['', ''];
     const k = String(key).replace(/^assets\//, '');
-    const hasExt = /\.\w{2,4}$/.test(k) && kind !== 'image' && kind !== 'sparrow' ? true : /\.(png|xml|ogg|mp3|mp4|webm|frag|ttf|otf|json)$/i.test(k);
+    const hasExt = /\.\w{2,4}$/.test(k) && kind !== 'image' && kind !== 'sparrow' ? true : /\.(png|astc|ktx2?|xml|ogg|mp3|mp4|webm|frag|ttf|otf|json)$/i.test(k);
     return (lib && lib !== 'preload' ? lib + '/' : '') + (dir ? dir + '/' : '') + k + (hasExt ? '' : ext);
   },
   candidates(kind, key, lib) {
@@ -147,19 +147,24 @@ const ModRes = {
     const out = [e, base, 'shared/' + base, 'preload/' + base];
     if (kind === 'music') { const k = String(key); out.push(`music/${k}/${k}.ogg`, `shared/music/${k}/${k}.ogg`); }
     if (kind === 'sound' || kind === 'music') out.push(...out.map(p => p.replace(/\.ogg$/, '.mp3')));
+    if (kind === 'image') out.push(...out.map(p => p.replace(/\.png$/i, '.astc')));   // texturas ASTC de los ports móviles
     return uniq(out);
   },
   /* "assets/shared/images/x.png" -> { kind, key, lib } */
   parsePath(p) {
     p = String(p ?? '');
-    const m = /^(?:assets\/)?(?:([\w-]+)[:/])?(images|sounds|music|videos|shaders|fonts|data)\/(.+?)(\.(png|xml|ogg|mp3|wav|mp4|webm|frag|ttf|otf|json))?$/i.exec(p);
+    const m = /^(?:assets\/)?(?:([\w-]+)[:/])?(images|sounds|music|videos|shaders|fonts|data)\/(.+?)(\.(png|astc|ktx2?|xml|ogg|mp3|wav|mp4|webm|frag|ttf|otf|json))?$/i.exec(p);
     if (m) { const kind = { images: 'image', sounds: 'sound', music: 'music', videos: 'video', shaders: 'frag', fonts: 'font', data: 'json' }[m[2].toLowerCase()]; return { kind, key: m[3] + (kind === 'font' && m[4] ? m[4] : ''), lib: m[1] || null }; }
-    return { kind: 'image', key: p.replace(/\.png$/i, ''), lib: null };
+    return { kind: 'image', key: p.replace(/\.(png|astc|ktx2?)$/i, ''), lib: null };
   },
   keyOf(kind, key, lib) { return kind + '|' + (lib || '') + '|' + key; },
   findUser(kind, key, lib) {
-    for (const c of this.candidates(kind, key, lib)) { const f = VFS.get(c); if (f) return f; }
-    const e = this.expected(kind, key, lib); return VFS.byBase(e.split('/').pop());
+    const cands = this.candidates(kind, key, lib);
+    if (kind === 'image') cands.push(...cands.filter(p => /\.png$/i.test(p)).flatMap(p => [p.replace(/\.png$/i, '.ktx'), p.replace(/\.png$/i, '.ktx2')]));
+    for (const c of cands) { const f = VFS.get(c); if (f) return f; }
+    const e = this.expected(kind, key, lib).split('/').pop();
+    if (kind === 'image') { for (const x of ['', '.astc', '.ktx', '.ktx2']) { const f = VFS.byBase(x ? e.replace(/\.png$/i, x) : e); if (f) return f; } return null; }
+    return VFS.byBase(e);
   },
   get(kind, key, lib) { const r = this.cache.get(this.keyOf(kind, key, lib)); if (!r) { this.load(kind, key, lib); return null; } return r.status === 'ok' ? r.val : null; },
   status(kind, key, lib) { const r = this.cache.get(this.keyOf(kind, key, lib)); return r ? r.status : 'none'; },
@@ -187,7 +192,7 @@ const ModRes = {
     return rec.p;
   },
   async decode(kind, key, blob, user) {
-    if (kind === 'image') return await new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = URL.createObjectURL(blob); });
+    if (kind === 'image') return await decodeImageBlob(blob, String(key));   // PNG/JPG/WebP o ASTC/KTX
     if (kind === 'sound' || kind === 'music') { const c = Sfx.ensureCtx(); if (!c) return null; const ab = await blob.arrayBuffer(); return await new Promise((ok, bad) => { const p = c.decodeAudioData(ab, ok, bad); if (p && p.then) p.then(ok, bad); }); }
     if (kind === 'video') return URL.createObjectURL(blob);
     if (kind === 'font') { const fam = 'hxfont-' + String(key).replace(/\W+/g, '_'); const ff = new FontFace(fam, await blob.arrayBuffer()); await ff.load(); document.fonts.add(ff); return fam; }
