@@ -1,0 +1,69 @@
+/* estilo.css — base de la página, menú de pausa estilo V-Slice, avisos */
+@font-face { font-family: "VCR"; src: url("../fonts/vcr.ttf") format("truetype"), url("../images/fonts/vcr.ttf") format("truetype"), url("../assets/fonts/vcr.ttf") format("truetype"); font-display: swap; }
+
+* { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #fff;
+  font-family: "VCR", "Trebuchet MS", "Segoe UI", system-ui, sans-serif; touch-action: none; }
+
+/* ---------- Botón de pausa (como el del modo móvil del juego: arriba a la derecha) ---------- */
+#pauseBtn { position: fixed; z-index: 5; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right));
+  width: 46px; height: 46px; border-radius: 12px; border: 3px solid rgba(255,255,255,.85); background: rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; padding: 0; opacity: .75; transition: transform .1s, opacity .1s; }
+#pauseBtn:hover { transform: scale(1.07); opacity: 1; }
+#pauseBtn:active { transform: scale(.94); }
+#pauseBtn i { display: block; width: 7px; height: 20px; background: #fff; border-radius: 2px; }
+
+/* ---------- Menú de pausa (PauseSubState: fondo negro al 60 %, opciones Alphabet a la izquierda) ---------- */
+#overlay { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(0,0,0,.6); }
+#overlay.show { display: block; animation: fadeIn .25s ease-out; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+#pauseMeta { position: absolute; top: 18px; right: max(80px, env(safe-area-inset-right)); text-align: right; font-size: 22px; line-height: 1.35;
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000; max-width: 60vw; }
+#pauseMeta div:first-child { font-size: 30px; }
+#pauseMeta .clear { margin-top: 6px; display: inline-flex; align-items: center; gap: 4px; }
+#pauseMeta .clear b { font-size: 34px; }
+
+#ovTitle { position: absolute; left: 6vw; top: 12vh; margin: 0; }
+#ovTitle canvas { display: none; }
+#ovTitle.alfabeto canvas { display: block; }
+#ovTitle.alfabeto span { display: none; }
+#ovTitle span { font-size: 54px; font-weight: 900; font-style: italic; text-shadow: 3px 3px 0 #000; }
+
+#pauseItems { position: absolute; left: 0; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 14px; padding-left: 6vw; }
+.pitem { --d: 0; background: none; border: 0; padding: 0; margin: 0; color: #fff; cursor: pointer; text-align: left; opacity: .6;
+  transform: translateX(calc(var(--d) * 20px)); transition: transform .15s ease-out, opacity .15s; display: block; }
+.pitem.sel { opacity: 1; }
+.pitem canvas { display: none; }
+.pitem.alfabeto canvas { display: block; }
+.pitem.alfabeto span { display: none; }
+.pitem span { font-size: 44px; font-weight: 900; font-style: italic; text-transform: uppercase; text-shadow: 3px 3px 0 #000, -2px -2px 0 #000; }
+
+/* panel de opciones / assets */
+#pausePanel { position: absolute; right: max(14px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom)); width: min(94vw, 470px); max-height: 62vh; overflow: auto;
+  display: none; padding: 14px 16px; border-radius: 14px; background: rgba(10, 6, 24, .92); border: 3px solid #fff; box-shadow: 0 6px 0 #000;
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; -webkit-user-select: text; user-select: text; }
+#pausePanel.show { display: block; animation: fadeIn .15s ease-out; }
+#pausePanel h3 { margin: 0 0 8px; font-size: 18px; color: #ffe27a; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; font-size: 14px; }
+.row select { flex: 1; max-width: 62%; background: #1d1036; color: #fff; border: 2px solid #8e6bd6; border-radius: 8px; padding: 6px; font: inherit; }
+.btn { display: block; width: 100%; margin: 8px 0; padding: 9px 10px; font: inherit; font-size: 15px; font-weight: 900; color: #000;
+  border: 3px solid #000; border-radius: 10px; cursor: pointer; box-shadow: 0 4px 0 #000; background: #00ffff; transition: transform .08s; }
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #000; }
+.btn.alt { background: #c9a7ff; }
+.hint { font-size: 12px; color: #c9bbef; line-height: 1.45; margin: 6px 0 2px; }
+#fileInput { display: none; }
+
+/* ---------- Avisos ---------- */
+#toast { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 12px;
+  background: rgba(0,0,0,.8); border: 2px solid #fff; font-family: "Trebuchet MS", system-ui, sans-serif; font-weight: 700; font-size: 15px;
+  pointer-events: none; opacity: 0; transition: opacity .25s; max-width: 90vw; text-align: center; }
+#toast.show { opacity: 1; }
+
+@media (max-width: 700px), (max-height: 480px) {
+  #pauseMeta { font-size: 15px; top: 12px; right: 74px; max-width: calc(100vw - 90px); }
+  #pauseMeta div:first-child { font-size: 20px; }
+  #pauseItems { gap: 8px; }
+  #ovTitle { top: 8vh; }
+}

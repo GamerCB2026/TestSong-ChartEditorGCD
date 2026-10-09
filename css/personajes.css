@@ -1,0 +1,4 @@
+/* personajes.css — lista "Assets cargados" (personajes, iconos, escenario, sonidos) */
+#assetList div { margin: 3px 0; padding-left: 2px; word-break: break-word; }
+#assetList .ok { color: #c9ffd0; }
+#assetList .bad { color: #ffb3b3; }

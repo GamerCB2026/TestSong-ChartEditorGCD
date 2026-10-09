@@ -1,0 +1,5 @@
+/* stages.css — lienzo del juego (escenario + HUD se dibujan en <canvas>) */
+#game { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; background: #000;
+  image-rendering: auto; }
+/* pantalla de carga mientras llegan los assets del escenario */
+#game.cargando { background: radial-gradient(ellipse at center, #1c0b2e, #000 70%); }
