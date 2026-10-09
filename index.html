@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <title>Test Song · Chart Editor GCD</title>
-<link rel="stylesheet" href="css/estilo.css?v=3.3.0">
-<link rel="stylesheet" href="css/stages.css?v=3.3.0">
-<link rel="stylesheet" href="css/personajes.css?v=3.3.0">
-<link rel="stylesheet" href="css/notes.css?v=3.3.0">
-<link rel="stylesheet" href="css/movil.css?v=3.3.0">
+<link rel="stylesheet" href="css/estilo.css?v=3.4.0">
+<link rel="stylesheet" href="css/stages.css?v=3.4.0">
+<link rel="stylesheet" href="css/personajes.css?v=3.4.0">
+<link rel="stylesheet" href="css/notes.css?v=3.4.0">
+<link rel="stylesheet" href="css/movil.css?v=3.4.0">
 </head>
 <body>
 <canvas id="gameGL" hidden aria-hidden="true"></canvas>
@@ -43,8 +43,9 @@
       <button class="btn" id="btnLoad">📂 Cargar chart (.fnfc / .json + audio)</button>
       <button class="btn alt" id="btnDemo">🎵 Volver a la canción "test"</button>
       <input type="file" id="fileInput" multiple accept=".fnfc,.zip,.json,.ogg,.mp3,.wav">
+      <div id="impBox"></div>
       <p class="hint">Teclado: <kbd class="l">←</kbd><kbd class="d">↓</kbd><kbd class="u">↑</kbd><kbd class="r">→</kbd> o <kbd>A</kbd><kbd>S</kbd><kbd>W</kbd><kbd>D</kbd> (cámbialas en Opciones → Asignar Teclas) · Pausa: <kbd>Esc</kbd>/<kbd>Enter</kbd> · Opciones: <kbd>O</kbd> · Menú: <kbd>↑</kbd><kbd>↓</kbd> + <kbd>Enter</kbd><br>
-      Táctil: toca las 4 columnas de la pantalla (o activa Opciones → Controles V-Slice). Acepta .fnfc de V-Slice (chart + metadata + Inst/Voices) o JSON de Psych/legacy.</p>
+      Táctil: toca las flechas del jugador (Opciones → Controles V-Slice: Toque / Hitbox…). "Cargar chart" detecta solo el formato: .fnfc / chart + metadata de V-Slice, Psych 0.6 / 0.7 / 1.0, Codename, Kade y legacy.</p>
     </div>
     <div id="panelAssets" hidden>
       <h3>🖼 Assets cargados</h3>
@@ -78,28 +79,31 @@
 <div id="toast"></div>
 
 <!-- Orden de carga: comparten el ámbito global (scripts clásicos, sin módulos: funciona en GitHub Pages) -->
-<script src="js/config.js?v=3.3.0"></script>
-<script src="js/astc.js?v=3.3.0"></script>
-<script src="js/texturas.js?v=3.3.0"></script>
-<script src="js/render.js?v=3.3.0"></script>
-<script src="js/assets.js?v=3.3.0"></script>
-<script src="js/atlas.js?v=3.3.0"></script>
-<script src="js/charts.js?v=3.3.0"></script>
-<script src="js/audio.js?v=3.3.0"></script>
-<script src="js/opciones.js?v=3.3.0"></script>
-<script src="js/optimizacion.js?v=3.3.0"></script>
-<script src="js/fuentes.js?v=3.3.0"></script>
-<script src="js/personajes.js?v=3.3.0"></script>
-<script src="js/stages.js?v=3.3.0"></script>
-<script src="js/notes.js?v=3.3.0"></script>
-<script src="js/hud.js?v=3.3.0"></script>
-<script src="js/eventos.js?v=3.3.0"></script>
-<script src="js/hscript.js?v=3.3.0"></script>
-<script src="js/mods.js?v=3.3.0"></script>
-<script src="js/modui.js?v=3.3.0"></script>
-<script src="js/usuario.js?v=3.3.0"></script>
-<script src="js/ui.js?v=3.3.0"></script>
-<script src="js/movil.js?v=3.3.0"></script>
-<script src="js/game.js?v=3.3.0"></script>
+<script src="js/config.js?v=3.4.0"></script>
+<script src="js/astc.js?v=3.4.0"></script>
+<script src="js/texturas.js?v=3.4.0"></script>
+<script src="js/render.js?v=3.4.0"></script>
+<script src="js/assets.js?v=3.4.0"></script>
+<script src="js/atlas.js?v=3.4.0"></script>
+<script src="js/charts.js?v=3.4.0"></script>
+<script src="js/audio.js?v=3.4.0"></script>
+<script src="js/opciones.js?v=3.4.0"></script>
+<script src="js/optimizacion.js?v=3.4.0"></script>
+<script src="js/fuentes.js?v=3.4.0"></script>
+<script src="js/personajes.js?v=3.4.0"></script>
+<script src="js/stages.js?v=3.4.0"></script>
+<script src="js/parlantes.js?v=3.4.0"></script>
+<script src="js/shaders.js?v=3.4.0"></script>
+<script src="js/notes.js?v=3.4.0"></script>
+<script src="js/hud.js?v=3.4.0"></script>
+<script src="js/eventos.js?v=3.4.0"></script>
+<script src="js/hscript.js?v=3.4.0"></script>
+<script src="js/mods.js?v=3.4.0"></script>
+<script src="js/modui.js?v=3.4.0"></script>
+<script src="js/importar.js?v=3.4.0"></script>
+<script src="js/usuario.js?v=3.4.0"></script>
+<script src="js/ui.js?v=3.4.0"></script>
+<script src="js/movil.js?v=3.4.0"></script>
+<script src="js/game.js?v=3.4.0"></script>
 </body>
 </html>
