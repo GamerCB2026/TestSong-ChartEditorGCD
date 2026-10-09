@@ -1,382 +1,1809 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>FNF Test ChartEditorGCD</title>
-  <style>
-    * {
-      box-sizing: border-box;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #000;
-      color: #fff;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#120821">
+<title>Test Song · Chart Editor GCD</title>
+<style>
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #fff;
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; touch-action: none; }
+  #game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
 
-    #controls-bar {
-      position: absolute;
-      top: 10px;
-      z-index: 10;
-      display: flex;
-      gap: 10px;
-      background: rgba(0, 0, 0, 0.8);
-      padding: 10px 15px;
-      border-radius: 8px;
-      border: 1px solid #333;
-    }
+  /* ---------- Botón de pausa ---------- */
+  #pauseBtn { position: fixed; z-index: 5; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
+    width: 50px; height: 50px; border-radius: 14px; border: 3px solid #fff; background: rgba(15, 6, 30, .6);
+    display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; padding: 0;
+    box-shadow: 0 4px 0 rgba(0,0,0,.55); transition: transform .1s; }
+  #pauseBtn:hover { transform: scale(1.07); }
+  #pauseBtn:active { transform: scale(.94); }
+  #pauseBtn i { display: block; width: 8px; height: 22px; background: #fff; border-radius: 2px; box-shadow: 0 0 0 2px #000; }
 
-    input[type="file"], select, button {
-      background: #222;
-      color: #fff;
-      border: 1px solid #555;
-      padding: 6px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-    }
+  /* ---------- Menú de pausa ---------- */
+  #overlay { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(40,12,80,.55), rgba(5,2,14,.85)); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+  #overlay.show { display: flex; animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .panel { width: min(92vw, 430px); max-height: 92vh; overflow: auto; padding: 22px 22px 18px; border-radius: 20px; text-align: center;
+    background: linear-gradient(170deg, #2d1458, #150a2c 70%); border: 4px solid #fff; box-shadow: 0 8px 0 #000, 0 0 40px rgba(161,75,224,.5);
+    animation: pop .22s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes pop { from { transform: scale(.8); } to { transform: scale(1); } }
+  .panel h2 { margin: 0 0 4px; font-size: 44px; font-style: italic; letter-spacing: 1px; color: #fff;
+    text-shadow: 3px 3px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 0 18px #c24b99; }
+  .panel .sub { margin: 0 0 16px; font-size: 14px; color: #d8c8ff; min-height: 18px; }
+  .btn { display: block; width: 100%; margin: 10px 0; padding: 12px 10px; font: inherit; font-size: 24px; font-weight: 900; font-style: italic;
+    letter-spacing: .5px; color: #000; border: 3px solid #000; border-radius: 12px; cursor: pointer; box-shadow: 0 5px 0 #000;
+    transition: transform .08s, filter .08s; }
+  .btn:hover { transform: translateY(-2px) scale(1.02); filter: brightness(1.1); }
+  .btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #000; }
+  .btn.resume { background: #12fa05; }
+  .btn.restart { background: #ffd400; }
+  .btn.small { font-size: 15px; padding: 8px; margin: 6px 0; background: #00ffff; font-style: normal; }
+  details { margin-top: 12px; text-align: left; background: rgba(0,0,0,.35); border: 2px solid rgba(255,255,255,.25); border-radius: 12px; padding: 8px 12px; }
+  summary { cursor: pointer; font-weight: 700; color: #ffe27a; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; font-size: 14px; }
+  .row select { flex: 1; max-width: 62%; background: #1d1036; color: #fff; border: 2px solid #8e6bd6; border-radius: 8px; padding: 6px; font: inherit; }
+  .hint { font-size: 12px; color: #bba9e6; line-height: 1.4; margin: 6px 0 2px; }
+  kbd { background: #fff; color: #000; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 700; }
+  #fileInput { display: none; }
 
-    button:hover {
-      background: #333;
-    }
-
-    #game-container {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    canvas {
-      background: #111;
-      box-shadow: 0 0 20px rgba(0,0,0,0.8);
-    }
-
-    /* Controles Táctiles para Móvil */
-    #mobile-controls {
-      position: absolute;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: none; /* Se activa con modo Celular */
-      gap: 15px;
-      z-index: 10;
-    }
-
-    .touch-btn {
-      width: 65px;
-      height: 65px;
-      border-radius: 50%;
-      border: 3px solid #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      font-size: 20px;
-      opacity: 0.6;
-      touch-action: manipulation;
-    }
-
-    .touch-btn:active {
-      opacity: 1;
-      transform: scale(0.95);
-    }
-
-    .btn-left { background: #c24b99; }
-    .btn-down { background: #00ffff; }
-    .btn-up { background: #12fa05; }
-    .btn-right { background: #f9393f; }
-
-    #score-board {
-      position: absolute;
-      bottom: 10px;
-      font-size: 18px;
-      font-weight: bold;
-      text-shadow: 2px 2px 4px #000;
-      z-index: 5;
-    }
-  </style>
+  /* ---------- Avisos ---------- */
+  #toast { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 12px;
+    background: rgba(0,0,0,.8); border: 2px solid #fff; font-weight: 700; font-size: 15px; pointer-events: none; opacity: 0; transition: opacity .25s; max-width: 90vw; text-align: center; }
+  #toast.show { opacity: 1; }
+</style>
 </head>
 <body>
+<canvas id="game"></canvas>
 
-  <div id="controls-bar">
-    <input type="file" id="fnfc-upload" accept=".fnfc,.json">
-    <select id="mode-select">
-      <option value="keyboard">Modo 1: Teclado (PC)</option>
-      <option value="mobile">Modo 2: Botones Virtuales (Celular)</option>
-      <option value="botplay">Modo 3: Botplay (Automático)</option>
-    </select>
-    <button id="btn-play">Cargar y Jugar</button>
+<button id="pauseBtn" title="Pausa (Esc / Enter)" aria-label="Pausa"><i></i><i></i></button>
+
+<div id="overlay" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h2 id="ovTitle">PAUSA</h2>
+    <p class="sub" id="ovSub"></p>
+    <button class="btn resume" id="btnResume">▶ Reanudar</button>
+    <button class="btn restart" id="btnRestart">↻ Reiniciar</button>
+    <details id="opts">
+      <summary>⚙ Opciones del chart</summary>
+      <div class="row"><label for="modeSel">Modo</label>
+        <select id="modeSel">
+          <option value="demo">Demo automática</option>
+          <option value="keyboard">Teclado (PC)</option>
+          <option value="mobile">Táctil (celular)</option>
+          <option value="botplay">Botplay perfecto</option>
+        </select></div>
+      <div class="row" id="diffRow" style="display:none"><label for="diffSel">Dificultad</label><select id="diffSel"></select></div>
+      <button class="btn small" id="btnLoad">📂 Cargar chart (.fnfc / .json + audio)</button>
+      <button class="btn small" id="btnDemo" style="background:#c9a7ff">🎵 Volver a la canción demo</button>
+      <input type="file" id="fileInput" multiple accept=".fnfc,.zip,.json,.ogg,.mp3,.wav">
+      <p class="hint">Teclado: <kbd>←</kbd><kbd>↓</kbd><kbd>↑</kbd><kbd>→</kbd> o <kbd>A</kbd><kbd>S</kbd><kbd>W</kbd><kbd>D</kbd> · Pausa: <kbd>Esc</kbd>/<kbd>Enter</kbd><br>
+      Táctil: toca las 4 columnas de la pantalla. Acepta .fnfc de V-Slice (chart + metadata + Inst/Voices) o JSON de Psych/legacy.</p>
+    </details>
+    <details id="assetsBox">
+      <summary>🖼 Assets cargados</summary>
+      <div id="assetList" class="hint"></div>
+    </details>
   </div>
+</div>
 
-  <div id="game-container">
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
-    
-    <div id="mobile-controls">
-      <div class="touch-btn btn-left" data-key="0">←</div>
-      <div class="touch-btn btn-down" data-key="1">↓</div>
-      <div class="touch-btn btn-up" data-key="2">↑</div>
-      <div class="touch-btn btn-right" data-key="3">→</div>
-    </div>
+<div id="toast"></div>
 
-    <div id="score-board">Score: <span id="score">0</span> | Accuracy: <span id="accuracy">100%</span></div>
-  </div>
+<script>
+(() => {
+'use strict';
 
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
+/* =====================================================================
+   CONFIGURACIÓN
+   ===================================================================== */
+const CONFIG = {
+  demoBpm: 120,
+  demoSpeed: 1.7,          // velocidad de scroll estilo FNF
+  hitWindow: 160,          // ms
+  judgments: [             // ventana (ms), puntos, vida, precisión
+    { name: '¡SICK!', ms: 45,  score: 350, health: 0.04,  acc: 1.00, color: '#7df9ff' },
+    { name: 'GOOD',   ms: 90,  score: 200, health: 0.025, acc: 0.75, color: '#8dff7d' },
+    { name: 'BAD',    ms: 135, score: 100, health: 0.0,   acc: 0.40, color: '#ffd27d' },
+    { name: 'SHIT',   ms: 160, score: 50,  health: -0.01, acc: 0.10, color: '#ff8a7d' },
+  ],
+  missHealth: -0.1,
+  demoOppDrain: 0.03,      // solo en demo: el rival baja la vida para que la barra se mueva
+  maxHealth: 2,
+};
+const LANE_COLORS = ['#c24b99', '#00ffff', '#12fa05', '#f9393f'];
+const LANE_DARK   = ['#6e2457', '#007b8a', '#0a7d03', '#8c1b1f'];
+const LANE_NAMES  = ['left', 'down', 'up', 'right'];
+const KEY_MAP = { ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3, a: 0, s: 1, w: 2, d: 3 };
+const DEFAULT_COLORS = { opp: '#a14be0', oppDark: '#5c1f8c', player: '#31b0d1', playerDark: '#126a84' };
+const COLORS = Object.assign({}, DEFAULT_COLORS);   // se reemplazan si el JSON del personaje trae colores
 
-    // Estado del Juego
-    let chartData = null;
-    let isPlaying = false;
-    let startTime = 0;
-    let songTime = 0;
-    let currentMode = 'keyboard';
-    let score = 0;
-    let hits = 0;
-    let totalNotes = 0;
+/* utilidades */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const params = new URLSearchParams(location.search);
 
-    // Configuración visual del Receptor y Notas
-    const STRUM_X = [250, 310, 370, 430]; // Posiciones Player 2 (Opponent)
-    const PLAYER_X = [500, 560, 620, 680]; // Posiciones Player 1 (BF)
-    const STRUM_Y = 100; // Altura del receptor de notas
-    const NOTE_SIZE = 50;
-    const NOTE_COLORS = ['#c24b99', '#00ffff', '#12fa05', '#f9393f'];
-    const SPEED = 2.5; // Velocidad del scroll
+/* =====================================================================
+   CHART: demo + parsers (V-Slice .fnfc / chart.json, Psych, legacy)
+   Formato interno: { title, artist, bpm, speed, notes:[{time,lane,side,sustain}], endTime, difficulties, difficulty }
+   ===================================================================== */
+const Chart = {
+  makeDemo() {
+    const bpm = CONFIG.demoBpm, crochet = 60000 / bpm, step = crochet / 4, rnd = mulberry32(2026);
+    const patterns = [
+      [0, 4, 8, 12], [0, 2, 4, 6, 8, 12], [0, 4, 6, 8, 10, 12], [0, 3, 6, 8, 12, 14],
+      [0, 2, 4, 8, 10, 12, 14], [0, 4, 8, 10, 12], [0, 2, 6, 8, 12], [0, 6, 8, 10, 12, 14],
+    ];
+    const notes = [];
+    const pairs = 14;                       // 14 pares de compases (rival llama, jugador responde)
+    for (let p = 0; p < pairs; p++) {
+      const pat = patterns[(p + Math.floor(rnd() * 3)) % patterns.length];
+      let prev = -1; const seq = [];
+      pat.forEach((s, i) => {
+        let lane = Math.floor(rnd() * 4); if (lane === prev) lane = (lane + 1 + Math.floor(rnd() * 3)) % 4; prev = lane;
+        const next = pat[i + 1] ?? 16;
+        const sustain = (next - s >= 4 && rnd() < 0.45) ? step * (next - s - 1.5) : 0;
+        seq.push({ s, lane, sustain });
+      });
+      for (const side of ['opponent', 'player']) {
+        const barStart = (p * 2 + (side === 'player' ? 1 : 0)) * 4 * crochet + 2 * crochet;
+        seq.forEach(n => notes.push({ time: barStart + n.s * step, lane: n.lane, side, sustain: n.sustain, seed: rnd() }));
+      }
+    }
+    return this.finalize({ title: 'Test Song', artist: 'Chart Editor GCD · Demo', bpm, speed: CONFIG.demoSpeed, notes, isDemo: true });
+  },
 
-    // Mapeo de Teclas PC (DFJK / Flechas)
-    const KEY_MAP = {
-      'ArrowLeft': 0, 'a': 0, 'A': 0,
-      'ArrowDown': 1, 's': 1, 'S': 1,
-      'ArrowUp': 2, 'w': 2, 'W': 2,
-      'ArrowRight': 3, 'd': 3, 'D': 3
+  /** raw = JSON del chart, meta = JSON de metadata (opcional) */
+  parse(raw, meta, wantedDiff) {
+    if (!raw || typeof raw !== 'object') throw new Error('JSON vacío');
+    // V-Slice: { notes: { easy:[{t,d,l}], normal:[...] }, scrollSpeed:{...} }
+    if (raw.notes && !Array.isArray(raw.notes) && typeof raw.notes === 'object') {
+      const diffs = Object.keys(raw.notes);
+      const diff = (wantedDiff && diffs.includes(wantedDiff)) ? wantedDiff
+        : (['hard', 'normal', 'easy'].find(d => diffs.includes(d)) || diffs[0]);
+      const list = raw.notes[diff] || [];
+      const ss = raw.scrollSpeed || {};
+      const speed = +(ss[diff] ?? ss.default ?? ss.normal ?? 1.6) || 1.6;
+      const bpm = meta?.timeChanges?.[0]?.bpm || raw.bpm || 100;
+      const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0) }));
+      const pc = meta?.playData?.characters || {};
+      const scene = { bf: pc.player, dad: pc.opponent, gf: pc.girlfriend, stage: meta?.playData?.stage };
+      return this.finalize({ title: meta?.songName || 'Canción', artist: meta?.artist || '', bpm, speed, notes, difficulties: diffs, difficulty: diff, scene });
+    }
+    // Psych / legacy: { song: { notes:[ {sectionNotes, mustHitSection} ], bpm, speed } }
+    const song = raw.song && typeof raw.song === 'object' ? raw.song : raw;
+    if (Array.isArray(song.notes) && song.notes.length && song.notes.some(s => s && Array.isArray(s.sectionNotes))) {
+      const psychV1 = typeof song.format === 'string' && song.format.startsWith('psych_v1');
+      const notes = [];
+      song.notes.forEach(sec => (sec.sectionNotes || []).forEach(n => {
+        const d = n[1] | 0; if (d < 0 || typeof n[0] !== 'number') return;
+        const first = d % 8 < 4;
+        const isPlayer = psychV1 ? first : (sec.mustHitSection ? first : !first);
+        notes.push({ time: n[0], lane: d % 4, side: isPlayer ? 'player' : 'opponent', sustain: +(n[2] || 0) });
+      }));
+      const scene = { bf: song.player1, dad: song.player2, gf: song.gfVersion || song.player3 || song.gf, stage: song.stage };
+      return this.finalize({ title: song.song || song.songName || 'Canción', artist: song.artist || '', bpm: song.bpm || 100, speed: song.speed || 1.6, notes, scene });
+    }
+    // Simple: { bpm, notes:[{t,d,l}] } o [{time,column}]
+    const arr = Array.isArray(raw) ? raw : Array.isArray(raw.notes) ? raw.notes : null;
+    if (arr) {
+      const notes = arr.map(n => {
+        const d = (n.d ?? n.column ?? n.lane ?? 0) | 0;
+        return { time: +(n.t ?? n.time ?? 0), lane: d % 4, side: d % 8 < 4 ? 'player' : 'opponent', sustain: +(n.l ?? n.sustain ?? 0) };
+      });
+      return this.finalize({ title: raw.title || raw.songName || 'Canción', artist: raw.artist || '', bpm: raw.bpm || 100, speed: raw.speed || 1.6, notes });
+    }
+    throw new Error('Formato de chart no reconocido');
+  },
+
+  finalize(c) {
+    if (c.scene) { for (const k of Object.keys(c.scene)) if (!c.scene[k] || typeof c.scene[k] !== 'string') delete c.scene[k]; }
+    c.notes = c.notes.filter(n => isFinite(n.time)).sort((a, b) => a.time - b.time);
+    const rnd = mulberry32(77);
+    c.notes.forEach(n => { if (n.seed === undefined) n.seed = rnd(); });
+    c.crochet = 60000 / c.bpm;
+    c.endTime = c.notes.reduce((m, n) => Math.max(m, n.time + n.sustain), 0) + 1800;
+    return c;
+  },
+};
+
+/* =====================================================================
+   ZIP mínimo (.fnfc de V-Slice es un zip) usando DecompressionStream
+   ===================================================================== */
+const Zip = {
+  async read(buf) {
+    const dv = new DataView(buf), u8 = new Uint8Array(buf);
+    let eocd = -1;
+    for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('No es un zip/.fnfc válido');
+    const count = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+    const out = [], dec = new TextDecoder();
+    for (let k = 0; k < count; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+      const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+      const local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+      p += 46 + nlen + elen + clen;
+      const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+      const raw = u8.slice(start, start + csize);
+      out.push({ name, data: async () => {
+        if (method === 0) return raw.buffer;
+        if (method !== 8) throw new Error('Compresión zip no soportada');
+        if (typeof DecompressionStream === 'undefined') throw new Error('Tu navegador no puede descomprimir .fnfc');
+        return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      } });
+    }
+    return out;
+  },
+};
+
+/* =====================================================================
+   MÚSICA (Inst + Voices opcionales)
+   ===================================================================== */
+const Music = {
+  tracks: [], started: false,
+  set(blobs) { this.clear(); blobs.filter(Boolean).forEach(b => { const a = new Audio(URL.createObjectURL(b)); a.preload = 'auto'; this.tracks.push(a); }); },
+  clear() { this.tracks.forEach(a => { a.pause(); URL.revokeObjectURL(a.src); }); this.tracks = []; this.started = false; },
+  get has() { return this.tracks.length > 0; },
+  get playing() { return this.has && !this.tracks[0].paused && !this.tracks[0].ended; },
+  get duration() { return this.has && isFinite(this.tracks[0].duration) ? this.tracks[0].duration * 1000 : 0; },
+  time() { return this.tracks[0].currentTime * 1000; },
+  play(ms) { this.started = true; this.tracks.forEach(a => { try { a.currentTime = Math.max(0, ms / 1000); } catch (e) {} a.play().catch(() => {}); }); },
+  pause() { this.tracks.forEach(a => a.pause()); },
+};
+
+/* JSON por defecto (copias de data/characters/*.json y data/stages/mainStage.json): se usan si esos archivos no están */
+const DEFAULT_DATA = {"characters":{"bf":{"version":"1.0.0","name":"Boyfriend","renderType":"multianimateatlas","assetPath":"shared:characters/bf","flipX":true,"offsets":[17,14],"cameraOffsets":[-18,36],"death":{"cameraOffsets":[-73,42]},"animations":[{"name":"idle","prefix":"Idle"},{"name":"singLEFT","prefix":"Left"},{"name":"singDOWN","prefix":"Down"},{"name":"singUP","prefix":"Up"},{"name":"singRIGHT","prefix":"Right"},{"name":"singLEFTmiss","prefix":"Left Miss"},{"name":"singDOWNmiss","prefix":"Down Miss"},{"name":"singUPmiss","prefix":"Up Miss"},{"name":"singRIGHTmiss","prefix":"Right Miss"},{"name":"hey","prefix":"Hey"},{"name":"cheer","prefix":"Cheer"},{"assetPath":"shared:characters/bf-death","name":"firstDeath","prefix":"Death Intro","offsets":[22,15]},{"assetPath":"shared:characters/bf-death","name":"deathLoop","prefix":"Death Loop","looped":true,"offsets":[22,15]},{"assetPath":"shared:characters/bf-death","name":"deathConfirm","prefix":"Death Confirm","offsets":[22,15]},{"assetPath":"shared:characters/bfFakeOut","name":"fakeoutDeath","prefix":"fake out death BF","animType":"symbol","offsets":[-3,-65]},{"name":"scared","prefix":"Scared"}]},"dad":{"version":"1.0.0","name":"Daddy Dearest","assetPath":"shared:characters/dad","renderType":"animateatlas","singTime":8.0,"offsets":[13,3],"cameraOffsets":[11,6],"animations":[{"name":"idle","prefix":"Idle"},{"name":"idle-hold","prefix":"Idle","frameIndices":[11,12,0,1],"looped":true},{"name":"singUP","prefix":"Up"},{"name":"singUP-hold","prefix":"Up","frameIndices":[3,4,5],"looped":true},{"name":"singDOWN","prefix":"Down"},{"name":"singLEFT","prefix":"Left"},{"name":"singLEFT-hold","prefix":"Left","frameIndices":[3,4,5],"looped":true},{"name":"singRIGHT","prefix":"Right"},{"name":"singRIGHT-hold","prefix":"Right","looped":true,"frameIndices":[3,4,5]}]},"gf":{"version":"1.0.0","name":"Girlfriend","renderType":"animateatlas","assetPath":"shared:characters/gf","startingAnimation":"danceRight","offsets":[-12,4],"cameraOffsets":[12,8],"animations":[{"name":"danceLeft","prefix":"Idle","frameIndices":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]},{"name":"danceRight","prefix":"Idle","frameIndices":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]},{"name":"singLEFT","prefix":"Left"},{"name":"singDOWN","prefix":"Down"},{"name":"singUP","prefix":"Up"},{"name":"singRIGHT","prefix":"Right"},{"name":"cheer","prefix":"Cheer"},{"name":"combo50","prefix":"Cheer"},{"name":"drop70","prefix":"Crying","frameIndices":[0,1,2,3,4,5,6,7,8,9,10,11,12]},{"name":"hairBlow","prefix":"Idle (Hair blowing)","frameIndices":[0,1,2,3]},{"name":"hairFall","prefix":"Hair landing","frameIndices":[0,1,2,3,4,5,6,7,8,9,10,11]},{"name":"scared","prefix":"Fear","frameIndices":[0,1,2,3,0,1,2,3,0,1,2,3]}]}},"stages":{"mainStage":{"props":[{"danceEvery":0,"zIndex":10,"position":[-600,-200],"scale":[1,1],"animType":"sparrow","name":"stageBack","isPixel":false,"assetPath":"stageback","scroll":[0.9,0.9],"animations":[]},{"danceEvery":0,"zIndex":20,"position":[-650,600],"scale":[1.1,1.1],"animType":"sparrow","name":"stageFront","isPixel":false,"assetPath":"stagefront","scroll":[0.9,0.9],"animations":[]},{"danceEvery":0,"zIndex":30,"position":[-500,-300],"scale":[0.9,0.9],"animType":"sparrow","name":"stageCurtains","isPixel":false,"assetPath":"stagecurtains","scroll":[1.3,1.3],"animations":[]}],"cameraZoom":1.1,"version":"1.0.0","characters":{"bf":{"zIndex":300,"position":[989.5,885],"cameraOffsets":[-100,-100]},"dad":{"zIndex":200,"position":[335,885],"cameraOffsets":[150,-100]},"gf":{"zIndex":100,"cameraOffsets":[0,0],"position":[751.5,787]}},"name":"Main Stage","directory":"week1"}}};
+
+/* =====================================================================
+   ASSETS REALES (estructura de V-Slice)
+   - data/characters/<id>.json  ·  data/stages/<id>.json
+   - shared/images/characters/<carpeta>/ (Animate Atlas: Animation.json + spritemapN.json/png)
+     o shared/images/characters/<Nombre>.xml + .png (Sparrow)
+   - shared/images/<stage>/*.png (props del escenario)
+   - shared/images/NoteAssets/*.png (notas y sustains)
+   - shared/images/icons/icon-<id>.png (iconos de vida, 2 frames de 150x150)
+   Si algo falta se usa el dibujo improvisado. Con file:// el navegador bloquea fetch().
+   ===================================================================== */
+const ROOT = params.get('assets') ? params.get('assets').replace(/\/+$/, '') + '/' : '';
+const ASSET_CFG = {
+  chars: { bf: params.get('bf') || 'bf', dad: params.get('dad') || 'dad', gf: params.get('gf') || 'gf' },
+  stage: params.get('stage') || 'mainStage',
+  charDataPaths: ['data/characters/{id}.json', 'preload/data/characters/{id}.json'],
+  stageDataPaths: ['data/stages/{id}.json', 'preload/data/stages/{id}.json'],
+  // imágenes de props del escenario ({stage} = id del escenario, {dir} = "directory" del JSON)
+  stageImagePaths: ['shared/images/{stage}/{path}.png', 'shared/images/{path}.png', '{dir}/images/{path}.png', 'images/{path}.png'],
+  // "shared:characters/bf" -> {lib}=shared, {path}=characters/bf (sin extensión)
+  libImagePaths: ['{lib}/images/{path}', 'shared/images/{path}', 'images/{path}'],
+  noteDir: 'shared/images/NoteAssets/',
+  noteColors: ['purple', 'blue', 'green', 'red'],                 // left, down, up, right
+  noteHead: '{color}0000.png', holdPiece: '{color} hold piece0000.png', holdEnd: '{color} hold end0000.png',
+  // "Nota normal" (receptor / strum estático): TODAVÍA NO EXISTE. Cuando la tengas, ponla con uno de
+  // estos nombres en NoteAssets (o cambia la lista). Mientras tanto se dibuja un receptor gris.
+  strumStatic: ['{color} static0000.png', 'arrow{DIR}0000.png'],
+  strumPress: ['{color} press0000.png'],
+  strumConfirm: ['{color} confirm0000.png'],
+  iconPaths: ['shared/images/icons/icon-{id}.png', 'preload/images/icons/icon-{id}.png', 'images/icons/icon-{id}.png'],
+};
+const LANE_DIRS = ['LEFT', 'DOWN', 'UP', 'RIGHT'];
+const fillT = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
+const assetUrl = p => ROOT + p.split('/').map(encodeURIComponent).join('/');
+const uniq = a => [...new Set(a)];
+
+async function fetchFirst(list, kind) {
+  for (const p of uniq(list)) {
+    try {
+      const r = await fetch(assetUrl(p), { cache: 'no-cache' });
+      if (!r.ok) continue;
+      return { data: kind === 'text' ? await r.text() : await r.json(), path: p };
+    } catch (e) { /* 404, JSON inválido o file:// */ }
+  }
+  return null;
+}
+function loadImg(list) {
+  list = uniq(list);
+  return new Promise(resolve => {
+    let i = 0;
+    const next = () => {
+      if (i >= list.length) return resolve(null);
+      const p = list[i++], img = new Image();
+      img.onload = () => { img.assetPath = p; img.naturalWidth ? resolve(img) : next(); };
+      img.onerror = next;
+      img.src = assetUrl(p);
     };
+    next();
+  });
+}
+function parseAssetPath(ap) {
+  const s = String(ap || ''); const i = s.indexOf(':');
+  return i > 0 ? { lib: s.slice(0, i), path: s.slice(i + 1) } : { lib: 'shared', path: s };
+}
 
-    let activeKeys = [false, false, false, false];
+/* ---------- Animate Atlas (portado de Chart Editor GCD js/AnimateAtlas.js) ---------- */
+const ATLAS_PROFUNDIDAD_MAX = 32;
 
-    // Cargar Archivo .FNFC
-    document.getElementById('fnfc-upload').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+function atlasNum(v, porDefecto) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : porDefecto;
+}
 
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          chartData = JSON.parse(event.target.result);
-          alert("¡Chart .fnfc cargado correctamente!");
-        } catch (err) {
-          alert("Error al leer el archivo .fnfc. Asegúrate de que sea un JSON válido.");
-        }
-      };
-      reader.readAsText(file);
+function atlasEsAnimationJson(data) {
+    return !!(data && typeof data === "object" && !Array.isArray(data) && (data.AN || data.ANIMATION));
+}
+
+function atlasEsSpritemapJson(data) {
+    const atlas = data && typeof data === "object" ? data.ATLAS : null;
+    return !!(atlas && Array.isArray(atlas.SPRITES));
+}
+
+// Spritemap: { imagen: "spritemap1.png", sprites: [{ name, x, y, w, h, rot }] }
+function atlasLeerSpritemap(data) {
+    if (!atlasEsSpritemapJson(data)) throw new Error("El JSON no es un spritemap de Animate (falta ATLAS.SPRITES).");
+    const sprites = [];
+    data.ATLAS.SPRITES.forEach((s) => {
+        const sp = s && (s.SPRITE || s);
+        if (!sp || sp.name === undefined) return;
+        const w = atlasNum(sp.w, 0);
+        const h = atlasNum(sp.h, 0);
+        if (w <= 0 || h <= 0) return;
+        sprites.push({ name: String(sp.name), x: atlasNum(sp.x, 0), y: atlasNum(sp.y, 0), w, h, rot: sp.rotated === true || sp.rotated === "true" });
     });
+    const meta = data.meta && typeof data.meta === "object" ? data.meta : {};
+    return { imagen: String(meta.image || ""), sprites };
+}
 
-    // Control del modo de juego
-    const modeSelect = document.getElementById('mode-select');
-    const mobileControls = document.getElementById('mobile-controls');
+// ---------------------------------------------------------------------
+// Matrices 2D [a, b, c, d, tx, ty] (x' = a x + c y + tx ; y' = b x + d y + ty)
+// ---------------------------------------------------------------------
 
-    modeSelect.addEventListener('change', (e) => {
-      currentMode = e.target.value;
-      mobileControls.style.display = (currentMode === 'mobile') ? 'flex' : 'none';
+const ATLAS_IDENTIDAD = [1, 0, 0, 1, 0, 0];
+
+function atlasMatriz3Da2D(m) {
+    const v = m.map((n) => atlasNum(n, 0));
+    const perspectiva = v[3] !== 0 || v[7] !== 0 || v[11] !== 0 || (v[15] !== 1 && v[15] !== 0);
+    if (!perspectiva) return [v[0], v[1], v[4], v[5], v[12], v[13]];
+    // Igual que flixel-animate: se proyectan 3 puntos y se arma la afín.
+    const z = v[15] || 1;
+    const p = [[0, 0], [1, 0], [0, 1]].map(([x, y]) => {
+        const zz = v[3] * x + v[7] * y + z;
+        return [(v[0] * x + v[4] * y + v[12]) / zz, (v[1] * x + v[5] * y + v[13]) / zz];
     });
+    return [p[1][0] - p[0][0], p[1][1] - p[0][1], p[2][0] - p[0][0], p[2][1] - p[0][1], p[0][0], p[0][1]];
+}
 
-    document.getElementById('btn-play').addEventListener('click', () => {
-      if (!chartData) {
-        alert("Por favor carga un archivo .fnfc primero.");
-        return;
-      }
-      startGame();
-    });
-
-    function startGame() {
-      score = 0;
-      hits = 0;
-      totalNotes = 0;
-      document.getElementById('score').innerText = score;
-      document.getElementById('accuracy').innerText = '100%';
-      
-      // Parsear notas desde la estructura del .fnfc
-      prepareNotes();
-
-      startTime = performance.now();
-      isPlaying = true;
-      requestAnimationFrame(gameLoop);
+function atlasMatrizDe(obj) {
+    if (!obj || typeof obj !== "object") return ATLAS_IDENTIDAD.slice();
+    const m2 = obj.MX ?? obj.Matrix;
+    if (Array.isArray(m2) && m2.length >= 6) return m2.slice(0, 6).map((n, i) => atlasNum(n, i === 0 || i === 3 ? 1 : 0));
+    if (m2 && typeof m2 === "object" && "a" in m2) return [m2.a, m2.b, m2.c, m2.d, m2.tx, m2.ty].map((n, i) => atlasNum(n, i === 0 || i === 3 ? 1 : 0));
+    const m3 = obj.M3D ?? obj.Matrix3D;
+    if (Array.isArray(m3) && m3.length >= 16) return atlasMatriz3Da2D(m3);
+    if (m3 && typeof m3 === "object") {
+        const k = ["m00", "m01", "m02", "m03", "m10", "m11", "m12", "m13", "m20", "m21", "m22", "m23", "m30", "m31", "m32", "m33"];
+        return atlasMatriz3Da2D(k.map((n, i) => (n in m3 ? m3[n] : (i % 5 === 0 ? 1 : 0))));
     }
+    const pos = obj.POS ?? obj.Position; // atlas viejo (2018)
+    if (pos && typeof pos === "object") return [1, 0, 0, 1, atlasNum(pos.x, 0), atlasNum(pos.y, 0)];
+    return ATLAS_IDENTIDAD.slice();
+}
 
-    let notesToRender = [];
+function atlasMultiplicar(p, e) {
+    return [
+        p[0] * e[0] + p[2] * e[1],
+        p[1] * e[0] + p[3] * e[1],
+        p[0] * e[2] + p[2] * e[3],
+        p[1] * e[2] + p[3] * e[3],
+        p[0] * e[4] + p[2] * e[5] + p[4],
+        p[1] * e[4] + p[3] * e[5] + p[5]
+    ];
+}
 
-    function prepareNotes() {
-      notesToRender = [];
-      // Soporte para estructura .fnfc estándar / Psych Engine / V-Slice
-      let notesArray = [];
-      
-      if (chartData.song && chartData.song.notes) {
-        // Formato clásico Psych / FNF
-        chartData.song.notes.forEach(section => {
-          if (section.sectionNotes) {
-            section.sectionNotes.forEach(n => {
-              notesArray.push({
-                time: n[0],
-                column: n[1],
-                sustain: n[2] || 0,
-                hit: false
-              });
+function atlasAlphaDeColor(c) {
+    if (!c || typeof c !== "object") return 1;
+    const modo = String(c.M ?? c.mode ?? "").toLowerCase();
+    if (!["ca", "alpha", "ad", "advanced"].includes(modo)) return 1;
+    const am = atlasNum(c.AM ?? c.alphaMultiplier, 1);
+    const ao = atlasNum(c.AO ?? c.AlphaOffset ?? c.alphaOffset, 0);
+    return Math.max(0, Math.min(1, am + ao / 255));
+}
+
+// ---------------------------------------------------------------------
+// Lectura de Animation.json
+// ---------------------------------------------------------------------
+
+function atlasLoop(valor) {
+    const v = String(valor ?? "LP").toLowerCase();
+    if (v === "po" || v === "playonce" || v === "play_once") return "once";
+    if (v === "sf" || v === "singleframe" || v === "single_frame") return "single";
+    return "loop";
+}
+
+function atlasElemento(e, usados) {
+    if (!e || typeof e !== "object") return null;
+    const si = e.SI ?? e.SYMBOL_Instance;
+    if (si && typeof si === "object") {
+        const st = String(si.ST ?? si.symbolType ?? "G").toLowerCase();
+        const bm = si.BM ?? si.bitmap; // atlas viejo: el bitmap va dentro del símbolo
+        const elem = {
+            tipo: "simbolo",
+            sn: String(si.SN ?? si.SYMBOL_name ?? ""),
+            ff: Math.max(0, Math.floor(atlasNum(si.FF ?? si.firstFrame, 0))),
+            lf: Math.floor(atlasNum(si.LF ?? si.lastFrame, -1)),
+            loop: atlasLoop(si.LP ?? si.loop),
+            clip: st === "mc" || st === "movieclip" || st === "b" || st === "button",
+            m: atlasMatrizDe(si),
+            alpha: atlasAlphaDeColor(si.C ?? si.color)
+        };
+        if (bm && typeof bm === "object" && (bm.N ?? bm.name) !== undefined) {
+            elem.bitmap = { nombre: String(bm.N ?? bm.name), m: atlasMatrizDe(bm) };
+            if (usados) usados.add(elem.bitmap.nombre);
+        }
+        return elem;
+    }
+    const asi = e.ASI ?? e.ATLAS_SPRITE_instance;
+    if (asi && typeof asi === "object") {
+        const nombre = String(asi.N ?? asi.name ?? "");
+        if (usados) usados.add(nombre);
+        return { tipo: "sprite", nombre, m: atlasMatrizDe(asi) };
+    }
+    return null;
+}
+
+function atlasTimeline(tl, nombre, usados) {
+    const timeline = { nombre: String(nombre || ""), capas: [], frameCount: 0 };
+    const capasJson = tl && typeof tl === "object" ? (tl.L ?? tl.LAYERS) : null;
+    if (!Array.isArray(capasJson)) return timeline;
+    capasJson.forEach((cj, indice) => {
+        if (!cj || typeof cj !== "object") return;
+        const tipo = String(cj.LT ?? cj.Layer_type ?? "").toLowerCase();
+        const clippedBy = cj.Clpb ?? cj.Clipped_by;
+        const capa = {
+            nombre: String(cj.LN ?? cj.Layer_name ?? `Capa ${indice + 1}`),
+            tipo: clippedBy != null ? "recortada" : (tipo === "clp" || tipo === "clipper" ? "mascara" : (tipo === "fld" || tipo === "folder" ? "carpeta" : "normal")),
+            mascara: clippedBy != null ? String(clippedBy) : null,
+            visible: true,
+            frames: [],
+            en: [] // índice de frame -> keyframe
+        };
+        if (capa.tipo === "mascara" || capa.tipo === "carpeta") capa.visible = false;
+        const framesJson = cj.FR ?? cj.Frames;
+        if (capa.tipo !== "carpeta" && Array.isArray(framesJson)) {
+            let siguiente = 0;
+            framesJson.forEach((fj) => {
+                if (!fj || typeof fj !== "object") return;
+                const inicio = Math.max(0, Math.floor(atlasNum(fj.I ?? fj.index, siguiente)));
+                const duracion = Math.max(1, Math.floor(atlasNum(fj.DU ?? fj.duration, 1)));
+                const elementos = (Array.isArray(fj.E ?? fj.elements) ? (fj.E ?? fj.elements) : [])
+                    .map((e) => atlasElemento(e, usados)).filter(Boolean);
+                const frame = { inicio, duracion, nombre: String(fj.N ?? fj.name ?? "").replace(/\s+$/, ""), elementos };
+                const k = capa.frames.push(frame) - 1;
+                for (let i = 0; i < duracion; i++) capa.en[inicio + i] = k;
+                siguiente = inicio + duracion;
+                timeline.frameCount = Math.max(timeline.frameCount, inicio + duracion);
             });
-          }
+        }
+        timeline.capas.push(capa);
+    });
+    // Una capa recortada sin su máscara arriba no se dibuja (igual que flixel-animate).
+    timeline.capas.forEach((capa, i) => {
+        if (capa.tipo !== "recortada") return;
+        const tieneMascara = timeline.capas.slice(0, i).some((c) => c.tipo === "mascara" && c.nombre === capa.mascara);
+        if (!tieneMascara) capa.visible = false;
+    });
+    return timeline;
+}
+
+// Devuelve el modelo del Animation.json (sin imágenes).
+function atlasParsearAnimacion(data) {
+    if (!atlasEsAnimationJson(data)) throw new Error("El JSON no es un Animation.json de Animate (falta \"AN\" / \"ANIMATION\").");
+    const an = data.AN ?? data.ANIMATION;
+    const usados = new Set();
+    const simbolos = new Map();
+    const sd = data.SD ? data.SD.S : (data.SYMBOL_DICTIONARY ? data.SYMBOL_DICTIONARY.Symbols : null);
+    if (Array.isArray(sd)) {
+        sd.forEach((s) => {
+            if (!s || typeof s !== "object") return;
+            const sn = String(s.SN ?? s.SYMBOL_name ?? "");
+            if (!sn) return;
+            simbolos.set(sn, atlasTimeline(s.TL ?? s.TIMELINE, sn, usados));
         });
-      } else if (chartData.notes) {
-        // Formato directo de notas
-        notesArray = chartData.notes;
-      }
-
-      notesToRender = notesArray;
     }
+    const nombre = String(an.SN ?? an.SYMBOL_name ?? an.N ?? an.name ?? "");
+    const principal = atlasTimeline(an.TL ?? an.TIMELINE, nombre, usados);
+    const md = data.MD ?? data.metadata ?? {};
+    const fps = atlasNum(md.FRT ?? md.framerate, 24) || 24;
+    if (!principal.capas.length && !simbolos.size) throw new Error("El Animation.json no tiene capas ni símbolos.");
+    return { nombre, principal, simbolos, fps, spritesUsados: usados, sprites: new Map() };
+}
 
-    // Bucle Principal
-    function gameLoop(timestamp) {
-      if (!isPlaying) return;
-
-      songTime = timestamp - startTime;
-      
-      // Limpiar Canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Dibujar Receptores de Notas (Strumline)
-      drawStrumline();
-
-      // Dibujar y Actualizar Notas
-      drawNotes();
-
-      // Lógica Botplay
-      if (currentMode === 'botplay') {
-        handleBotplay();
-      }
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    function drawStrumline() {
-      // Oponente
-      for (let i = 0; i < 4; i++) {
-        ctx.strokeStyle = NOTE_COLORS[i];
-        ctx.lineWidth = 3;
-        ctx.strokeRect(STRUM_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
-      }
-      // Player 1 (BF)
-      for (let i = 0; i < 4; i++) {
-        ctx.fillStyle = activeKeys[i] ? NOTE_COLORS[i] : 'transparent';
-        ctx.fillRect(PLAYER_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
-        ctx.strokeStyle = NOTE_COLORS[i];
-        ctx.lineWidth = 3;
-        ctx.strokeRect(PLAYER_X[i], STRUM_Y, NOTE_SIZE, NOTE_SIZE);
-      }
-    }
-
-    function drawNotes() {
-      notesToRender.forEach(note => {
-        if (note.hit) return;
-
-        // Calcular posición Y basada en el tiempo
-        const timeDiff = note.time - songTime;
-        const noteY = STRUM_Y + (timeDiff * SPEED * 0.4);
-
-        // Renderizar si está dentro de la pantalla
-        if (noteY > -50 && noteY < canvas.height) {
-          const isPlayer = note.column < 4; 
-          const dir = note.column % 4;
-          const targetX = isPlayer ? PLAYER_X[dir] : STRUM_X[dir];
-
-          ctx.fillStyle = NOTE_COLORS[dir];
-          ctx.beginPath();
-          ctx.roundRect(targetX, noteY, NOTE_SIZE, NOTE_SIZE, 8);
-          ctx.fill();
-        }
-
-        // Miss por dejar pasar la nota
-        if (songTime - note.time > 200 && !note.hit) {
-          note.hit = true; // Se marca como procesada
-        }
-      });
-    }
-
-    // Lógica Botplay (Auto)
-    function handleBotplay() {
-      notesToRender.forEach(note => {
-        if (!note.hit && Math.abs(note.time - songTime) < 10) {
-          const dir = note.column % 4;
-          registerHit(note, dir);
-        }
-      });
-    }
-
-    function registerHit(note, dir) {
-      note.hit = true;
-      score += 350;
-      hits++;
-      totalNotes++;
-      activeKeys[dir] = true;
-      setTimeout(() => activeKeys[dir] = false, 100);
-      updateScoreUI();
-    }
-
-    function updateScoreUI() {
-      document.getElementById('score').innerText = score;
-      const acc = totalNotes > 0 ? ((hits / totalNotes) * 100).toFixed(2) : 100;
-      document.getElementById('accuracy').innerText = `${acc}%`;
-    }
-
-    // Input Teclado (PC)
-    window.addEventListener('keydown', (e) => {
-      if (currentMode !== 'keyboard' || !isPlaying) return;
-      if (KEY_MAP[e.key] !== undefined) {
-        const dir = KEY_MAP[e.key];
-        activeKeys[dir] = true;
-        checkInputHit(dir);
-      }
+// Agrega las piezas de un spritemap (con su imagen ya cargada) al modelo.
+function atlasAgregarSpritemap(modelo, spritemap, img) {
+    spritemap.sprites.forEach((s) => {
+        modelo.sprites.set(s.name, { img, x: s.x, y: s.y, w: s.w, h: s.h, rot: s.rot });
     });
+}
 
-    window.addEventListener('keyup', (e) => {
-      if (KEY_MAP[e.key] !== undefined) {
-        activeKeys[KEY_MAP[e.key]] = false;
+function atlasSpritesFaltantes(modelo, nombresDisponibles) {
+    const faltan = [];
+    modelo.spritesUsados.forEach((n) => { if (!nombresDisponibles.has(n)) faltan.push(n); });
+    return faltan;
+}
+
+// ---------------------------------------------------------------------
+// Animaciones (frame label / símbolo)
+// ---------------------------------------------------------------------
+
+function atlasEtiquetaEnTimeline(timeline, etiqueta) {
+    const buscada = String(etiqueta).replace(/\s+$/, "");
+    for (const capa of timeline.capas) {
+        const encontrados = [];
+        capa.frames.forEach((f) => {
+            if (f.nombre === buscada) for (let i = 0; i < f.duracion; i++) encontrados.push(f.inicio + i);
+        });
+        if (encontrados.length) return encontrados;
+    }
+    return null;
+}
+
+function atlasEtiquetas(modelo) {
+    const lista = [];
+    modelo.principal.capas.forEach((c) => c.frames.forEach((f) => { if (f.nombre && !lista.includes(f.nombre)) lista.push(f.nombre); }));
+    return lista;
+}
+
+// anim: { prefijo, indices: [], animType: "framelabel" | "symbol" }
+// -> { timeline, frames: [índices de la timeline], via: "label" | "simbolo" } o null
+function atlasBuscarAnimacion(modelo, anim) {
+    const prefijo = String(anim.prefijo ?? "");
+    if (!prefijo) return null;
+    const porSimbolo = () => {
+        const tl = modelo.simbolos.get(prefijo);
+        if (!tl || tl.frameCount <= 0) return null;
+        return { timeline: tl, frames: Array.from({ length: tl.frameCount }, (_, i) => i), via: "simbolo" };
+    };
+    const porEtiqueta = () => {
+        let frames = atlasEtiquetaEnTimeline(modelo.principal, prefijo);
+        if (frames) return { timeline: modelo.principal, frames, via: "label" };
+        // Igual que flixel-animate con colecciones: se busca también en otras timelines.
+        for (const tl of modelo.simbolos.values()) {
+            frames = atlasEtiquetaEnTimeline(tl, prefijo);
+            if (frames) return { timeline: tl, frames, via: "label" };
+        }
+        return null;
+    };
+    const tipo = String(anim.animType || "framelabel").toLowerCase();
+    let r = tipo === "symbol" ? (porSimbolo() || porEtiqueta()) : (porEtiqueta() || porSimbolo());
+    if (!r) return null;
+    const indices = Array.isArray(anim.indices) ? anim.indices : [];
+    if (indices.length) {
+        const elegidos = indices.map((i) => r.frames[i]).filter((f) => f !== undefined);
+        if (!elegidos.length) return null;
+        r = Object.assign({}, r, { frames: elegidos });
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------
+// Frame de un símbolo (FlxAnimate SymbolInstance.getFrameIndex)
+// ---------------------------------------------------------------------
+
+function atlasWrap(valor, min, max) {
+    const rango = max - min + 1;
+    if (rango <= 0) return min;
+    if (valor < min) valor += rango * Math.floor((min - valor) / rango + 1);
+    return min + ((valor - min) % rango);
+}
+
+function atlasIndiceSimbolo(el, frameCount, relativo) {
+    if (el.clip) return 0;
+    const ff = el.ff;
+    let fi = ff + relativo;
+    const ultimo = frameCount - 1;
+    const hayUltimo = el.lf > -1;
+    const envuelve = hayUltimo && el.lf < ff;
+    const largo = (envuelve ? ultimo : (hayUltimo ? Math.min(el.lf, ultimo) : ultimo)) - ff + 1;
+    const total = envuelve ? largo + (el.lf + 1) : largo;
+    if (el.loop === "single") return ff;
+    if (el.loop === "loop") {
+        if (envuelve) fi = (((fi - ff) % total) + total) % total;
+        else if (hayUltimo) return atlasWrap(fi, ff, Math.min(el.lf, ultimo));
+        else return atlasWrap(fi, 0, ultimo);
+    } else {
+        fi = Math.min(fi - ff, total - 1);
+    }
+    if (fi < largo) return ff + fi;
+    if (envuelve) return fi - largo;
+    return -1 + (fi - largo);
+}
+
+// ---------------------------------------------------------------------
+// Recorrido (dibujo y bounds comparten el mismo recorrido)
+// ---------------------------------------------------------------------
+
+// visitar(sprite, matriz, alpha) para cada pieza visible.
+function atlasRecorrer(modelo, timeline, frame, matriz, alpha, visitar, profundidad) {
+    if (!timeline || profundidad > ATLAS_PROFUNDIDAD_MAX || frame < 0) return;
+    for (let i = timeline.capas.length - 1; i >= 0; i--) {
+        const capa = timeline.capas[i];
+        if (!capa.visible) continue;
+        const k = capa.en[frame];
+        if (k === undefined) continue;
+        const kf = capa.frames[k];
+        for (const el of kf.elementos) {
+            const m = atlasMultiplicar(matriz, el.m);
+            if (el.tipo === "sprite") {
+                const sp = modelo.sprites.get(el.nombre);
+                if (sp) visitar(sp, m, alpha);
+                continue;
+            }
+            const a = alpha * (el.alpha ?? 1);
+            if (a <= 0) continue;
+            if (el.bitmap) {
+                const sp = modelo.sprites.get(el.bitmap.nombre);
+                if (sp) visitar(sp, atlasMultiplicar(m, el.bitmap.m), a);
+            }
+            const sub = modelo.simbolos.get(el.sn);
+            if (!sub || sub.frameCount <= 0) continue;
+            atlasRecorrer(modelo, sub, atlasIndiceSimbolo(el, sub.frameCount, frame - kf.inicio), m, a, visitar, profundidad + 1);
+        }
+    }
+}
+
+// Matriz local de la pieza: tamaño visible (girada -90° si viene "rotated").
+function atlasMatrizPieza(sp) {
+    // rotated: (x, y) del recorte -> (y, w - x)
+    return sp.rot ? [0, -1, 1, 0, 0, sp.w] : ATLAS_IDENTIDAD;
+}
+
+function atlasBounds(modelo, timeline, frame) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    atlasRecorrer(modelo, timeline, frame, ATLAS_IDENTIDAD, 1, (sp, m) => {
+        const t = atlasMultiplicar(m, atlasMatrizPieza(sp));
+        [[0, 0], [sp.w, 0], [0, sp.h], [sp.w, sp.h]].forEach(([x, y]) => {
+            const px = t[0] * x + t[2] * y + t[4];
+            const py = t[1] * x + t[3] * y + t[5];
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        });
+    }, 0);
+    return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+
+// base: matriz [a,b,c,d,tx,ty] del lienzo (mundo -> canvas, ya con flip/escala/offsets).
+function atlasDibujar(ctx, modelo, timeline, frame, base) {
+    let piezas = 0;
+    const alphaPrevio = ctx.globalAlpha;
+    atlasRecorrer(modelo, timeline, frame, base, 1, (sp, m, alpha) => {
+        const t = atlasMultiplicar(m, atlasMatrizPieza(sp));
+        ctx.setTransform(t[0], t[1], t[2], t[3], t[4], t[5]);
+        ctx.globalAlpha = alphaPrevio * alpha;
+        ctx.drawImage(sp.img, sp.x, sp.y, sp.w, sp.h, 0, 0, sp.w, sp.h);
+        piezas++;
+    }, 0);
+    ctx.globalAlpha = alphaPrevio;
+    return piezas;
+}
+
+
+/* ---------- Sparrow (portado de Chart Editor GCD js/VisualizarPersonajes.js) ---------- */
+function parseSparrow(texto) {
+  const doc = new DOMParser().parseFromString(texto, 'text/xml');
+  if (!doc || doc.getElementsByTagName('parsererror').length) throw new Error('XML inválido');
+  const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+  const frames = [];
+  Array.from(doc.getElementsByTagName('SubTexture')).forEach((n, orden) => {
+    const nombre = n.getAttribute('name') || '';
+    const x = num(n.getAttribute('x'), 0), y = num(n.getAttribute('y'), 0), w = num(n.getAttribute('width'), 0), h = num(n.getAttribute('height'), 0);
+    if (w <= 0 || h <= 0) return;
+    const rot = n.getAttribute('rotated') === 'true', dw = rot ? h : w, dh = rot ? w : h;
+    const rec = n.hasAttribute('frameX');
+    const offX = rec ? -num(n.getAttribute('frameX'), 0) : 0, offY = rec ? -num(n.getAttribute('frameY'), 0) : 0;
+    let fw = rec ? num(n.getAttribute('frameWidth'), dw) : dw, fh = rec ? num(n.getAttribute('frameHeight'), dh) : dh;
+    if (fw <= 0) fw = dw; if (fh <= 0) fh = dh;
+    const m = /(\d+)(?:\.png)?$/i.exec(nombre);
+    frames.push({ nombre, x, y, w, h, rot, dw, dh, offX, offY, fw, fh, num: m ? parseInt(m[1], 10) : -1, orden });
+  });
+  if (!frames.length) throw new Error('El XML no tiene SubTexture');
+  return { frames };
+}
+function sparrowFrames(atlas, prefijo, indices, img) {
+  const co = atlas.frames.filter(f => f.nombre.startsWith(prefijo)).sort((a, b) => (a.num - b.num) || (a.orden - b.orden));
+  const out = indices && indices.length ? indices.map(i => co.find(f => f.num === i) || co[i]).filter(Boolean) : co;
+  return out.map(f => Object.assign({}, f, { img }));
+}
+
+/* Carga un gráfico: Animate Atlas (carpeta) o Sparrow (xml+png). Devuelve null si no existe. */
+async function loadGraphic(ap, renderType) {
+  const bases = uniq(ASSET_CFG.libImagePaths.map(t => fillT(t, ap)));
+  const tryAtlas = async () => {
+    for (const b of bases) {
+      const an = await fetchFirst([b + '/Animation.json']);
+      if (!an) continue;
+      let model; try { model = atlasParsearAnimacion(an.data); } catch (e) { console.warn(b, e); continue; }
+      for (let i = 1; i <= 12; i++) {
+        const sm = await fetchFirst(i === 1 ? [b + '/spritemap1.json', b + '/spritemap.json'] : [`${b}/spritemap${i}.json`]);
+        if (!sm) break;
+        let spm; try { spm = atlasLeerSpritemap(sm.data); } catch (e) { break; }
+        const png = sm.path.replace(/\.json$/, '.png');
+        const img = await loadImg([spm.imagen ? b + '/' + spm.imagen : png, png]);
+        if (img) atlasAgregarSpritemap(model, spm, img);
       }
-    });
+      if (!model.sprites.size) continue;
+      return { type: 'atlas', model, where: b };
+    }
+    return null;
+  };
+  const trySparrow = async () => {
+    for (const b of bases) {
+      const xml = await fetchFirst([b + '.xml'], 'text');
+      if (!xml) continue;
+      let atlas; try { atlas = parseSparrow(xml.data); } catch (e) { continue; }
+      const img = await loadImg([b + '.png']);
+      if (img) return { type: 'sparrow', atlas, img, where: b };
+    }
+    return null;
+  };
+  const rt = String(renderType || '').toLowerCase();
+  return rt.includes('sparrow') ? (await trySparrow() || await tryAtlas()) : (await tryAtlas() || await trySparrow());
+}
 
-    // Input Táctil (Celular)
-    const touchButtons = document.querySelectorAll('.touch-btn');
-    touchButtons.forEach(btn => {
-      const dir = parseInt(btn.getAttribute('data-key'));
-      
-      btn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        if (currentMode !== 'mobile' || !isPlaying) return;
-        activeKeys[dir] = true;
-        checkInputHit(dir);
-      });
+/* ---------- Personaje real (V-Slice: offsets, flipX, scale, singTime, danceLeft/Right) ---------- */
+const NEEDED_ANIM = /^(idle|danceLeft|danceRight|idle-hold|sing(LEFT|DOWN|UP|RIGHT)(miss)?(-hold)?)$/;
+class RealChar {
+  constructor(role, id, data, anims, missing, kind, where) {
+    Object.assign(this, { role, id, data, anims, missing, kind, where });
+    this.scale = +data.scale || 1; this.flipX = !!data.flipX; this.isPixel = !!data.isPixel;
+    this.offsets = data.offsets || [0, 0]; this.camOff = data.cameraOffsets || [0, 0];
+    this.singTime = +data.singTime || 8; this.danceEvery = data.danceEvery ?? 1;
+    this.hasLR = anims.has('danceLeft') && anims.has('danceRight'); this.danced = false;
+    const refA = anims.get('idle') || anims.get('danceRight') || anims.get('danceLeft') || anims.values().next().value;
+    this.ref = RealChar.box(refA, 0) || { minX: 0, minY: 0, maxX: 300, w: 300, h: 400 };
+    this.singUntil = -1e9; this.holdUntil = -1e9; this.missTint = false;
+    this.reset();
+  }
+  static box(a, i) {
+    if (!a) return null;
+    if (a.type === 'atlas') { const b = atlasBounds(a.model, a.timeline, a.frames[i]); return b && { minX: b.minX, minY: b.minY, maxX: b.maxX, w: b.maxX - b.minX, h: b.maxY - b.minY }; }
+    const f = a.frames[i]; return f && { minX: 0, minY: 0, maxX: f.fw, w: f.fw, h: f.fh };
+  }
+  reset() {
+    this.singUntil = this.holdUntil = -1e9; this.missTint = false; this.danced = false;
+    const st = this.data.startingAnimation;
+    this.play(st && this.anims.has(st) ? st : (this.hasLR ? 'danceRight' : 'idle'), true);
+  }
+  place(sc) {   // sc = datos del personaje en el JSON del escenario
+    this.ts = this.scale * (+sc.scale || 1);
+    this.bx = sc.position[0] - this.ref.w * this.ts / 2 + this.offsets[0];
+    this.by = sc.position[1] - this.ref.h * this.ts + this.offsets[1];
+    this.z = sc.zIndex ?? 0; this.stageCam = sc.cameraOffsets || [0, 0]; this.scroll = sc.scroll || [1, 1];
+  }
+  camPoint() {
+    return [this.bx + this.ref.w * this.ts / 2 + this.camOff[0] + this.stageCam[0], this.by + this.ref.h * this.ts / 2 + this.camOff[1] + this.stageCam[1]];
+  }
+  play(name, force) {
+    const a = this.anims.get(name); if (!a) return false;
+    if (!force && this.curName === name) return true;
+    this.curName = name; this.cur = a; this.t0 = G.gameTime; return true;
+  }
+  frameIdx() {
+    const a = this.cur, n = a.frames.length; let i = Math.floor((G.gameTime - this.t0) / 1000 * a.fps);
+    return a.loop ? ((i % n) + n) % n : clamp(i, 0, n - 1);
+  }
+  finished() { return !this.cur.loop && (G.gameTime - this.t0) / 1000 * this.cur.fps >= this.cur.frames.length; }
+  singing() { return G.gameTime < this.singUntil; }
+  dance(force) {
+    if (this.singing() && !force) return;
+    if (this.hasLR) { this.danced = !this.danced; this.play(this.danced ? 'danceLeft' : 'danceRight', true); }
+    else this.play('idle', true);
+  }
+  onBeat(beat) {
+    if (this.singing()) return;
+    const every = Math.max(1, Math.round(this.danceEvery || 1));
+    if (beat % every === 0) this.dance();
+  }
+  sing(lane, miss, holdMs) {
+    const dir = LANE_DIRS[lane]; let n = 'sing' + dir + (miss ? 'miss' : '');
+    this.missTint = false;
+    if (!this.anims.has(n)) { if (miss) this.missTint = true; n = 'sing' + dir; }
+    if (!this.play(n, true)) { this.play(this.hasLR ? 'danceRight' : 'idle', true); }
+    const step = G.chart.crochet / 4;
+    this.holdUntil = G.gameTime + holdMs;
+    this.singUntil = G.gameTime + holdMs + this.singTime * step;
+  }
+  holdOn() { this.holdUntil = Math.max(this.holdUntil, G.gameTime + 60); this.singUntil = Math.max(this.singUntil, G.gameTime + this.singTime * G.chart.crochet / 4); }
+  update() {
+    if (!this.cur) return;
+    if (this.curName.startsWith('sing') && !this.singing()) { this.missTint = false; this.dance(true); return; }
+    // sustain: al terminar la animación de canto pasa a "<anim>-hold" en loop (si existe)
+    if (G.gameTime < this.holdUntil && this.finished() && this.anims.has(this.curName + '-hold')) this.play(this.curName + '-hold', true);
+    else if (G.gameTime >= this.holdUntil && this.curName.endsWith('-hold') && !this.curName.startsWith('idle')) this.play(this.curName.replace(/-hold$/, ''), false);
+  }
+  draw(M) {   // M = matriz mundo -> píxeles del canvas
+    const a = this.cur; if (!a) return;
+    const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off = a.off || [0, 0];
+    ctx.imageSmoothingEnabled = !this.isPixel;
+    if (this.missTint && 'filter' in ctx) ctx.filter = 'grayscale(.4) sepia(.6) hue-rotate(220deg) saturate(2) brightness(.75)';
+    if (a.type === 'atlas') {
+      const local = [flip ? -s : s, 0, 0, s, this.bx - off[0] + (flip ? this.ref.maxX * s : -this.ref.minX * s), this.by - off[1] - this.ref.minY * s];
+      atlasDibujar(ctx, a.model, a.timeline, fr, atlasMultiplicar(M, local));
+    } else if (fr) {
+      const rx = flip ? (fr.fw - fr.offX - fr.dw) : fr.offX;
+      ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
+      ctx.translate(this.bx + rx * s - off[0] + (flip ? fr.dw * s : 0), this.by + fr.offY * s - off[1]);
+      ctx.scale(flip ? -s : s, s);
+      if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
+      ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
+    }
+    if ('filter' in ctx) ctx.filter = 'none';
+    ctx.imageSmoothingEnabled = true;
+  }
+}
 
-      btn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        activeKeys[dir] = false;
-      });
-    });
+async function loadCharacter(role, id) {
+  const dj = await fetchFirst(ASSET_CFG.charDataPaths.map(t => fillT(t, { id })));
+  const data = dj ? dj.data : DEFAULT_DATA.characters[id];
+  if (!data) return { error: `no hay data/characters/${id}.json` };
+  const mainAp = data.assetPath || `characters/${id}`;
+  const main = await loadGraphic(parseAssetPath(mainAp), data.renderType);
+  if (!main) return { error: `no encontré ${fillT(ASSET_CFG.libImagePaths[0], parseAssetPath(mainAp))}/ (Animation.json+spritemap) ni .xml/.png`, data, dataFrom: dj ? dj.path : 'incluido' };
+  const extra = {}, anims = new Map(), missing = [];
+  for (const a of data.animations || []) {
+    if (!NEEDED_ANIM.test(a.name)) continue;
+    let g = main;
+    if (a.assetPath && a.assetPath !== mainAp) {
+      if (!(a.assetPath in extra)) extra[a.assetPath] = await loadGraphic(parseAssetPath(a.assetPath), a.renderType || data.renderType);
+      g = extra[a.assetPath];
+    }
+    const base = { name: a.name, fps: +a.frameRate || 24, loop: !!a.looped, off: a.offsets || [0, 0], flipX: !!a.flipX };
+    if (g && g.type === 'atlas') {
+      const r = atlasBuscarAnimacion(g.model, { prefijo: a.prefix, indices: a.frameIndices || [], animType: a.animType });
+      if (r && r.frames.length) { anims.set(a.name, Object.assign(base, { type: 'atlas', model: g.model, timeline: r.timeline, frames: r.frames })); continue; }
+    } else if (g) {
+      const fr = sparrowFrames(g.atlas, a.prefix || '', a.frameIndices, g.img);
+      if (fr.length) { anims.set(a.name, Object.assign(base, { type: 'sparrow', frames: fr })); continue; }
+    }
+    missing.push(a.name);
+  }
+  if (!anims.size) return { error: 'ninguna animación del JSON coincide con el atlas', data };
+  const ch = new RealChar(role, id, data, anims, missing, main.type, main.where);
+  ch.dataFrom = dj ? dj.path : '(JSON incluido en index.html)';
+  return ch;
+}
 
-    function checkInputHit(dir) {
-      // Buscar la nota más cercana en la columna correspondiente
-      const targetNote = notesToRender.find(n => !n.hit && (n.column % 4 === dir) && Math.abs(n.time - songTime) < 150);
-      if (targetNote) {
-        registerHit(targetNote, dir);
+/* ---------- Escenario ---------- */
+async function loadStage(id) {
+  const sj = await fetchFirst(ASSET_CFG.stageDataPaths.map(t => fillT(t, { id })));
+  const data = sj ? sj.data : DEFAULT_DATA.stages[id];
+  if (!data) return null;
+  const props = [];
+  for (const p of data.props || []) {
+    const ap = String(p.assetPath || '');
+    const prop = { name: p.name || ap, pos: p.position || [0, 0], scale: p.scale === undefined ? [1, 1] : (Array.isArray(p.scale) ? p.scale : [p.scale, p.scale]),
+      scroll: p.scroll || [1, 1], alpha: p.alpha ?? 1, z: p.zIndex ?? 0, flipX: !!p.flipX, flipY: !!p.flipY, isPixel: !!p.isPixel, danceEvery: p.danceEvery || 0 };
+    if (ap.startsWith('#')) { prop.color = ap; props.push(prop); continue; }
+    const pa = parseAssetPath(ap);
+    const cands = ASSET_CFG.stageImagePaths.map(t => fillT(t, { stage: id, path: pa.path, dir: data.directory || 'shared' }));
+    if (ap.includes(':')) cands.unshift(`${pa.lib}/images/${pa.path}.png`);
+    if (Array.isArray(p.animations) && p.animations.length && p.animType !== 'animateatlas') {
+      const xml = await fetchFirst(cands.map(c => c.replace(/\.png$/, '.xml')), 'text');
+      if (xml) {
+        try {
+          const atlas = parseSparrow(xml.data), img = await loadImg([xml.path.replace(/\.xml$/, '.png')]);
+          const a = p.animations.find(a => a.name === p.startingAnimation) || p.animations.find(a => a.name === 'idle') || p.animations[0];
+          const frames = img ? sparrowFrames(atlas, a.prefix || '', a.frameIndices, img) : [];
+          if (frames.length) { Object.assign(prop, { frames, fps: +a.frameRate || 24, loop: a.looped !== false, img, path: xml.path, off: a.offsets || [0, 0] }); props.push(prop); continue; }
+        } catch (e) { console.warn(e); }
       }
     }
-  </script>
+    const img = await loadImg(cands);
+    prop.img = img; prop.path = img ? img.assetPath : null; prop.tried = cands[0];
+    props.push(prop);
+  }
+  return { id, data, props, from: sj ? sj.path : '(JSON incluido en index.html)' };
+}
+
+/* ---------- Notas (NoteAssets) ---------- */
+function tintCanvas(img, dark, light) {
+  const c = document.createElement('canvas'); c.width = img.naturalWidth || img.width; c.height = img.naturalHeight || img.height;
+  const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+  try {
+    const d = x.getImageData(0, 0, c.width, c.height), p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const l = (0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]) / 255;
+      p[i] = dark[0] + (light[0] - dark[0]) * l; p[i + 1] = dark[1] + (light[1] - dark[1]) * l; p[i + 2] = dark[2] + (light[2] - dark[2]) * l;
+    }
+    x.putImageData(d, 0, 0);
+  } catch (e) {   // file:// (canvas "tainted"): silueta plana
+    x.globalCompositeOperation = 'source-atop'; x.fillStyle = `rgb(${light.join(',')})`; x.fillRect(0, 0, c.width, c.height);
+  }
+  return c;
+}
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+async function loadNoteSkin() {
+  const skin = { head: [], piece: [], end: [], strum: [], press: [], confirm: [], placeholder: [false, false, false, false] };
+  await Promise.all([0, 1, 2, 3].map(async i => {
+    const v = { color: ASSET_CFG.noteColors[i], dir: LANE_NAMES[i], DIR: LANE_DIRS[i] };
+    const f = list => (Array.isArray(list) ? list : [list]).map(t => ASSET_CFG.noteDir + fillT(t, v));
+    [skin.head[i], skin.piece[i], skin.end[i], skin.strum[i], skin.press[i], skin.confirm[i]] = await Promise.all([
+      loadImg(f(ASSET_CFG.noteHead)), loadImg(f(ASSET_CFG.holdPiece)), loadImg(f(ASSET_CFG.holdEnd)),
+      loadImg(f(ASSET_CFG.strumStatic)), loadImg(f(ASSET_CFG.strumPress)), loadImg(f(ASSET_CFG.strumConfirm))]);
+    if (skin.head[i]) {
+      if (!skin.strum[i]) { skin.strum[i] = tintCanvas(skin.head[i], [18, 22, 30], [190, 206, 216]); skin.placeholder[i] = true; }
+      if (!skin.press[i]) { const c = hexRgb(LANE_DARK[i]); skin.press[i] = tintCanvas(skin.head[i], [10, 6, 18], c.map(v => Math.min(255, v * 1.6 + 30))); }
+    }
+  }));
+  skin.ok = skin.head.some(Boolean);
+  return skin;
+}
+
+/* ---------- Escena completa ---------- */
+const Scene = { world: false, loading: false, stage: null, chars: { bf: null, dad: null, gf: null }, errors: {}, ids: null,
+  notes: null, icons: {}, cam: { x: 640, y: 360, init: false }, focus: 'dad', status: [], token: 0 };
+
+async function loadScene(ids) {
+  ids = Object.assign({ bf: ASSET_CFG.chars.bf, dad: ASSET_CFG.chars.dad, gf: ASSET_CFG.chars.gf, stage: ASSET_CFG.stage }, ids || {});
+  const key = JSON.stringify(ids);
+  if (Scene.ids === key) return;
+  Scene.ids = key; const token = ++Scene.token; Scene.loading = true;
+  const isFile = location.protocol === 'file:';
+  const loadRole = async role => {
+    let c = await loadCharacter(role, ids[role]);
+    if (c.error && ids[role] !== role && ASSET_CFG.chars[role] !== ids[role]) {   // id del chart sin assets -> el personaje por defecto
+      const c2 = await loadCharacter(role, ASSET_CFG.chars[role]); if (!c2.error) { c2.fallbackFrom = ids[role]; c = c2; }
+    }
+    return c;
+  };
+  const [stage, bf, dad, gf, notes] = await Promise.all([
+    loadStage(ids.stage).then(s => s || (ids.stage !== ASSET_CFG.stage ? loadStage(ASSET_CFG.stage) : null)),
+    loadRole('bf'), loadRole('dad'), loadRole('gf'), Scene.notes ? Scene.notes : loadNoteSkin()]);
+  if (token !== Scene.token) return;
+  Scene.stage = stage; Scene.notes = notes;
+  const st = [];
+  for (const [role, c] of [['bf', bf], ['dad', dad], ['gf', gf]]) {
+    if (c instanceof RealChar) {
+      Scene.chars[role] = c; Scene.errors[role] = null;
+      const sc = stage?.data?.characters?.[role] || { position: role === 'bf' ? [989.5, 885] : role === 'dad' ? [335, 885] : [751.5, 787], zIndex: role === 'bf' ? 300 : role === 'dad' ? 200 : 100 };
+      c.place(sc);
+      st.push(`✔ ${role}: ${c.id} — ${c.kind === 'atlas' ? 'Animate Atlas' : 'Sparrow'} (${c.where}) · ${c.anims.size} anims${c.missing.length ? ' · faltan: ' + c.missing.join(', ') : ''}${c.fallbackFrom ? ` · (el chart pedía "${c.fallbackFrom}")` : ''}`);
+    } else { Scene.chars[role] = null; Scene.errors[role] = c.error; st.push(`✘ ${role}: ${ids[role]} — ${c.error} → dibujo improvisado`); }
+  }
+  // iconos de vida (healthIcon.id o id del personaje)
+  const iconId = role => { const c = Scene.chars[role]; const d = c ? c.data : DEFAULT_DATA.characters[ids[role]]; return (d && d.healthIcon && d.healthIcon.id) || (c ? c.id : ids[role]); };
+  const [iBf, iDad] = await Promise.all(['bf', 'dad'].map(r => loadImg(ASSET_CFG.iconPaths.map(t => fillT(t, { id: iconId(r) })))));
+  Scene.icons = { player: iBf, opponent: iDad };
+  // colores de la barra de vida desde el JSON del personaje (si los trae)
+  for (const [role, k] of [['dad', 'opp'], ['bf', 'player']]) {
+    const d = Scene.chars[role]?.data, col = d && (d.healthbar_colors || d.healthBarColor || d.healthbarColor || d.healthIcon?.color);
+    let rgb = null;
+    if (Array.isArray(col) && col.length >= 3) rgb = col.slice(0, 3).map(Number);
+    else if (typeof col === 'string' && /^#?[0-9a-f]{6}/i.test(col)) rgb = hexRgb('#' + col.replace(/^#/, '').slice(0, 6));
+    if (rgb) { COLORS[k] = `rgb(${rgb.join(',')})`; COLORS[k + 'Dark'] = `rgb(${rgb.map(v => Math.round(v * 0.55)).join(',')})`; }
+    else { COLORS[k] = DEFAULT_COLORS[k]; COLORS[k + 'Dark'] = DEFAULT_COLORS[k + 'Dark']; }
+  }
+  const loadedProps = stage ? stage.props.filter(p => p.img || p.color) : [];
+  if (stage) st.push(`${loadedProps.length ? '✔' : '✘'} escenario: ${stage.data.name || stage.id} (${stage.from}) · props ${loadedProps.length}/${stage.props.length}` +
+    (stage.props.filter(p => !p.img && !p.color).length ? ' · faltan: ' + stage.props.filter(p => !p.img && !p.color).map(p => p.tried).join(', ') + ' → fondo improvisado' : ''));
+  else st.push(`✘ escenario: ${ids.stage} — sin JSON → fondo improvisado`);
+  st.push(`${notes.ok ? '✔' : '✘'} notas: ${notes.head.filter(Boolean).length}/4 cabezas, ${notes.piece.filter(Boolean).length}/4 hold piece, ${notes.end.filter(Boolean).length}/4 hold end` +
+    (notes.ok && notes.placeholder.some(Boolean) ? ' · receptor ("nota normal") no encontrado → gris provisional' : ''));
+  st.push(`${iBf || iDad ? '✔' : '✘'} iconos: jugador ${iBf ? iBf.assetPath : '(improvisado)'} · rival ${iDad ? iDad.assetPath : '(improvisado)'}`);
+  Scene.status = st;
+  Scene.world = !!(stage && (loadedProps.length || bf instanceof RealChar || dad instanceof RealChar));
+  Scene.cam.init = false; Scene.loading = false;
+  const any = Scene.world || notes.ok || iBf || iDad;
+  if (isFile && !(bf instanceof RealChar && dad instanceof RealChar)) toast('Abierto como archivo (file://): el navegador bloquea los assets. Usa GitHub Pages o un servidor local (python -m http.server).', 7000);
+  else if (!any) toast('No encontré assets reales (data/, shared/images/…): uso los dibujos improvisados', 4000);
+  else toast(`Assets: ${['bf', 'dad', 'gf'].map(r => (Scene.chars[r] ? '✔' : '✘') + r).join(' ')} · escenario ${loadedProps.length ? '✔' : '✘'} · notas ${notes.ok ? '✔' : '✘'}`, 3200);
+  console.info('[TestSong] assets\n' + st.join('\n'));
+}
+
+/* =====================================================================
+   ESTADO DEL JUEGO
+   ===================================================================== */
+const G = {
+  chart: null, raw: null, meta: null,
+  mode: params.get('modo') || 'demo',
+  songPos: 0, gameTime: 0, paused: false, overlayKind: null,
+  health: 1, displayHealth: 1, ghostHealth: 1, iconKick: 0, iconKickAt: -1e9,
+  score: 0, misses: 0, combo: 0, judged: 0, accSum: 0,
+  popup: null,
+  dad: { pose: 'idle', poseAt: -1e9, poseUntil: -1e9, miss: false },
+  bf:  { pose: 'idle', poseAt: -1e9, poseUntil: -1e9, miss: false },
+  strums: { opponent: { confirmAt: [-1e9, -1e9, -1e9, -1e9], hold: [0, 0, 0, 0] },
+            player:   { confirmAt: [-1e9, -1e9, -1e9, -1e9], hold: [0, 0, 0, 0], pressed: [false, false, false, false] } },
+  lastBeat: -999,
+};
+const isBot = () => G.mode === 'demo' || G.mode === 'botplay';
+
+function loadChart(chart, audioBlobs = []) {
+  G.chart = chart;
+  loadScene(chart.scene || {});
+  Music.set(audioBlobs);
+  restart();
+  if (Music.has && !params.has('t')) openOverlay('ready');
+}
+
+function restart() {
+  const c = G.chart;
+  c.notes.forEach(n => { n.judged = n.hit = n.missed = n.holding = n.dropped = false; });
+  Music.pause(); Music.started = false;
+  G.songPos = params.has('t') && G.gameTime === 0 ? +params.get('t') : -c.crochet * 4;   // cuenta regresiva 3-2-1-¡YA!
+  G.health = G.displayHealth = G.ghostHealth = 1;
+  G.score = G.misses = G.combo = G.judged = G.accSum = 0;
+  G.popup = null; G.lastBeat = -999;
+  for (const ch of [G.dad, G.bf]) { ch.pose = 'idle'; ch.poseUntil = -1e9; ch.miss = false; }
+  for (const c of Object.values(Scene.chars)) if (c) c.reset();
+  Scene.cam.init = false; Scene.focus = 'dad';
+  for (const s of Object.values(G.strums)) { s.confirmAt.fill(-1e9); s.hold.fill(0); }
+  G.strums.player.pressed.fill(false);
+  closeOverlay(true);
+}
+
+function changeHealth(delta) {
+  const before = G.health;
+  G.health = clamp(G.health + delta, 0, CONFIG.maxHealth);
+  const real = G.health - before;
+  if (Math.abs(real) > 0.001) { G.iconKick = Math.min(0.35, 0.08 + Math.abs(real) * 2.2); G.iconKickAt = G.gameTime; }
+  if (G.health <= 0 && !isBot()) openOverlay('over');
+}
+
+function sing(ch, lane, miss = false, holdMs = 0) {
+  ch.pose = LANE_NAMES[lane]; ch.miss = miss; ch.poseAt = G.gameTime;
+  ch.poseUntil = G.gameTime + Math.max(G.chart.crochet * 0.85, holdMs);
+  const real = Scene.chars[ch === G.bf ? 'bf' : 'dad'];
+  if (real) real.sing(lane, miss, holdMs);
+}
+
+function hitNote(n, diff) {
+  n.judged = n.hit = true; n.holding = n.sustain > 0;
+  const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime;
+  sing(n.side === 'player' ? G.bf : G.dad, n.lane, false, n.sustain);
+  if (n.side === 'opponent') {
+    if (G.mode === 'demo' && G.health > 0.35) changeHealth(-CONFIG.demoOppDrain);
+    return;
+  }
+  const j = CONFIG.judgments.find(j => diff <= j.ms) || CONFIG.judgments[CONFIG.judgments.length - 1];
+  G.score += j.score; G.combo++; G.judged++; G.accSum += j.acc;
+  changeHealth(j.health + (n.sustain > 0 ? 0.02 : 0));
+  G.popup = { text: j.name, color: j.color, combo: G.combo, at: G.gameTime };
+}
+
+function missNote(n) {
+  n.judged = n.missed = true;
+  G.misses++; G.combo = 0; G.judged++; G.score -= 10;
+  sing(G.bf, n.lane, true);
+  G.popup = { text: 'FALLO', color: '#ff4d6d', combo: 0, at: G.gameTime };
+  changeHealth(CONFIG.missHealth);
+}
+
+/* En demo el bot falla a propósito en "olas" para que la barra de vida se mueva */
+function demoShouldMiss(n) {
+  if (G.health < 0.55) return false;
+  const wave = 0.5 + 0.5 * Math.sin(n.time / 5200);
+  return n.seed < 0.06 + 0.5 * wave * wave;
+}
+
+/* =====================================================================
+   UPDATE
+   ===================================================================== */
+function update(dt) {
+  const c = G.chart;
+  G.gameTime += dt;
+  G.songPos += dt;
+
+  // sincronía con audio
+  if (Music.has) {
+    if (!Music.started && G.songPos >= 0) Music.play(G.songPos);
+    else if (Music.playing) { const t = Music.time(); if (Math.abs(t - G.songPos) > 45) G.songPos = t; }
+  }
+
+  // beats
+  const beat = Math.floor(G.songPos / c.crochet);
+  if (beat !== G.lastBeat) {
+    G.lastBeat = beat;
+    for (const c of Object.values(Scene.chars)) if (c) c.onBeat(beat);
+  }
+  let focusSet = false;
+
+  // notas
+  for (const n of c.notes) {
+    if (n.time - G.songPos > 3000) break;
+    if (n.judged) {
+      if (n.holding) {
+        if (G.songPos >= n.time + n.sustain) n.holding = false;
+        else {
+          G.strums[n.side].confirmAt[n.lane] = G.gameTime;
+          const ch = n.side === 'player' ? G.bf : G.dad; ch.poseUntil = Math.max(ch.poseUntil, G.gameTime + 60);
+          const real = Scene.chars[n.side === 'player' ? 'bf' : 'dad']; if (real) real.holdOn();
+        }
+      }
+      continue;
+    }
+    const diff = n.time - G.songPos;
+    // cámara: enfoca a quien canta la próxima nota (como los eventos FocusCamera)
+    if (!focusSet) { focusSet = true; if (diff < c.crochet * 2) Scene.focus = n.side === 'player' ? 'bf' : 'dad'; }
+    if (n.side === 'opponent') { if (diff <= 0) hitNote(n, 0); continue; }
+    if (isBot() && diff <= 0) {
+      if (G.mode === 'demo' && demoShouldMiss(n)) { /* deja pasar la nota */ }
+      else { hitNote(n, 0); continue; }
+    }
+    if (diff < -CONFIG.hitWindow) missNote(n);
+  }
+
+  // vida visual
+  const k = 1 - Math.exp(-dt / 90);
+  G.displayHealth = lerp(G.displayHealth, G.health, k);
+  G.ghostHealth = G.ghostHealth > G.displayHealth ? lerp(G.ghostHealth, G.displayHealth, 1 - Math.exp(-dt / 600)) : G.displayHealth;
+
+  // fin de canción
+  const end = Math.max(c.endTime, Music.duration);
+  if (G.songPos > end) {
+    if (G.mode === 'demo') restart();
+    else openOverlay('end');
+  }
+}
+
+/* =====================================================================
+   INPUT
+   ===================================================================== */
+function press(lane) {
+  if (G.paused) return;
+  if (G.mode === 'demo') { setMode('keyboard'); toast('Modo Teclado activado ⌨'); }
+  if (isBot()) return;
+  G.strums.player.pressed[lane] = true;
+  let best = null;
+  for (const n of G.chart.notes) {
+    if (n.time - G.songPos > CONFIG.hitWindow) break;
+    if (n.judged || n.side !== 'player' || n.lane !== lane) continue;
+    if (Math.abs(n.time - G.songPos) <= CONFIG.hitWindow) { best = n; break; }
+  }
+  if (best) hitNote(best, Math.abs(best.time - G.songPos));
+  // ghost tapping: sin penalización
+}
+function release(lane) {
+  G.strums.player.pressed[lane] = false;
+  if (isBot()) return;
+  for (const n of G.chart.notes) if (n.holding && n.side === 'player' && n.lane === lane) { n.holding = false; n.dropped = true; }
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'p' || e.key === 'P') {
+    e.preventDefault();
+    if (G.overlayKind === 'pause' || G.overlayKind === 'ready') closeOverlay(); else if (!G.overlayKind) openOverlay('pause');
+    return;
+  }
+  const lane = KEY_MAP[e.key] ?? KEY_MAP[(e.key || '').toLowerCase()];
+  if (lane === undefined || e.repeat) return;
+  e.preventDefault();
+  if (G.mode === 'mobile') setMode('keyboard');
+  press(lane);
+});
+window.addEventListener('keyup', e => {
+  const lane = KEY_MAP[e.key] ?? KEY_MAP[(e.key || '').toLowerCase()];
+  if (lane !== undefined) release(lane);
+});
+
+const pointers = new Map();
+const cv = document.getElementById('game');
+cv.addEventListener('pointerdown', e => {
+  if (G.mode !== 'mobile') { if (e.pointerType === 'touch' && G.mode === 'demo') { setMode('mobile'); toast('Modo Táctil activado 📱'); } else return; }
+  const lane = clamp(Math.floor(e.clientX / (W / 4)), 0, 3);
+  pointers.set(e.pointerId, lane); press(lane); e.preventDefault();
+});
+const endPointer = e => { if (pointers.has(e.pointerId)) { release(pointers.get(e.pointerId)); pointers.delete(e.pointerId); } };
+cv.addEventListener('pointerup', endPointer); cv.addEventListener('pointercancel', endPointer); cv.addEventListener('pointerleave', endPointer);
+
+/* =====================================================================
+   UI HTML: pausa, opciones, carga de archivos
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const overlay = $('overlay');
+
+function openOverlay(kind) {
+  G.paused = true; G.overlayKind = kind; Music.pause();
+  for (let i = 0; i < 4; i++) release(i);
+  const acc = G.judged ? (G.accSum / G.judged * 100).toFixed(2) + '%' : '—';
+  const titles = { pause: 'PAUSA', over: '¡PERDISTE!', end: '¡CANCIÓN TERMINADA!', ready: '¡LISTO!' };
+  $('ovTitle').textContent = titles[kind];
+  $('ovSub').textContent = kind === 'ready' ? `${G.chart.title} — pulsa Jugar` : `${G.chart.title} · Puntuación ${G.score} · Fallos ${G.misses} · Precisión ${acc}`;
+  $('btnResume').style.display = (kind === 'pause' || kind === 'ready') ? '' : 'none';
+  $('btnResume').textContent = kind === 'ready' ? '▶ Jugar' : '▶ Reanudar';
+  $('btnRestart').textContent = kind === 'pause' || kind === 'ready' ? '↻ Reiniciar' : '↻ Reintentar';
+  $('modeSel').value = G.mode;
+  $('assetList').innerHTML = (Scene.loading ? ['Cargando…'] : Scene.status.length ? Scene.status : ['—'])
+    .map(l => `<div style="margin:3px 0;color:${l.startsWith('✘') ? '#ffb3b3' : '#c9ffd0'}">${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('');
+  overlay.classList.add('show');
+}
+function closeOverlay(silent) {
+  overlay.classList.remove('show');
+  G.overlayKind = null; G.paused = false; lastFrame = performance.now();
+  if (!silent && Music.has && Music.started && G.songPos >= 0 && G.songPos < Music.duration) Music.play(G.songPos);
+}
+function setMode(m) { G.mode = m; $('modeSel').value = m; }
+
+$('pauseBtn').addEventListener('click', () => { if (G.overlayKind) { if (G.overlayKind === 'pause') closeOverlay(); } else openOverlay('pause'); });
+$('btnResume').addEventListener('click', () => closeOverlay());
+$('btnRestart').addEventListener('click', () => restart());
+$('modeSel').addEventListener('change', e => { setMode(e.target.value); toast('Modo: ' + e.target.selectedOptions[0].textContent); });
+$('btnLoad').addEventListener('click', () => $('fileInput').click());
+$('btnDemo').addEventListener('click', () => { G.raw = G.meta = null; $('diffRow').style.display = 'none'; loadChart(Chart.makeDemo()); toast('Canción demo cargada'); });
+$('diffSel').addEventListener('change', e => { if (G.raw) { try { G.chart = Chart.parse(G.raw, G.meta, e.target.value); restart(); openOverlay('ready'); } catch (err) { toast('Error: ' + err.message); } } });
+$('fileInput').addEventListener('change', async e => {
+  try { await handleFiles([...e.target.files]); } catch (err) { console.error(err); toast('Error al cargar: ' + err.message); }
+  e.target.value = '';
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && !G.overlayKind) openOverlay('pause'); });
+
+async function handleFiles(files) {
+  let raw = null, meta = null, inst = null; const voices = [];
+  const classify = j => { if (j && (j.timeChanges || j.playData)) meta = j; else if (!raw) raw = j; };
+  const audioType = n => n.endsWith('.mp3') ? 'audio/mpeg' : n.endsWith('.wav') ? 'audio/wav' : 'audio/ogg';
+  const addAudio = (name, blob) => { const b = name.split('/').pop(); if (/^inst/.test(b)) inst = inst || blob; else voices.push(blob); };
+  for (const f of files) {
+    const n = f.name.toLowerCase();
+    if (n.endsWith('.fnfc') || n.endsWith('.zip')) {
+      for (const ent of await Zip.read(await f.arrayBuffer())) {
+        const en = ent.name.toLowerCase();
+        if (en.endsWith('.json')) classify(JSON.parse(new TextDecoder().decode(await ent.data())));
+        else if (/\.(ogg|mp3|wav)$/.test(en)) addAudio(en, new Blob([await ent.data()], { type: audioType(en) }));
+      }
+    } else if (n.endsWith('.json')) classify(JSON.parse(await f.text()));
+    else if (/\.(ogg|mp3|wav)$/.test(n)) addAudio(n, f);
+  }
+  if (!raw) throw new Error('no encontré el chart (.json) dentro de lo que cargaste');
+  const chart = Chart.parse(raw, meta);
+  G.raw = raw; G.meta = meta;
+  if (chart.difficulties && chart.difficulties.length > 1) {
+    $('diffSel').innerHTML = chart.difficulties.map(d => `<option value="${d.replace(/"/g, '')}">${d.replace(/</g, '')}</option>`).join('');
+    $('diffSel').value = chart.difficulty; $('diffRow').style.display = '';
+  } else $('diffRow').style.display = 'none';
+  if (G.mode === 'demo') setMode('keyboard');
+  loadChart(chart, [inst, ...(inst ? voices : voices.slice(0, 1))]);
+  if (!Music.has) toast(`Chart cargado: ${chart.notes.length} notas (sin audio)`);
+  openOverlay('ready');
+}
+
+let toastTimer = 0;
+function toast(msg, ms = 2200) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+const L = {};
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  const portrait = H > W * 1.05; L.portrait = portrait;
+  L.lane = Math.max(34, Math.min(W * 0.5 / 4.5, H * 0.15, 112));
+  L.note = L.lane * 0.9;
+  L.strumY = H - L.lane * 0.8 - (portrait ? 34 : 14);       // downscroll
+  L.oppX = W * 0.25; L.plX = W * 0.75;
+  L.barW = Math.min(W * (portrait ? 0.62 : 0.5), 620); L.barH = portrait ? 14 : clamp(H * 0.028, 12, 22);
+  L.barX = (W - L.barW) / 2; L.barY = portrait ? 84 : 42;
+  L.icon = portrait ? 56 : clamp(H * 0.12, 54, 96);
+  L.floorY = portrait ? H * 0.64 : H * 0.8;
+  L.charH = portrait ? Math.min(H * 0.3, W * 0.58) : H * 0.5;
+  L.horizon = L.floorY - (portrait ? H * 0.2 : H * 0.26);
+}
+window.addEventListener('resize', resize);
+
+/* --- escenario pre-generado --- */
+const rndS = mulberry32(99);
+const STARS = Array.from({ length: 90 }, () => ({ x: rndS(), y: rndS(), r: 0.6 + rndS() * 1.6, p: rndS() * 6 }));
+const BUILDINGS = []; { let x = -0.02; while (x < 1.02) { const w = 0.04 + rndS() * 0.06; BUILDINGS.push({ x, w, h: 0.25 + rndS() * 0.75, win: Array.from({ length: 24 }, () => rndS() < 0.35) }); x += w + 0.004; } }
+
+const beatPos = () => G.songPos / G.chart.crochet;
+const beatFrac = () => { const b = beatPos(); return b - Math.floor(b); };
+const bob = () => Math.pow(1 - beatFrac(), 3);        // 1 justo en el beat → 0
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function ell(x, y, rx, ry, fill, stroke, lw) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.stroke(); } }
+function poly(pts, fill, stroke, lw) { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.stroke(); } }
+function limb(pts, color, w, outline = '#120818') {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const [c, lw] of [[outline, w + 5], [color, w]]) { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function text(t, x, y, size, color = '#fff', align = 'center', weight = '900') {
+  ctx.font = `italic ${weight} ${size}px "Trebuchet MS", "Segoe UI", sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(3, size * 0.18); ctx.strokeStyle = '#000'; ctx.strokeText(t, x, y);
+  ctx.fillStyle = color; ctx.fillText(t, x, y);
+}
+
+function drawStage(speakers = true) {
+  const b = bob();
+  // cielo
+  const sky = ctx.createLinearGradient(0, 0, 0, L.floorY);
+  sky.addColorStop(0, '#07021a'); sky.addColorStop(0.55, '#2a0f4a'); sky.addColorStop(1, '#6a2275');
+  ctx.fillStyle = sky; ctx.fillRect(-W, -H, W * 3, H * 3);
+  // estrellas
+  for (const s of STARS) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(G.gameTime / 900 + s.p)); ell(s.x * W, s.y * L.horizon * 0.9, s.r, s.r, '#fff'); }
+  ctx.globalAlpha = 1;
+  // luna
+  ell(W * 0.14, L.horizon * 0.28, Math.min(W, H) * 0.07, Math.min(W, H) * 0.07, '#ffe9c4');
+  ell(W * 0.14 + Math.min(W, H) * 0.025, L.horizon * 0.28 - Math.min(W, H) * 0.02, Math.min(W, H) * 0.06, Math.min(W, H) * 0.06, '#1b0936');
+  // ciudad
+  const cityH = (L.horizon) * 0.55;
+  for (const bd of BUILDINGS) {
+    const x = bd.x * W, w = bd.w * W, h = bd.h * cityH, y = L.horizon + 4 - h;
+    ctx.fillStyle = '#1a0a30'; ctx.fillRect(x, y, w, h + H);
+    ctx.fillStyle = '#ffd86b';
+    const cols = 3, rows = 8, ww = w / (cols * 2 + 1), wh = h / (rows * 2 + 1);
+    for (let i = 0; i < cols * rows; i++) if (bd.win[i % 24]) { const cx = i % cols, cy = Math.floor(i / cols); ctx.globalAlpha = 0.55 + 0.35 * b * (i % 2); ctx.fillRect(x + ww * (cx * 2 + 1), y + wh * (cy * 2 + 1), ww, wh); }
+    ctx.globalAlpha = 1;
+  }
+  // pared / fondo del escenario
+  const wall = ctx.createLinearGradient(0, L.horizon, 0, L.floorY);
+  wall.addColorStop(0, '#2b123f'); wall.addColorStop(1, '#170827');
+  ctx.fillStyle = wall; ctx.fillRect(-W, L.horizon, W * 3, L.floorY);
+  // piso (madera con perspectiva)
+  const topY = L.floorY - L.charH * 0.1;
+  const fl = ctx.createLinearGradient(0, topY, 0, H);
+  fl.addColorStop(0, '#7a4425'); fl.addColorStop(1, '#2e140a');
+  poly([[-W * 0.2, topY], [W * 1.2, topY], [W * 1.6, H * 1.5], [-W * 0.6, H * 1.5]], fl);
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2;
+  for (let i = -6; i <= 16; i++) { const x0 = W * (i / 10); ctx.beginPath(); ctx.moveTo(x0, topY); ctx.lineTo(W / 2 + (x0 - W / 2) * 2.4, H * 1.5); ctx.stroke(); }
+  ctx.fillStyle = '#a8653a'; ctx.fillRect(-W, topY - 3, W * 3, 5);
+  // focos
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const [sx, tx, col] of [[W * 0.05, W * 0.28, '255,80,200'], [W * 0.95, W * 0.72, '80,200,255']]) {
+    const g = ctx.createLinearGradient(sx, 0, tx, L.floorY);
+    g.addColorStop(0, `rgba(${col},${0.32 + 0.25 * b})`); g.addColorStop(1, `rgba(${col},0)`);
+    poly([[sx - 12, -10], [sx + 12, -10], [tx + L.charH * 0.45, L.floorY + 10], [tx - L.charH * 0.45, L.floorY + 10]], g);
+  }
+  ctx.restore();
+  if (speakers) drawSpeakers(W / 2, topY + L.charH * 0.04, L.charH * (L.portrait ? 0.34 : 0.42), b);
+}
+
+function drawSpeakers(cx, baseY, size, b) {
+  const s = 1 + 0.05 * b;
+  ctx.save(); ctx.translate(cx, baseY); ctx.scale(s, 2 - s);
+  const w = size * 0.5, h = size * 0.75;
+  for (const dx of [-w * 1.02, w * 0.02]) {
+    rr(dx, -h, w, h, size * 0.05); ctx.fillStyle = '#22182e'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = '#000'; ctx.stroke();
+    ell(dx + w / 2, -h * 0.68, w * 0.26, w * 0.26, '#3a2c4c', '#000', 3); ell(dx + w / 2, -h * 0.68, w * 0.12 * (1 + 0.3 * b), w * 0.12 * (1 + 0.3 * b), '#110a18');
+    ell(dx + w / 2, -h * 0.27, w * 0.36, w * 0.36, '#3a2c4c', '#000', 3); ell(dx + w / 2, -h * 0.27, w * 0.18 * (1 + 0.3 * b), w * 0.18 * (1 + 0.3 * b), '#110a18');
+  }
+  // logo GCD
+  rr(-w * 0.62, -h - size * 0.17, w * 1.24, size * 0.15, 6); ctx.fillStyle = '#c24b99'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
+  ctx.font = `900 ${size * 0.1}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.fillText('GCD', 0, -h - size * 0.095);
+  ctx.restore();
+}
+
+/* --- Personajes improvisados (coordenadas locales: pies en y=0, mirando a +x) --- */
+function armTarget(pose, base) {
+  const t = { idle: base.idle, left: base.fwd, right: base.fwd, up: base.up, down: base.down }[pose] || base.idle;
+  return t;
+}
+function drawRival(ch) {
+  const O = '#120818', SK = '#f3d6b8', J = '#7b3fb8';
+  const singing = ch.pose !== 'idle';
+  // brazo trasero
+  limb([[-20, -142], [-30, -112], [-30, -84]], '#5a2d8c', 13, O);
+  // piernas
+  ctx.lineWidth = 3; ctx.strokeStyle = O;
+  rr(-20, -78, 15, 74, 4); ctx.fillStyle = '#2b1d44'; ctx.fill(); ctx.stroke();
+  rr(5, -78, 15, 74, 4); ctx.fill(); ctx.stroke();
+  ell(-10, -4, 15, 6, '#111', O, 2); ell(16, -4, 15, 6, '#111', O, 2);
+  // torso
+  rr(-31, -154, 62, 86, 12); ctx.fillStyle = J; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = O; ctx.stroke();
+  poly([[-11, -153], [11, -153], [0, -116]], '#fff');
+  poly([[-3, -148], [3, -148], [5, -122], [0, -114], [-5, -122]], '#d81b3a');
+  ctx.fillStyle = '#1d1030'; ctx.fillRect(-30, -78, 60, 8);
+  // cabeza
+  ctx.fillStyle = SK; ctx.fillRect(-7, -164, 14, 14);
+  ctx.beginPath(); ctx.moveTo(-4, -206); ctx.quadraticCurveTo(-40, -200, -36, -146); ctx.lineTo(-14, -148); ctx.quadraticCurveTo(-22, -176, -4, -184); ctx.closePath();
+  ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = O; ctx.stroke();
+  ell(3, -181, 22, 26, SK, O, 4);
+  ctx.beginPath(); ctx.moveTo(-21, -186); ctx.quadraticCurveTo(-6, -216, 24, -197); ctx.quadraticCurveTo(12, -194, 6, -189); ctx.quadraticCurveTo(-6, -195, -21, -186); ctx.closePath();
+  ctx.fillStyle = '#0d0710'; ctx.fill();
+  // ojos
+  ell(10, -182, 4.5, 5.5, '#fff', O, 1.5); ell(20, -182, 3.5, 5.5, '#fff', O, 1.5);
+  ell(12, -181, 2.2, 2.6, '#d10f2f'); ell(21.5, -181, 1.8, 2.6, '#d10f2f');
+  limb([[5, -190], [14, -187]], O, 1.5, O); limb([[18, -187], [25, -190]], O, 1.5, O);
+  // boca
+  if (singing) ell(15, -167, 5, ch.pose === 'up' ? 6.5 : ch.pose === 'down' ? 3 : 4.5, '#5a0a18', O, 2);
+  else limb([[8, -167], [19, -169]], O, 1.5, O);
+  // brazo con micrófono
+  const h = armTarget(ch.pose, { idle: [38, -110], fwd: [52, -132], up: [38, -176], down: [40, -92] });
+  limb([[22, -144], [(22 + h[0]) / 2 + 6, (-144 + h[1]) / 2 + 12], h], J, 13, O);
+  ell(h[0], h[1], 7, 7, SK, O, 2.5);
+  ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(-0.6); ctx.fillStyle = '#222'; ctx.fillRect(-2, -18, 5, 16); ell(0.5, -20, 6, 6, '#bbb', O, 2); ctx.restore();
+}
+
+function drawBoy(ch) {
+  const O = '#0b0b18', SK = '#ffe1c4';
+  const singing = ch.pose !== 'idle';
+  limb([[-14, -90], [-24, -70], [-22, -54]], SK, 10, O);
+  ctx.lineWidth = 3; ctx.strokeStyle = O; ctx.fillStyle = '#2f5fd0';
+  rr(-16, -50, 13, 46, 4); ctx.fill(); ctx.stroke(); rr(3, -50, 13, 46, 4); ctx.fill(); ctx.stroke();
+  ell(-8, -5, 13, 6, '#e3312f', O, 2.5); ell(13, -5, 13, 6, '#e3312f', O, 2.5);
+  rr(-22, -98, 44, 54, 10); ctx.fillStyle = '#f4f4f4'; ctx.fill(); ctx.lineWidth = 4; ctx.stroke();
+  ctx.fillStyle = '#e3312f'; ctx.fillRect(-20, -76, 40, 7);
+  // pelo (detrás)
+  poly([[-14, -132], [-42, -128], [-26, -118], [-44, -106], [-22, -104], [-34, -90], [-10, -98]], '#2ec7e6', O, 3);
+  ell(2, -120, 25, 25, SK, O, 4);
+  // gorra
+  ctx.beginPath(); ctx.moveTo(-24, -126); ctx.quadraticCurveTo(-20, -152, 6, -150); ctx.quadraticCurveTo(26, -148, 27, -128); ctx.closePath();
+  ctx.fillStyle = '#e3312f'; ctx.fill(); ctx.lineWidth = 3.5; ctx.strokeStyle = O; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(6, -149); ctx.quadraticCurveTo(25, -147, 27, -128); ctx.lineTo(8, -129); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
+  poly([[20, -130], [44, -126], [42, -120], [18, -123]], '#2f5fd0', O, 3);
+  // ojos
+  ell(11, -117, 3.6, 6.5, '#111'); ell(20, -117, 3.2, 6.5, '#111');
+  ell(12, -120, 1.3, 1.6, '#fff'); ell(21, -120, 1.2, 1.6, '#fff');
+  // boca
+  if (ch.miss) ell(16, -102, 4, 3, '#5a0a18', O, 2);
+  else if (singing) ell(16, -103, 5.5, ch.pose === 'up' ? 6 : ch.pose === 'down' ? 2.6 : 4.2, '#5a0a18', O, 2);
+  else { ctx.beginPath(); ctx.arc(15, -107, 6, 0.2, Math.PI - 0.2); ctx.lineWidth = 2.2; ctx.strokeStyle = O; ctx.stroke(); }
+  // brazo con mic
+  const h = armTarget(ch.pose, { idle: [30, -72], fwd: [44, -98], up: [30, -132], down: [32, -60] });
+  limb([[16, -90], h], '#f4f4f4', 11, O); limb([[(16 + h[0]) / 2, (-90 + h[1]) / 2], h], SK, 9, O);
+  ell(h[0], h[1], 6, 6, SK, O, 2.5);
+  ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(-0.5); ctx.fillStyle = '#222'; ctx.fillRect(-2, -16, 5, 14); ell(0.5, -18, 5.5, 5.5, '#bbb', O, 2); ctx.restore();
+}
+
+function drawCharacter(ch, drawFn, x, footY, s, facing) {
+  if (ch.pose !== 'idle' && G.gameTime > ch.poseUntil) { ch.pose = 'idle'; ch.miss = false; }
+  let sx = 1, sy = 1, dx = 0, skew = 0;
+  if (ch.pose === 'idle') { const b = bob(); sy = 1 - 0.045 * b; sx = 1 + 0.025 * b; }
+  else {
+    const k = Math.exp(-(G.gameTime - ch.poseAt) / 110);
+    switch (ch.pose) {
+      case 'left': dx = -10; skew = 0.09; break;
+      case 'right': dx = 10; skew = -0.09; break;
+      case 'up': sy = 1.07; sx = 0.96; break;
+      case 'down': sy = 0.9; sx = 1.06; break;
+    }
+    sx += 0.04 * k; sy -= 0.03 * k;
+  }
+  ell(x, footY, s * 46, s * 9, 'rgba(0,0,0,.4)');
+  ctx.save();
+  ctx.translate(x + dx * s, footY);
+  ctx.transform(1, 0, skew, 1, 0, 0);
+  ctx.scale(sx * s * facing, sy * s);
+  if (ch.miss && 'filter' in ctx) ctx.filter = 'grayscale(.5) sepia(.6) hue-rotate(220deg) saturate(2.2) brightness(.75)';
+  drawFn(ch);
+  ctx.restore();
+}
+
+/* =====================================================================
+   RENDER DEL MUNDO REAL (escenario V-Slice + cámara con parallax)
+   Cámara de 1280x720 como en FNF; scroll factor por prop; zoom del escenario.
+   ===================================================================== */
+function worldView(dt) {
+  const st = Scene.stage, sd = st ? st.data : {};
+  const pts = {};
+  for (const r of ['bf', 'dad', 'gf']) {
+    const c = Scene.chars[r];
+    if (c) pts[r] = c.camPoint();
+    else { const sc = sd.characters?.[r]; if (sc) pts[r] = [sc.position[0] + (sc.cameraOffsets?.[0] || 0), sc.position[1] - 200 + (sc.cameraOffsets?.[1] || 0)]; }
+  }
+  const baseZoom = (+sd.cameraZoom || 1) * (+params.get('zoom') || 1);   // ?zoom=0.8 para alejar la cámara
+  let k, vx, vy, zoom, target;
+  if (L.portrait) {
+    // celular vertical: se ven los dos personajes a la vez (cámara fija entre ambos)
+    k = W / 1280; vx = 0; vy = H * 0.34 - k * 360;
+    const dx = sd.characters?.dad?.position?.[0] ?? 335, bx = sd.characters?.bf?.position?.[0] ?? 990;
+    zoom = clamp(1280 / (Math.abs(bx - dx) + 560), 0.35, baseZoom);
+    const a = pts.dad || [dx, 600], b = pts.bf || [bx, 600];
+    target = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  } else {
+    k = Math.max(W / 1280, H / 720); vx = (W - 1280 * k) / 2; vy = (H - 720 * k) / 2; zoom = baseZoom;
+    target = pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
+  }
+  const cam = Scene.cam;
+  if (!cam.init) { cam.x = target[0]; cam.y = target[1]; cam.init = true; }
+  else { const f = 1 - Math.exp(-dt * 0.0024); cam.x = lerp(cam.x, target[0], f); cam.y = lerp(cam.y, target[1], f); }
+  return { k, vx, vy, zoom };
+}
+// matriz mundo -> canvas (px de dispositivo) para un scroll factor dado
+function worldMatrix(v, zoom, sfx, sfy) {
+  const kz = v.k * zoom * DPR;
+  const sx = Scene.cam.x - 640, sy = Scene.cam.y - 360;
+  return [kz, 0, 0, kz, DPR * (v.vx + v.k * 640) - kz * (sx * sfx + 640), DPR * (v.vy + v.k * 360) - kz * (sy * sfy + 360)];
+}
+
+function drawProp(p, v, zoom) {
+  const M = worldMatrix(v, zoom, p.scroll[0], p.scroll[1]);
+  ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
+  ctx.globalAlpha = p.alpha; ctx.imageSmoothingEnabled = !p.isPixel;
+  ctx.translate(p.pos[0], p.pos[1]);
+  if (p.color) { ctx.fillStyle = p.color; ctx.fillRect(0, 0, p.scale[0], p.scale[1]); }
+  else if (p.frames) {
+    const n = p.frames.length, i = p.loop ? Math.floor(G.gameTime / 1000 * p.fps) % n : Math.min(n - 1, Math.floor(G.gameTime / 1000 * p.fps));
+    const fr = p.frames[i]; ctx.scale(p.scale[0], p.scale[1]);
+    ctx.translate(fr.offX - p.off[0], fr.offY - p.off[1]);
+    if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
+    ctx.drawImage(fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);
+  } else if (p.img) {
+    const w = p.img.naturalWidth * p.scale[0], h = p.img.naturalHeight * p.scale[1];
+    if (p.flipX || p.flipY) { ctx.translate(p.flipX ? w : 0, p.flipY ? h : 0); ctx.scale(p.flipX ? -1 : 1, p.flipY ? -1 : 1); }
+    ctx.drawImage(p.img, 0, 0, w, h);
+  }
+  ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = true;
+}
+
+function renderWorld(dt, bump) {
+  const v = worldView(dt), zoom = v.zoom * bump;
+  const st = Scene.stage, sd = st ? st.data : {};
+  const props = st ? st.props.filter(p => p.img || p.color || p.frames) : [];
+  // fondo base (por si los props no cubren la pantalla)
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#07021a'); sky.addColorStop(1, '#1c0b2e');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  const M1 = worldMatrix(v, zoom, 1, 1);
+  const toScreen = (wx, wy) => [(M1[0] * wx + M1[4]) / DPR, (M1[3] * wy + M1[5]) / DPR];
+  if (!props.length) {
+    // escenario improvisado alineado con los pies de los personajes
+    const feetY = sd.characters?.bf?.position?.[1] ?? 885;
+    const save = { floorY: L.floorY, horizon: L.horizon, charH: L.charH };
+    L.floorY = toScreen(0, feetY)[1]; L.charH = M1[3] / DPR * 400; L.horizon = L.floorY - L.charH * 0.55;
+    ctx.save(); drawStage(!Scene.chars.gf); ctx.restore();
+    Object.assign(L, save);
+  }
+  // capas ordenadas por zIndex
+  const layers = props.map(p => ({ z: p.z, draw: () => drawProp(p, v, zoom) }));
+  for (const role of ['gf', 'dad', 'bf']) {
+    const c = Scene.chars[role], sc = sd.characters?.[role];
+    if (c) layers.push({ z: c.z, draw: () => { c.update(); c.draw(worldMatrix(v, zoom, c.scroll[0], c.scroll[1])); } });
+    else if (role !== 'gf' && sc) layers.push({ z: sc.zIndex ?? 0, draw: () => {
+      // personaje improvisado en la posición del escenario
+      const [x, y] = toScreen(sc.position[0], sc.position[1]);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const s = M1[3] / DPR * 400 / 215;
+      if (role === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
+    } });
+  }
+  layers.sort((a, b) => a.z - b.z).forEach(l => l.draw());
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+
+/* --- Flechas --- */
+const ARROW = [[-0.46, 0], [-0.02, -0.42], [-0.02, -0.16], [0.42, -0.16], [0.42, 0.16], [-0.02, 0.16], [-0.02, 0.42]];
+const ROT = [0, -Math.PI / 2, Math.PI / 2, Math.PI];
+function drawArrow(x, y, size, lane, fill, edge = '#fff', glow = 0, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(ROT[lane]); ctx.scale(size, size);
+  ctx.beginPath(); ARROW.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath();
+  ctx.lineJoin = 'round';
+  if (glow) { ctx.shadowColor = LANE_COLORS[lane]; ctx.shadowBlur = size * 0.5 * glow; }
+  ctx.lineWidth = 0.2; ctx.strokeStyle = '#000'; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.lineWidth = 0.055; ctx.strokeStyle = edge; ctx.stroke();
+  ctx.restore();
+}
+const laneX = (side, i) => (side === 'player' ? L.plX : L.oppX) + (i - 1.5) * L.lane;
+/* imagen de NoteAssets centrada (tamaño relativo al carril; las notas de FNF miden ~157 px a escala 0.7) */
+const noteScale = () => L.lane * 0.95 / 157;
+function drawNoteImg(img, x, y, mul = 1, alpha = 1, glowColor = null) {
+  const sc = noteScale() * mul, w = (img.naturalWidth || img.width) * sc, h = (img.naturalHeight || img.height) * sc;
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (glowColor) { ctx.shadowColor = glowColor; ctx.shadowBlur = L.lane * 0.35; }
+  ctx.drawImage(img, x - w / 2, y - h / 2, w, h); ctx.restore();
+}
+function drawSustainImg(lane, x, yStart, yEnd, alpha) {
+  const sk = Scene.notes, piece = sk.piece[lane], end = sk.end[lane], sc = noteScale();
+  const len = yStart - yEnd; if (len <= 0) return false;
+  const pw = (piece || end).naturalWidth * sc, eh = Math.min(end ? end.naturalHeight * sc : 0, len);
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (piece) ctx.drawImage(piece, x - pw / 2, yEnd + eh - 1, pw, len - eh + 1);
+  if (end) { ctx.translate(x, yEnd + eh); ctx.scale(1, -1); ctx.drawImage(end, -pw / 2, 0, pw, eh); }   // downscroll: la punta va arriba
+  ctx.restore(); return true;
+}
+
+function drawStrumsAndNotes() {
+  const pxPerMs = 0.45 * G.chart.speed * (L.lane / 110);
+  const yOf = t => L.strumY - (t - G.songPos) * pxPerMs;
+  for (const side of ['opponent', 'player']) {
+    const st = G.strums[side];
+    for (let i = 0; i < 4; i++) {
+      const x = laneX(side, i);
+      const conf = G.gameTime - st.confirmAt[i];
+      const sk = Scene.notes;
+      if (sk && sk.head[i]) {
+        if (conf < 140) { const k = 1 - conf / 140; drawNoteImg(sk.confirm[i] || sk.head[i], x, L.strumY, 1.0 + 0.1 * k, 1, sk.confirm[i] ? null : LANE_COLORS[i]); }
+        else if (side === 'player' && st.pressed[i]) drawNoteImg(sk.press[i], x, L.strumY, 0.92);
+        else drawNoteImg(sk.strum[i], x, L.strumY, 1, sk.placeholder[i] ? 0.85 : 1);
+        continue;
+      }
+      if (conf < 140) {
+        const k = 1 - conf / 140;
+        drawArrow(x, L.strumY, L.note * (1.0 + 0.1 * k), i, LANE_COLORS[i], '#fff', 1.2);
+      } else if (side === 'player' && st.pressed[i]) drawArrow(x, L.strumY, L.note * 0.92, i, LANE_DARK[i], '#ddd');
+      else drawArrow(x, L.strumY, L.note, i, '#7f93a3', '#c7d6e0', 0, 0.85);
+    }
+  }
+  // notas (y colas de sustain)
+  for (const n of G.chart.notes) {
+    const y = yOf(n.time);
+    if (y > H + L.note && (!n.sustain || yOf(n.time + n.sustain) > H)) continue;
+    if (n.time - G.songPos > 4000) break;
+    const x = laneX(n.side, n.lane);
+    if (n.sustain > 0 && !n.dropped && !(n.hit && !n.holding)) {
+      const yEnd = yOf(n.time + n.sustain), yStart = n.hit ? L.strumY : y;
+      if (yEnd < yStart && Scene.notes && (Scene.notes.piece[n.lane] || Scene.notes.end[n.lane])) drawSustainImg(n.lane, x, yStart, yEnd, n.missed ? 0.3 : 1);
+      else if (yEnd < yStart) {
+        ctx.globalAlpha = n.missed ? 0.3 : 0.75; ctx.fillStyle = LANE_COLORS[n.lane];
+        rr(x - L.note * 0.14, yEnd, L.note * 0.28, yStart - yEnd, L.note * 0.14); ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.stroke(); ctx.globalAlpha = 1;
+      }
+    }
+    if (n.hit) continue;
+    if (y < -L.note || y > H + L.note) continue;
+    if (Scene.notes && Scene.notes.head[n.lane]) drawNoteImg(Scene.notes.head[n.lane], x, y, 1, n.missed ? 0.35 : 1);
+    else drawArrow(x, y, L.note, n.lane, LANE_COLORS[n.lane], '#fff', 0, n.missed ? 0.35 : 1);
+  }
+}
+
+/* --- Iconos de la barra de vida --- */
+function drawIcon(side, cx, cy, size, losing) {
+  const img = Scene.icons[side];
+  if (img) {   // icon-<id>.png: 2 frames de 150x150 (normal | perdiendo); si es cuadrado, 1 frame
+    const fh = img.naturalHeight, frames = img.naturalWidth >= fh * 2 ? 2 : 1, fw = img.naturalWidth / frames, f = losing && frames > 1 ? 1 : 0;
+    const d = size * 1.45;
+    ctx.save(); ctx.translate(cx, cy); if (side === 'player') ctx.scale(-1, 1);   // el jugador mira hacia el rival
+    ctx.drawImage(img, f * fw, 0, fw, fh, -d / 2, -d / 2, d, d * fh / fw); ctx.restore();
+    return;
+  }
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(size / 100, size / 100);
+  const O = '#0b0b18';
+  if (side === 'player') {
+    poly([[-18, -22], [-46, -16], [-30, -4], [-48, 10], [-24, 10], [-38, 26], [-10, 18]], '#2ec7e6', O, 5);
+    ell(0, 4, 34, 34, '#ffe1c4', O, 6);
+    ctx.beginPath(); ctx.moveTo(-33, -6); ctx.quadraticCurveTo(-28, -44, 2, -42); ctx.quadraticCurveTo(32, -40, 34, -10); ctx.closePath();
+    ctx.fillStyle = '#e3312f'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = O; ctx.stroke();
+    poly([[-34, -10], [-58, -4], [-56, 3], [-30, -2]], '#2f5fd0', O, 4);   // visera hacia el rival (izquierda)
+    ell(-12, 6, 5, 9, '#111'); ell(4, 6, 4.5, 9, '#111');
+    if (losing) { ctx.beginPath(); ctx.arc(-4, 30, 9, Math.PI + 0.3, -0.3); ctx.lineWidth = 4; ctx.stroke(); ell(24, -6, 5, 8, '#7fd8ff', O, 2); }
+    else { ctx.beginPath(); ctx.arc(-4, 18, 10, 0.2, Math.PI - 0.2); ctx.lineWidth = 4; ctx.stroke(); }
+  } else {
+    ctx.beginPath(); ctx.moveTo(-36, -18); ctx.quadraticCurveTo(-44, 20, -34, 46); ctx.lineTo(34, 46); ctx.quadraticCurveTo(44, 20, 36, -18); ctx.closePath();
+    ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = O; ctx.stroke();
+    ell(0, 6, 30, 36, '#f3d6b8', O, 6);
+    ctx.beginPath(); ctx.moveTo(-34, -10); ctx.quadraticCurveTo(-10, -56, 34, -14); ctx.quadraticCurveTo(14, -24, 0, -16); ctx.quadraticCurveTo(-16, -24, -34, -10); ctx.closePath();
+    ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.stroke();
+    ell(-11, 4, 6, losing ? 3 : 7, '#fff', O, 2.5); ell(11, 4, 6, losing ? 3 : 7, '#fff', O, 2.5);
+    ell(-10, 5, 3, losing ? 2 : 3.5, '#d10f2f'); ell(12, 5, 3, losing ? 2 : 3.5, '#d10f2f');
+    ctx.lineWidth = 4; ctx.strokeStyle = O; ctx.beginPath();
+    if (losing) { ctx.moveTo(-20, -10); ctx.lineTo(-4, -4); ctx.moveTo(20, -10); ctx.lineTo(4, -4); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 32, 9, Math.PI + 0.3, -0.3); ctx.stroke(); }
+    else { ctx.moveTo(-20, -6); ctx.lineTo(-4, -10); ctx.moveTo(20, -6); ctx.lineTo(4, -10); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-12, 24); ctx.quadraticCurveTo(2, 34, 14, 20); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+function drawHealthBar() {
+  const { barX: x, barY: y, barW: w, barH: h } = L;
+  const hp = clamp(G.displayHealth / CONFIG.maxHealth, 0, 1), ghost = clamp(G.ghostHealth / CONFIG.maxHealth, 0, 1);
+  const div = x + w * (1 - hp), gdiv = x + w * (1 - ghost);
+  rr(x - 5, y - 5, w + 10, h + 10, (h + 10) / 2); ctx.fillStyle = '#000'; ctx.fill();
+  ctx.save(); rr(x, y, w, h, h / 2); ctx.clip();
+  let g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, COLORS.opp); g.addColorStop(1, COLORS.oppDark);
+  ctx.fillStyle = g; ctx.fillRect(x, y, div - x, h);
+  g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, COLORS.player); g.addColorStop(1, COLORS.playerDark);
+  ctx.fillStyle = g; ctx.fillRect(div, y, x + w - div, h);
+  if (gdiv < div - 0.5) { ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillRect(gdiv, y, div - gdiv, h); }   // daño reciente (drenando)
+  ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fillRect(x, y + h * 0.12, w, h * 0.28);
+  ctx.globalAlpha = 0.12; ctx.fillStyle = '#fff';                                                          // rayas animadas
+  const off = (G.gameTime * 0.03) % 24;
+  for (let sx = x - 24 + off; sx < x + w; sx += 24) poly([[sx, y + h], [sx + 10, y + h], [sx + 10 + h, y], [sx + h, y]], '#fff');
+  ctx.restore();
+  // iconos
+  const kick = G.iconKick * Math.exp(-(G.gameTime - G.iconKickAt) / 160);
+  const sc = 1 + 0.16 * bob() + kick;
+  drawIcon('opponent', div - L.icon * 0.42, y + h / 2, L.icon * sc, hp > 0.8);
+  drawIcon('player', div + L.icon * 0.42, y + h / 2, L.icon * sc, hp < 0.2);
+}
+
+function drawHUD() {
+  drawHealthBar();
+  const acc = G.judged ? (G.accSum / G.judged * 100).toFixed(2) + '%' : '?';
+  let s = L.portrait ? `Pts ${G.score} • Fallos ${G.misses} • ${acc}` : `Puntuación: ${G.score}  •  Fallos: ${G.misses}  •  Precisión: ${acc}`;
+  let fs = L.portrait ? 15 : clamp(H * 0.026, 14, 22);
+  text(s, W / 2, L.barY + L.barH + L.icon * 0.55 + 4, fs, '#fff', 'center', '700');
+  // info canción
+  const info = `${G.chart.title}${G.chart.artist ? ' — ' + G.chart.artist : ''}`;
+  text(info, 14, L.portrait ? H - 14 : H - 16, L.portrait ? 12 : 14, '#e9dcff', 'left', '700');
+  const modeName = { demo: 'DEMO', keyboard: 'TECLADO', mobile: 'TÁCTIL', botplay: 'BOTPLAY' }[G.mode];
+  if (isBot()) text(G.mode === 'demo' ? 'DEMO · BOTPLAY' : 'BOTPLAY', W / 2, L.barY + L.barH + L.icon * 0.55 + (L.portrait ? 26 : 34), L.portrait ? 14 : 20, 'rgba(255,255,255,' + (0.55 + 0.35 * Math.sin(G.gameTime / 300)) + ')');
+  text(modeName, W - 14, H - 16, 13, '#ffe27a', 'right', '700');
+  if (Scene.loading) text('Cargando assets…', 14, L.portrait ? H - 34 : H - 38, 13, 'rgba(255,255,255,' + (0.5 + 0.4 * Math.sin(G.gameTime / 200)) + ')', 'left', '700');
+  // calificación
+  if (G.popup) {
+    const t = G.gameTime - G.popup.at;
+    if (t < 700) {
+      const a = t < 400 ? 1 : 1 - (t - 400) / 300, cy = H * (L.portrait ? 0.38 : 0.42) - t * 0.04, cx = W / 2;
+      ctx.globalAlpha = a;
+      const fsz = (L.portrait ? 30 : 46) * (1 + 0.25 * Math.exp(-t / 70));
+      text(G.popup.text, cx, cy, fsz, G.popup.color);
+      if (G.popup.combo > 1) text(String(G.popup.combo).padStart(3, '0'), cx, cy + fsz * 0.95, fsz * 0.7, '#fff');
+      ctx.globalAlpha = 1;
+    }
+  }
+  // cuenta regresiva
+  if (G.songPos < 0) {
+    const b = Math.floor(G.songPos / G.chart.crochet), f = beatFrac();
+    const word = { '-4': '3', '-3': '2', '-2': '1', '-1': '¡YA!' }[b];
+    if (word) { ctx.globalAlpha = 1 - f * 0.8; text(word, W / 2, H * 0.4, (L.portrait ? 70 : 110) * (1.2 - 0.2 * f), b === -1 ? '#ffe27a' : '#fff'); ctx.globalAlpha = 1; }
+  }
+  // zonas táctiles
+  if (G.mode === 'mobile') {
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = LANE_COLORS[i]; ctx.globalAlpha = G.strums.player.pressed[i] ? 0.25 : 0.06; ctx.fillRect(i * W / 4, 0, W / 4, H);
+      ctx.globalAlpha = 0.5; ctx.fillRect(i * W / 4, H - 6, W / 4, 6); ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function render(dt = 16) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  // cámara: pequeño "zoom" cada compás
+  const bp = beatPos(), barFrac = ((bp / 4) % 1 + 1) % 1, zoom = 1 + 0.018 * Math.pow(1 - barFrac, 4) * (bp >= 0 ? 1 : 0);
+  if (Scene.world) renderWorld(G.paused ? 0 : dt, zoom);
+  else {
+    ctx.save();
+    ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-W / 2, -H / 2);
+    drawStage();
+    const s = L.charH / 215;
+    drawCharacter(G.dad, drawRival, L.oppX, L.floorY, s, 1);
+    drawCharacter(G.bf, drawBoy, L.plX, L.floorY, s * 1.05, -1);
+    ctx.restore();
+  }
+  ctx.save();
+  const hz = 1 + (zoom - 1) * 1.6;
+  ctx.translate(W / 2, H / 2); ctx.scale(hz, hz); ctx.translate(-W / 2, -H / 2);
+  drawStrumsAndNotes();
+  drawHUD();
+  ctx.restore();
+}
+
+/* =====================================================================
+   LOOP
+   ===================================================================== */
+let lastFrame = performance.now();
+function frame(now) {
+  const dt = Math.min(50, now - lastFrame); lastFrame = now;
+  if (!G.paused) update(dt);
+  render(dt);
+  requestAnimationFrame(frame);
+}
+
+/* Carga automática: si existe song-chart.json (+ song-metadata.json, Inst.ogg, Voices.ogg) junto al index, se usa ese chart */
+async function autoLoad() {
+  const chartUrl = params.get('chart') || 'song-chart.json';
+  if (!/^https?:/.test(location.protocol)) return false;
+  try {
+    const r = await fetch(chartUrl, { cache: 'no-store' }); if (!r.ok) return false;
+    const raw = await r.json();
+    let meta = null; try { const m = await fetch(params.get('meta') || 'song-metadata.json', { cache: 'no-store' }); if (m.ok) meta = await m.json(); } catch (e) {}
+    const blobs = [];
+    for (const f of ['Inst.ogg', 'Voices.ogg']) { try { const a = await fetch(f); if (a.ok) blobs.push(await a.blob()); else if (f === 'Inst.ogg') break; } catch (e) { break; } }
+    G.raw = raw; G.meta = meta; G.mode = params.get('modo') || 'keyboard';
+    loadChart(Chart.parse(raw, meta), blobs);
+    openOverlay('ready');
+    return true;
+  } catch (e) { console.warn('song-chart.json no disponible, usando demo', e); return false; }
+}
+
+/* API pública para el Chart Editor GCD */
+window.GCDPlay = {
+  loadChart(raw, meta, audioBlobs = []) { G.raw = raw; G.meta = meta; loadChart(Chart.parse(raw, meta), audioBlobs); },
+  restart, pause: () => openOverlay('pause'), resume: () => closeOverlay(), setMode, state: G, scene: Scene, reloadAssets: ids => { Scene.ids = null; Scene.notes = null; return loadScene(ids); },
+};
+window.addEventListener('message', e => {
+  const d = e.data;
+  if (d && d.type === 'gcd-chart' && d.chart) { try { window.GCDPlay.loadChart(d.chart, d.meta || null); openOverlay('ready'); } catch (err) { toast('Chart inválido: ' + err.message); } }
+});
+
+resize();
+setMode(['demo', 'keyboard', 'mobile', 'botplay'].includes(G.mode) ? G.mode : 'demo');
+loadChart(Chart.makeDemo());
+autoLoad();
+if (params.has('pausa')) setTimeout(() => openOverlay('pause'), +params.get('pausa') || 3000);
+requestAnimationFrame(frame);
+})();
+</script>
 </body>
 </html>
