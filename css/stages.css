@@ -3,3 +3,8 @@
   image-rendering: auto; }
 /* pantalla de carga mientras llegan los assets del escenario */
 #game.cargando { background: radial-gradient(ellipse at center, #1c0b2e, #000 70%); }
+
+/* v3.3.0: lienzo WebGL del mundo (debajo del lienzo del HUD) */
+#gameGL { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; pointer-events: none; background: #000; }
+#gameGL[hidden] { display: none; }
+body.gl-on #game { background: transparent; }

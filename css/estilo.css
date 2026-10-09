@@ -89,3 +89,12 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
   #tbText { min-width: 86px; }
   #pauseItems.submenu .pitem span { font-size: 26px; }
 }
+
+/* v3.3.0: contador de FPS (Optimización → Contador FPS) */
+#fpsBox { position: fixed; left: max(8px, env(safe-area-inset-left)); top: max(6px, env(safe-area-inset-top)); z-index: 40; pointer-events: none;
+  font: 12px/1.35 VCR, monospace; color: #fff; background: rgba(0,0,0,.55); padding: 3px 7px; border-radius: 4px; text-shadow: 1px 1px 0 #000; white-space: nowrap; }
+#fpsBox[hidden] { display: none; }
+/* v3.3.0: menú Optimización (lista larga: se desplaza para centrar la opción elegida) */
+#pauseItems.largo { top: 50%; gap: 6px; transition: transform .15s ease-out; }
+#pauseItems.largo .pitem span { font-size: 26px; }
+@media (max-height: 500px) { #pauseItems.largo { gap: 2px; } #pauseItems.largo .pitem span { font-size: 20px; } }
