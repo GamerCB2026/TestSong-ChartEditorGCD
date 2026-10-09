@@ -1,0 +1,77 @@
+/* movil.css — v3.2.0: "Gira tu dispositivo", pantalla completa, ventana de eventos/note kinds (.hxc)
+   y panel de assets propios. Sin pseudo-elementos encima de los botones (los clics siempre llegan). */
+
+/* ---------- celular vertical: no se juega ---------- */
+#rotar { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px; padding: 24px; text-align: center; touch-action: none; }
+#rotar[hidden] { display: none; }
+#rotar .icono { width: 96px; height: 96px; animation: girar 2.2s ease-in-out infinite; }
+#rotar .icono rect { fill: none; stroke: #fff; stroke-width: 5; }
+#rotar .icono circle { fill: #fff; }
+#rotar .icono path { fill: none; stroke: #12fa05; stroke-width: 5; stroke-linecap: round; }
+#rotar h2 { margin: 0; font-size: 30px; font-weight: 900; font-style: italic; text-transform: uppercase; text-shadow: 3px 3px 0 #c24b99, -2px -2px 0 #000; letter-spacing: 1px; }
+#rotar p { margin: 0; color: #c9bbef; font-family: "Trebuchet MS", system-ui, sans-serif; font-size: 15px; max-width: 320px; }
+@keyframes girar { 0%, 20% { transform: rotate(0); } 50%, 75% { transform: rotate(-90deg); } 100% { transform: rotate(0); } }
+body.vertical #pauseBtn, body.vertical #overlay, body.vertical #fsBtn { visibility: hidden; }
+
+/* ---------- pantalla completa (solo celular horizontal) ---------- */
+#fsBtn { position: fixed; z-index: 11; top: max(14px, env(safe-area-inset-top)); right: calc(max(14px, env(safe-area-inset-right)) + 58px);
+  width: 46px; height: 46px; border-radius: 12px; border: 3px solid rgba(255,255,255,.85); background: rgba(0,0,0,.35); padding: 0; cursor: pointer; opacity: .75;
+  display: flex; align-items: center; justify-content: center; }
+#fsBtn[hidden] { display: none; }
+#fsBtn svg { width: 26px; height: 26px; pointer-events: none; }
+#fsBtn path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; }
+#fsBtn:active { transform: scale(.94); }
+body.cargando #fsBtn, body.panel-abierto #fsBtn { display: none; }
+body.movil #pauseMeta { right: max(136px, calc(env(safe-area-inset-right) + 124px)); }
+
+/* ---------- ventana de eventos / note kinds desconocidos ---------- */
+#modModal { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; padding: 12px; }
+#modModal[hidden] { display: none; }
+#modModal .caja { width: min(96vw, 760px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); display: flex; flex-direction: column;
+  background: #1a0f33; border: 4px solid #fff; border-radius: 16px; box-shadow: 0 8px 0 #000; overflow: hidden;
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; -webkit-user-select: text; user-select: text; }
+#modModal header { padding: 12px 16px 8px; background: linear-gradient(90deg, #c24b99, #6b2fd6); border-bottom: 4px solid #000; }
+#modModal header h2 { margin: 0; font-family: "VCR", "Trebuchet MS", sans-serif; font-weight: 900; font-style: italic; font-size: 26px; text-transform: uppercase;
+  text-shadow: 3px 3px 0 #000; letter-spacing: 1px; }
+#modModal header p { margin: 4px 0 0; font-size: 13px; color: #fde; }
+#modBody { padding: 10px 16px; overflow: auto; flex: 1; font-size: 14px; }
+#modBody h4 { margin: 14px 0 6px; color: #ffe27a; font-size: 15px; text-transform: uppercase; letter-spacing: .5px; }
+#modBody code { background: #000; padding: 1px 6px; border-radius: 5px; color: #7ff; word-break: break-all; }
+#modBody i { color: #aaa; font-style: normal; font-size: 12px; }
+.mrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; margin: 4px 0; border-radius: 8px; background: rgba(255,255,255,.06); }
+.mrow span { flex: 1; min-width: 0; word-break: break-word; }
+.mrow.ok { border-left: 4px solid #12fa05; } .mrow.bad { border-left: 4px solid #f9393f; } .mrow.warn { border-left: 4px solid #ffbf00; }
+.mrep { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: rgba(0,0,0,.35); font-size: 13px; }
+.mrep summary { cursor: pointer; }
+.mrep div { margin: 5px 0 2px; line-height: 1.4; }
+.ok { color: #c9ffd0; } .bad { color: #ffb3b3; } .warn { color: #ffe0a0; }
+.aviso { margin: 6px 0; padding: 8px 10px; border: 3px solid #ffbf00; border-radius: 10px; background: rgba(255,191,0,.12); color: #ffe7a6; font-weight: 700; font-size: 13px; }
+.aviso.chico { font-size: 12px; padding: 5px 8px; border-width: 2px; }
+#modModal footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-top: 4px solid #000; background: #120a24; }
+#modModal footer .btn { width: auto; flex: 1 1 150px; margin: 0; }
+.btn.mini { display: inline-block; width: auto; margin: 3px 4px 3px 0; padding: 5px 9px; font-size: 13px; box-shadow: 0 3px 0 #000; border-width: 2px; }
+.btn.go { background: #12fa05; }
+.btn.warnb { background: #ff8a8a; }
+
+/* ---------- panel "Assets cargados": personajes y escenario propios ---------- */
+#uaBox { margin: 6px 0 10px; }
+.ua-sec { display: flex; flex-direction: column; gap: 2px; }
+.ua-sec .btn.mini, .ua-roles .btn.mini { width: 100%; margin: 3px 0; }
+.ua-roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 6px 0; }
+.ua-info { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.07); font-size: 12.5px; line-height: 1.45; }
+.ua-info b { color: #ffe27a; }
+.ua-info .btn.x { float: right; padding: 0 8px; margin: 0; background: #ff8a8a; }
+.ua-btns { display: flex; gap: 6px; margin-top: 4px; }
+.ua-btns .btn.mini { flex: 1; margin: 0; }
+.btn.apply { background: #12fa05; margin-top: 10px; }
+#panelAssets h4 { margin: 12px 0 4px; font-size: 14px; color: #ffe27a; }
+
+/* video de VideoCutscene.play (scripts) */
+.hx-video { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 30; background: #000; object-fit: contain; }
+
+@media (max-height: 480px) {
+  #pausePanel { max-height: calc(100vh - 28px); max-height: calc(100dvh - 28px); width: min(60vw, 470px); }
+  #modModal header h2 { font-size: 20px; }
+  #modBody { font-size: 13px; }
+}
