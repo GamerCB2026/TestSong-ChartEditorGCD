@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <title>Test Song · Chart Editor GCD</title>
-<link rel="stylesheet" href="css/estilo.css?v=3.0.2">
-<link rel="stylesheet" href="css/stages.css?v=3.0.2">
-<link rel="stylesheet" href="css/personajes.css?v=3.0.2">
-<link rel="stylesheet" href="css/notes.css?v=3.0.2">
+<link rel="stylesheet" href="css/estilo.css?v=3.1.0">
+<link rel="stylesheet" href="css/stages.css?v=3.1.0">
+<link rel="stylesheet" href="css/personajes.css?v=3.1.0">
+<link rel="stylesheet" href="css/notes.css?v=3.1.0">
 </head>
 <body>
 <canvas id="game"></canvas>
+<noscript><p style="color:#fff;font-family:sans-serif;padding:20px">Activa JavaScript para jugar.</p></noscript>
 
 <button id="pauseBtn" title="Pausa (Esc / Enter)" aria-label="Pausa"><i></i><i></i></button>
 
@@ -19,9 +20,14 @@
   <h2 id="ovTitle" hidden><canvas id="ovTitleCanvas"></canvas><span id="ovTitleText">PAUSA</span></h2>
   <div id="pauseMeta"></div>
   <div id="pauseItems"></div>
+  <p id="optHint" hidden></p>
+  <div id="timeBar" hidden>
+    <span id="tbText">0:00 / 0:00</span>
+    <div id="tbTrack" title="Arrastra para buscar"><div id="tbFill"></div></div>
+  </div>
   <div id="pausePanel">
     <div id="panelOpts" hidden>
-      <h3>⚙ Opciones del chart</h3>
+      <h3>⚙ Chart y modo</h3>
       <div class="row"><label for="modeSel">Modo</label>
         <select id="modeSel">
           <option value="demo">Demo automática</option>
@@ -31,9 +37,9 @@
         </select></div>
       <div class="row" id="diffRow" style="display:none"><label for="diffSel">Dificultad</label><select id="diffSel"></select></div>
       <button class="btn" id="btnLoad">📂 Cargar chart (.fnfc / .json + audio)</button>
-      <button class="btn alt" id="btnDemo">🎵 Volver a la canción demo</button>
+      <button class="btn alt" id="btnDemo">🎵 Volver a la canción "test"</button>
       <input type="file" id="fileInput" multiple accept=".fnfc,.zip,.json,.ogg,.mp3,.wav">
-      <p class="hint">Teclado: <kbd class="l">←</kbd><kbd class="d">↓</kbd><kbd class="u">↑</kbd><kbd class="r">→</kbd> o <kbd>A</kbd><kbd>S</kbd><kbd>W</kbd><kbd>D</kbd> · Pausa: <kbd>Esc</kbd>/<kbd>Enter</kbd> · Menú: <kbd>↑</kbd><kbd>↓</kbd> + <kbd>Enter</kbd><br>
+      <p class="hint">Teclado: <kbd class="l">←</kbd><kbd class="d">↓</kbd><kbd class="u">↑</kbd><kbd class="r">→</kbd> o <kbd>A</kbd><kbd>S</kbd><kbd>W</kbd><kbd>D</kbd> (cámbialas en Opciones → Asignar Teclas) · Pausa: <kbd>Esc</kbd>/<kbd>Enter</kbd> · Opciones: <kbd>O</kbd> · Menú: <kbd>↑</kbd><kbd>↓</kbd> + <kbd>Enter</kbd><br>
       Táctil: toca las 4 columnas de la pantalla. Acepta .fnfc de V-Slice (chart + metadata + Inst/Voices) o JSON de Psych/legacy.</p>
     </div>
     <div id="panelAssets" hidden>
@@ -46,17 +52,19 @@
 <div id="toast"></div>
 
 <!-- Orden de carga: comparten el ámbito global (scripts clásicos, sin módulos: funciona en GitHub Pages) -->
-<script src="js/config.js?v=3.0.2"></script>
-<script src="js/assets.js?v=3.0.2"></script>
-<script src="js/atlas.js?v=3.0.2"></script>
-<script src="js/charts.js?v=3.0.2"></script>
-<script src="js/audio.js?v=3.0.2"></script>
-<script src="js/fuentes.js?v=3.0.2"></script>
-<script src="js/personajes.js?v=3.0.2"></script>
-<script src="js/stages.js?v=3.0.2"></script>
-<script src="js/notes.js?v=3.0.2"></script>
-<script src="js/hud.js?v=3.0.2"></script>
-<script src="js/ui.js?v=3.0.2"></script>
-<script src="js/game.js?v=3.0.2"></script>
+<script src="js/config.js?v=3.1.0"></script>
+<script src="js/assets.js?v=3.1.0"></script>
+<script src="js/atlas.js?v=3.1.0"></script>
+<script src="js/charts.js?v=3.1.0"></script>
+<script src="js/audio.js?v=3.1.0"></script>
+<script src="js/opciones.js?v=3.1.0"></script>
+<script src="js/fuentes.js?v=3.1.0"></script>
+<script src="js/personajes.js?v=3.1.0"></script>
+<script src="js/stages.js?v=3.1.0"></script>
+<script src="js/notes.js?v=3.1.0"></script>
+<script src="js/hud.js?v=3.1.0"></script>
+<script src="js/eventos.js?v=3.1.0"></script>
+<script src="js/ui.js?v=3.1.0"></script>
+<script src="js/game.js?v=3.1.0"></script>
 </body>
 </html>
