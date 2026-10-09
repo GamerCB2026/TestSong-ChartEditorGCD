@@ -5,14 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <title>Test Song · Chart Editor GCD</title>
-<link rel="stylesheet" href="css/estilo.css?v=3.2.1">
-<link rel="stylesheet" href="css/stages.css?v=3.2.1">
-<link rel="stylesheet" href="css/personajes.css?v=3.2.1">
-<link rel="stylesheet" href="css/notes.css?v=3.2.1">
-<link rel="stylesheet" href="css/movil.css?v=3.2.1">
+<link rel="stylesheet" href="css/estilo.css?v=3.3.0">
+<link rel="stylesheet" href="css/stages.css?v=3.3.0">
+<link rel="stylesheet" href="css/personajes.css?v=3.3.0">
+<link rel="stylesheet" href="css/notes.css?v=3.3.0">
+<link rel="stylesheet" href="css/movil.css?v=3.3.0">
 </head>
 <body>
+<canvas id="gameGL" hidden aria-hidden="true"></canvas>
 <canvas id="game"></canvas>
+<div id="fpsBox" hidden aria-live="off"></div>
 <noscript><p style="color:#fff;font-family:sans-serif;padding:20px">Activa JavaScript para jugar.</p></noscript>
 
 <button id="pauseBtn" title="Pausa (Esc / Enter)" aria-label="Pausa"><i></i><i></i></button>
@@ -76,25 +78,28 @@
 <div id="toast"></div>
 
 <!-- Orden de carga: comparten el ámbito global (scripts clásicos, sin módulos: funciona en GitHub Pages) -->
-<script src="js/config.js?v=3.2.1"></script>
-<script src="js/astc.js?v=3.2.1"></script>
-<script src="js/assets.js?v=3.2.1"></script>
-<script src="js/atlas.js?v=3.2.1"></script>
-<script src="js/charts.js?v=3.2.1"></script>
-<script src="js/audio.js?v=3.2.1"></script>
-<script src="js/opciones.js?v=3.2.1"></script>
-<script src="js/fuentes.js?v=3.2.1"></script>
-<script src="js/personajes.js?v=3.2.1"></script>
-<script src="js/stages.js?v=3.2.1"></script>
-<script src="js/notes.js?v=3.2.1"></script>
-<script src="js/hud.js?v=3.2.1"></script>
-<script src="js/eventos.js?v=3.2.1"></script>
-<script src="js/hscript.js?v=3.2.1"></script>
-<script src="js/mods.js?v=3.2.1"></script>
-<script src="js/modui.js?v=3.2.1"></script>
-<script src="js/usuario.js?v=3.2.1"></script>
-<script src="js/ui.js?v=3.2.1"></script>
-<script src="js/movil.js?v=3.2.1"></script>
-<script src="js/game.js?v=3.2.1"></script>
+<script src="js/config.js?v=3.3.0"></script>
+<script src="js/astc.js?v=3.3.0"></script>
+<script src="js/texturas.js?v=3.3.0"></script>
+<script src="js/render.js?v=3.3.0"></script>
+<script src="js/assets.js?v=3.3.0"></script>
+<script src="js/atlas.js?v=3.3.0"></script>
+<script src="js/charts.js?v=3.3.0"></script>
+<script src="js/audio.js?v=3.3.0"></script>
+<script src="js/opciones.js?v=3.3.0"></script>
+<script src="js/optimizacion.js?v=3.3.0"></script>
+<script src="js/fuentes.js?v=3.3.0"></script>
+<script src="js/personajes.js?v=3.3.0"></script>
+<script src="js/stages.js?v=3.3.0"></script>
+<script src="js/notes.js?v=3.3.0"></script>
+<script src="js/hud.js?v=3.3.0"></script>
+<script src="js/eventos.js?v=3.3.0"></script>
+<script src="js/hscript.js?v=3.3.0"></script>
+<script src="js/mods.js?v=3.3.0"></script>
+<script src="js/modui.js?v=3.3.0"></script>
+<script src="js/usuario.js?v=3.3.0"></script>
+<script src="js/ui.js?v=3.3.0"></script>
+<script src="js/movil.js?v=3.3.0"></script>
+<script src="js/game.js?v=3.3.0"></script>
 </body>
 </html>
