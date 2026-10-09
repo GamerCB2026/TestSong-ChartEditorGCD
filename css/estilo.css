@@ -67,3 +67,25 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
   #pauseItems { gap: 8px; }
   #ovTitle { top: 8vh; }
 }
+
+/* ---------- v3.1.0: pantalla de carga, menú de opciones estilo FNF, barra de tiempo ---------- */
+body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
+#overlay.opciones { background: rgba(0,0,0,.82); }
+#overlay.opciones #pauseMeta { display: none; }
+#pauseItems.submenu { gap: 10px; }
+#pauseItems.submenu .pitem span { font-size: 36px; }
+#optHint { position: absolute; left: 6vw; bottom: max(18px, env(safe-area-inset-bottom)); margin: 0; font-size: 15px; color: #ddd;
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; text-shadow: 1px 1px 0 #000; max-width: 88vw; }
+#timeBar { position: absolute; left: 6vw; right: 6vw; bottom: max(22px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 14px;
+  font-family: "VCR", "Courier New", monospace; font-size: 18px; text-shadow: 2px 2px 0 #000; }
+#timeBar[hidden] { display: none; }
+#tbText { white-space: nowrap; min-width: 112px; }
+#tbTrack { position: relative; flex: 1; height: 18px; border: 3px solid #fff; border-radius: 9px; background: rgba(0,0,0,.6); cursor: pointer; touch-action: none; box-shadow: 0 3px 0 #000; }
+#tbFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 6px; background: linear-gradient(90deg, #31b0d1, #12fa05); }
+#tbFill::after { content: ""; position: absolute; right: -9px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); border-radius: 50%; background: #fff; border: 3px solid #000; }
+#timeBar.drag #tbFill::after { transform: translateY(-50%) scale(1.25); }
+@media (max-width: 700px), (max-height: 480px) {
+  #timeBar { font-size: 14px; left: 4vw; right: 4vw; gap: 8px; }
+  #tbText { min-width: 86px; }
+  #pauseItems.submenu .pitem span { font-size: 26px; }
+}
