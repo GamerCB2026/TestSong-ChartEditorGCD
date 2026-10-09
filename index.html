@@ -5,16 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <title>Test Song · Chart Editor GCD</title>
-<link rel="stylesheet" href="css/estilo.css?v=3.1.0">
-<link rel="stylesheet" href="css/stages.css?v=3.1.0">
-<link rel="stylesheet" href="css/personajes.css?v=3.1.0">
-<link rel="stylesheet" href="css/notes.css?v=3.1.0">
+<link rel="stylesheet" href="css/estilo.css?v=3.2.0">
+<link rel="stylesheet" href="css/stages.css?v=3.2.0">
+<link rel="stylesheet" href="css/personajes.css?v=3.2.0">
+<link rel="stylesheet" href="css/notes.css?v=3.2.0">
+<link rel="stylesheet" href="css/movil.css?v=3.2.0">
 </head>
 <body>
 <canvas id="game"></canvas>
 <noscript><p style="color:#fff;font-family:sans-serif;padding:20px">Activa JavaScript para jugar.</p></noscript>
 
 <button id="pauseBtn" title="Pausa (Esc / Enter)" aria-label="Pausa"><i></i><i></i></button>
+<button id="fsBtn" type="button" title="Pantalla completa" aria-label="Pantalla completa" hidden><svg viewBox="0 0 24 24"><path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/></svg></button>
 
 <div id="overlay" role="dialog" aria-modal="true">
   <h2 id="ovTitle" hidden><canvas id="ovTitleCanvas"></canvas><span id="ovTitleText">PAUSA</span></h2>
@@ -40,31 +42,58 @@
       <button class="btn alt" id="btnDemo">🎵 Volver a la canción "test"</button>
       <input type="file" id="fileInput" multiple accept=".fnfc,.zip,.json,.ogg,.mp3,.wav">
       <p class="hint">Teclado: <kbd class="l">←</kbd><kbd class="d">↓</kbd><kbd class="u">↑</kbd><kbd class="r">→</kbd> o <kbd>A</kbd><kbd>S</kbd><kbd>W</kbd><kbd>D</kbd> (cámbialas en Opciones → Asignar Teclas) · Pausa: <kbd>Esc</kbd>/<kbd>Enter</kbd> · Opciones: <kbd>O</kbd> · Menú: <kbd>↑</kbd><kbd>↓</kbd> + <kbd>Enter</kbd><br>
-      Táctil: toca las 4 columnas de la pantalla. Acepta .fnfc de V-Slice (chart + metadata + Inst/Voices) o JSON de Psych/legacy.</p>
+      Táctil: toca las 4 columnas de la pantalla (o activa Opciones → Controles V-Slice). Acepta .fnfc de V-Slice (chart + metadata + Inst/Voices) o JSON de Psych/legacy.</p>
     </div>
     <div id="panelAssets" hidden>
       <h3>🖼 Assets cargados</h3>
+      <div id="uaBox"></div>
+      <h4>Estado</h4>
       <div id="assetList" class="hint"></div>
     </div>
   </div>
 </div>
 
+<div id="modModal" hidden role="dialog" aria-modal="true">
+  <div class="caja">
+    <header><h2>Eventos y note kinds</h2><p>Carga el .hxc de cada evento / note kind que el chart usa y esta página no conoce.</p></header>
+    <div id="modBody"></div>
+    <footer>
+      <button class="btn mini" id="modHxc" type="button">📄 Cargar .hxc</button>
+      <button class="btn mini alt" id="modFolder" type="button">📁 Carpeta de scripts / mod</button>
+      <button class="btn mini warnb" id="modForget" type="button">🗑 Borrar guardados</button>
+      <button class="btn mini go" id="modClose" type="button">Continuar ▶</button>
+    </footer>
+  </div>
+</div>
+
+<div id="rotar" hidden>
+  <svg class="icono" viewBox="0 0 100 100"><rect x="30" y="12" width="40" height="70" rx="7"/><circle cx="50" cy="73" r="3.5"/><path d="M82 40 a34 34 0 0 1 -6 34 M76 74 l1 -10 M76 74 l-9 -3"/></svg>
+  <h2>Gira tu dispositivo</h2>
+  <p>Test Song se juega solo en horizontal. La canción quedó en pausa.</p>
+  <button class="btn mini" id="rotarFs" type="button">⛶ Pantalla completa</button>
+</div>
+
 <div id="toast"></div>
 
 <!-- Orden de carga: comparten el ámbito global (scripts clásicos, sin módulos: funciona en GitHub Pages) -->
-<script src="js/config.js?v=3.1.0"></script>
-<script src="js/assets.js?v=3.1.0"></script>
-<script src="js/atlas.js?v=3.1.0"></script>
-<script src="js/charts.js?v=3.1.0"></script>
-<script src="js/audio.js?v=3.1.0"></script>
-<script src="js/opciones.js?v=3.1.0"></script>
-<script src="js/fuentes.js?v=3.1.0"></script>
-<script src="js/personajes.js?v=3.1.0"></script>
-<script src="js/stages.js?v=3.1.0"></script>
-<script src="js/notes.js?v=3.1.0"></script>
-<script src="js/hud.js?v=3.1.0"></script>
-<script src="js/eventos.js?v=3.1.0"></script>
-<script src="js/ui.js?v=3.1.0"></script>
-<script src="js/game.js?v=3.1.0"></script>
+<script src="js/config.js?v=3.2.0"></script>
+<script src="js/assets.js?v=3.2.0"></script>
+<script src="js/atlas.js?v=3.2.0"></script>
+<script src="js/charts.js?v=3.2.0"></script>
+<script src="js/audio.js?v=3.2.0"></script>
+<script src="js/opciones.js?v=3.2.0"></script>
+<script src="js/fuentes.js?v=3.2.0"></script>
+<script src="js/personajes.js?v=3.2.0"></script>
+<script src="js/stages.js?v=3.2.0"></script>
+<script src="js/notes.js?v=3.2.0"></script>
+<script src="js/hud.js?v=3.2.0"></script>
+<script src="js/eventos.js?v=3.2.0"></script>
+<script src="js/hscript.js?v=3.2.0"></script>
+<script src="js/mods.js?v=3.2.0"></script>
+<script src="js/modui.js?v=3.2.0"></script>
+<script src="js/usuario.js?v=3.2.0"></script>
+<script src="js/ui.js?v=3.2.0"></script>
+<script src="js/movil.js?v=3.2.0"></script>
+<script src="js/game.js?v=3.2.0"></script>
 </body>
 </html>
