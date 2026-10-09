@@ -92,6 +92,16 @@ class RealChar {
     this.holdUntil = G.gameTime + holdMs;
     this.singUntil = G.gameTime + holdMs + this.singTime * step;
   }
+  /* evento PlayAnimation: la animación no se interrumpe por el baile hasta que termina */
+  playEvent(name, force) {
+    if (!this.anims.has(name)) return false;
+    if (!force && this.curName !== name && this.singing() && !this.finished()) return false;
+    this.play(name, true);
+    const a = this.anims.get(name);
+    this.singUntil = G.gameTime + (a.loop ? G.chart.crochet * 2 : a.frames.length / a.fps * 1000);
+    this.holdUntil = -1e9;
+    return true;
+  }
   special(name) { if (this.anims.has(name)) { this.play(name, true); this.singUntil = G.gameTime + G.chart.crochet; return true; } return false; }
   holdOn() { this.holdUntil = Math.max(this.holdUntil, G.gameTime + 60); this.singUntil = Math.max(this.singUntil, G.gameTime + this.singTime * G.chart.crochet / 4); }
   update() {
@@ -132,7 +142,9 @@ async function loadCharacter(role, id) {
   if (!main) return { error: `no encontré ${fillT(ASSET_CFG.libImagePaths[0], parseAssetPath(mainAp))}/ (Animation.json+spritemap) ni .xml/.png`, data, dataFrom: dj ? dj.path : 'incluido' };
   const extra = {}, anims = new Map(), missing = [];
   for (const a of data.animations || []) {
-    if (!NEEDED_ANIM.test(a.name)) continue;
+    // se cargan todas las animaciones del atlas principal (PlayAnimation puede pedir cualquiera);
+    // las que usan otro atlas (muerte, fake out) solo si el juego las necesita aquí
+    if (!NEEDED_ANIM.test(a.name) && a.assetPath && a.assetPath !== mainAp) continue;
     let g = main;
     if (a.assetPath && a.assetPath !== mainAp) {
       if (!(a.assetPath in extra)) extra[a.assetPath] = await loadGraphic(parseAssetPath(a.assetPath), a.renderType || data.renderType);

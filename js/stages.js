@@ -37,32 +37,53 @@ async function loadStage(id) {
   return { id, data, props, from: sj ? sj.path : '(JSON incluido en js/assets.js)' };
 }
 
-/* ---------- Cámara del mundo (FlxG.camera de 1280x720 con zoom del escenario) ---------- */
-const Cam = { x: 640, y: 360, init: false, bop: 1 };
+/* ---------- Cámara del mundo (FlxG.camera de 1280x720 con zoom del escenario) ----------
+   Como PlayState de V-Slice: la cámara sigue a cameraFollowPoint con lerp (CLASSIC) o se mueve con
+   un tween (FocusCamera con ease); zoom = currentCameraZoom × cameraBopMultiplier. */
+const Cam = { x: 640, y: 360, init: false, bop: 1, stageZoom: 1, zoom: 1, zoomTween: null, follow: null, tween: null,
+  zoomRate: FNF.ZOOM_RATE, bopIntensity: FNF.BOP_INTENSITY, hudIntensity: FNF.HUD_BOP,
+  resetEvents() {
+    this.follow = null; this.tween = null; this.zoomTween = null; this.zoom = this.stageZoom; this.bop = 1;
+    this.zoomRate = FNF.ZOOM_RATE; this.bopIntensity = FNF.BOP_INTENSITY; this.hudIntensity = FNF.HUD_BOP;
+  },
+  followTo(x, y) { this.tween = null; this.follow = [x, y]; },
+  tweenTo(x, y, dur, ease) {
+    this.follow = [x, y];
+    if (dur <= 0 || !this.init) { this.tween = null; this.x = x; this.y = y; this.init = true; }
+    else this.tween = makeTween([this.x, this.y], [x, y], dur, ease);
+  },
+  zoomTo(z, dur, ease) { if (dur <= 0) { this.zoomTween = null; this.zoom = z; } else this.zoomTween = makeTween(this.zoom, z, dur, ease); },
+};
+
+/* punto de enfoque de un personaje (cameraFocusPoint); si no hay assets, la posición del escenario */
+function focusPoint(role) {
+  const c = Scene.chars[role]; if (c) return c.camPoint();
+  const sc = Scene.stage?.data?.characters?.[role] || DEFAULT_DATA.stages.mainStage.characters[role];
+  return sc ? [sc.position[0] + (sc.cameraOffsets?.[0] || 0), sc.position[1] - 200 + (sc.cameraOffsets?.[1] || 0)] : null;
+}
 
 function worldView(dt) {
   const st = Scene.stage, sd = st ? st.data : {};
   const pts = {};
-  for (const r of ['bf', 'dad', 'gf']) {
-    const c = Scene.chars[r];
-    if (c) pts[r] = c.camPoint();
-    else { const sc = sd.characters?.[r]; if (sc) pts[r] = [sc.position[0] + (sc.cameraOffsets?.[0] || 0), sc.position[1] - 200 + (sc.cameraOffsets?.[1] || 0)]; }
-  }
-  const baseZoom = (+sd.cameraZoom || 1) * (+params.get('zoom') || 1);   // ?zoom=0.8 para alejar la cámara
+  for (const r of ['bf', 'dad', 'gf']) { const p = focusPoint(r); if (p) pts[r] = p; }
+  if (Cam.zoomTween) { Cam.zoom = tweenValue(Cam.zoomTween); if (tweenDone(Cam.zoomTween)) Cam.zoomTween = null; }
+  const pz = +params.get('zoom') || 1;   // ?zoom=0.8 para alejar la cámara
   let k, vx, vy, zoom, target;
   if (V.portrait) {
     // celular vertical: se ven los dos personajes a la vez (cámara fija entre ambos)
     k = W / 1280; vx = 0; vy = H * 0.44 - k * 360;
     const dx = sd.characters?.dad?.position?.[0] ?? 335, bx = sd.characters?.bf?.position?.[0] ?? 990;
-    zoom = clamp(1280 / (Math.abs(bx - dx) + 560), 0.35, baseZoom);
+    zoom = clamp(1280 / (Math.abs(bx - dx) + 560), 0.35, Cam.stageZoom * pz) * (Cam.zoom / (Cam.stageZoom || 1));
     const a = pts.dad || [dx, 600], b = pts.bf || [bx, 600];
     target = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    Cam.tween = null;
   } else {
     // igual que el juego: 1280x720 escalado para caber; lo que sobra a los lados muestra más escenario
-    k = V.s; vx = V.ox; vy = V.oy; zoom = baseZoom;
-    target = pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
+    k = V.s; vx = V.ox; vy = V.oy; zoom = Cam.zoom * pz;
+    target = Cam.follow || pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
   }
-  if (!Cam.init) { Cam.x = target[0]; Cam.y = target[1]; Cam.init = true; }
+  if (Cam.tween) { const p = tweenValue(Cam.tween); Cam.x = p[0]; Cam.y = p[1]; if (tweenDone(Cam.tween)) Cam.tween = null; }
+  else if (!Cam.init) { Cam.x = target[0]; Cam.y = target[1]; Cam.init = true; }
   else { const f = 1 - Math.pow(1 - FNF.CAMERA_FOLLOW_RATE, dt / (1000 / 60)); Cam.x = lerp(Cam.x, target[0], f); Cam.y = lerp(Cam.y, target[1], f); }
   return { k, vx, vy, zoom };
 }

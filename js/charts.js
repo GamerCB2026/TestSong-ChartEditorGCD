@@ -28,39 +28,65 @@ const Chart = {
         seq.forEach(n => notes.push({ time: barStart + n.s * step, lane: n.lane, side, sustain: n.sustain, seed: rnd() }));
       }
     }
-    return this.finalize({ title: 'Test Song', artist: 'Chart Editor GCD · Demo', bpm, speed: CONFIG.demoSpeed, notes, isDemo: true });
+    const events = [];
+    for (let p = 0; p < pairs; p++) for (const k of [0, 1]) events.push({ t: (p * 2 + k) * 4 * crochet, e: 'FocusCamera', v: { char: k ? 0 : 1 } });
+    return this.finalize({ title: 'Demo GCD', artist: 'Chart Editor GCD · Demo', bpm, speed: CONFIG.demoSpeed, notes, events, isDemo: true, format: 'demo generada' });
   },
 
   /** raw = JSON del chart, meta = JSON de metadata (opcional) */
   parse(raw, meta, wantedDiff) {
     if (!raw || typeof raw !== 'object') throw new Error('JSON vacío');
-    // V-Slice: { notes: { easy:[{t,d,l}], normal:[...] }, scrollSpeed:{...} }
-    if (raw.notes && !Array.isArray(raw.notes) && typeof raw.notes === 'object') {
-      const diffs = Object.keys(raw.notes);
-      const diff = (wantedDiff && diffs.includes(wantedDiff)) ? wantedDiff
-        : (['hard', 'normal', 'easy'].find(d => diffs.includes(d)) || diffs[0]);
+    const pickDiff = diffs => (wantedDiff && diffs.includes(wantedDiff)) ? wantedDiff
+      : (['normal', 'hard', 'easy'].find(d => diffs.includes(d)) || diffs[0]);
+    // V-Slice: { notes: { easy:[{t,d,l,k}], normal:[...] }, scrollSpeed:{...}, events:[{t,e,v}] }
+    if (raw.notes && !Array.isArray(raw.notes) && typeof raw.notes === 'object' && !raw.song) {
+      const diffs = Object.keys(raw.notes).filter(k => Array.isArray(raw.notes[k]));
+      const diff = pickDiff(diffs);
       const list = raw.notes[diff] || [];
       const ss = raw.scrollSpeed || {};
       const speed = +(ss[diff] ?? ss.default ?? ss.normal ?? 1.6) || 1.6;
       const bpm = meta?.timeChanges?.[0]?.bpm || raw.bpm || 100;
-      const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0) }));
+      const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0), kind: n.k || '' }));
       const pc = meta?.playData?.characters || {};
       const scene = { bf: pc.player, dad: pc.opponent, gf: pc.girlfriend, stage: meta?.playData?.stage };
-      return this.finalize({ title: meta?.songName || 'Canción', artist: meta?.artist || '', bpm, speed, notes, difficulties: diffs, difficulty: diff, scene });
+      const events = (Array.isArray(raw.events) ? raw.events : []).map(e => ({ t: +e.t || 0, e: String(e.e || ''), v: e.v }));
+      return this.finalize({ title: meta?.songName || 'Canción', artist: meta?.artist || '', bpm, speed, notes, events, difficulties: diffs, difficulty: diff, scene, format: 'V-Slice' });
     }
-    // Psych / legacy: { song: { notes:[ {sectionNotes, mustHitSection} ], bpm, speed } }
+    // Legacy / Psych / SongConverter: { song: { notes:[secciones] | {normal:[secciones]}, bpm, speed: n | {normal:n} } }
     const song = raw.song && typeof raw.song === 'object' ? raw.song : raw;
-    if (Array.isArray(song.notes) && song.notes.length && song.notes.some(s => s && Array.isArray(s.sectionNotes))) {
+    let secs = song.notes, diffs = null, diff = null;
+    if (secs && !Array.isArray(secs) && typeof secs === 'object') {          // formato de la canción "test" (FNF SongConverter): notas por dificultad
+      diffs = Object.keys(secs).filter(k => Array.isArray(secs[k]));
+      if (diffs.length) { diff = pickDiff(diffs); secs = secs[diff]; }
+    }
+    if (Array.isArray(secs) && secs.some(s => s && Array.isArray(s.sectionNotes))) {
       const psychV1 = typeof song.format === 'string' && song.format.startsWith('psych_v1');
-      const notes = [];
-      song.notes.forEach(sec => (sec.sectionNotes || []).forEach(n => {
-        const d = n[1] | 0; if (d < 0 || typeof n[0] !== 'number') return;
-        const first = d % 8 < 4;
-        const isPlayer = psychV1 ? first : (sec.mustHitSection ? first : !first);
-        notes.push({ time: n[0], lane: d % 4, side: isPlayer ? 'player' : 'opponent', sustain: +(n[2] || 0) });
-      }));
-      const scene = { bf: song.player1, dad: song.player2, gf: song.gfVersion || song.player3 || song.gf, stage: song.stage };
-      return this.finalize({ title: song.song || song.songName || 'Canción', artist: song.artist || '', bpm: song.bpm || 100, speed: song.speed || 1.6, notes, scene });
+      const notes = [], events = [];
+      const bpm0 = +song.bpm || 100;
+      let bpm = bpm0, t = 0, lastFocus = null;
+      secs.forEach(sec => {
+        if (sec.changeBPM && +sec.bpm > 0) bpm = +sec.bpm;
+        const steps = +sec.lengthInSteps || (+sec.sectionBeats ? sec.sectionBeats * 4 : 16);
+        // cámara: V-Slice convierte mustHitSection en eventos FocusCamera
+        const focus = sec.gfSection ? 2 : (sec.mustHitSection ? 0 : 1);
+        if (focus !== lastFocus) { events.push({ t, e: 'FocusCamera', v: { char: focus }, auto: true }); lastFocus = focus; }
+        (sec.sectionNotes || []).forEach(n => {
+          if (!Array.isArray(n)) return;
+          if (typeof n[1] !== 'number' || n[1] < 0) { if (typeof n[2] === 'string') events.push(...this.psychEvent(+n[0], n[2], n[3], n[4], bpm)); return; }
+          const d = n[1] | 0; if (typeof n[0] !== 'number') return;
+          const first = d % 8 < 4;
+          const isPlayer = psychV1 ? first : (sec.mustHitSection ? first : !first);
+          notes.push({ time: n[0], lane: d % 4, side: isPlayer ? 'player' : 'opponent', sustain: +(n[2] || 0), kind: typeof n[3] === 'string' ? n[3] : '' });
+        });
+        t += steps * (60000 / bpm / 4);
+      });
+      if (Array.isArray(song.events)) song.events.forEach(ev => (Array.isArray(ev[1]) ? ev[1] : []).forEach(x => events.push(...this.psychEvent(+ev[0], x[0], x[1], x[2], bpm0))));
+      if (Array.isArray(raw.events)) raw.events.forEach(e => { if (e && e.e) events.push({ t: +e.t || 0, e: String(e.e), v: e.v }); });
+      const sp = song.speed && typeof song.speed === 'object' ? (song.speed[diff] ?? song.speed.normal ?? Object.values(song.speed)[0]) : song.speed;
+      const scene = { bf: song.player1, dad: song.player2, gf: song.gfVersion || song.player3 || song.gf, stage: song.stage || song.stageDefault };
+      return this.finalize({ title: song.song || song.songName || 'Canción', artist: song.artist || '', bpm: bpm0, speed: +sp || 1.6, notes, events, scene,
+        difficulties: diffs || null, difficulty: diff, voiceList: Array.isArray(song.voiceList) ? song.voiceList : null, needsVoices: song.needsVoices !== false,
+        format: raw.generatedBy ? `legacy (${raw.generatedBy})` : psychV1 ? 'Psych 1.0' : 'legacy/Psych' });
     }
     // Simple: { bpm, notes:[{t,d,l}] } o [{time,column}]
     const arr = Array.isArray(raw) ? raw : Array.isArray(raw.notes) ? raw.notes : null;
@@ -69,14 +95,31 @@ const Chart = {
         const d = (n.d ?? n.column ?? n.lane ?? 0) | 0;
         return { time: +(n.t ?? n.time ?? 0), lane: d % 4, side: d % 8 < 4 ? 'player' : 'opponent', sustain: +(n.l ?? n.sustain ?? 0) };
       });
-      return this.finalize({ title: raw.title || raw.songName || 'Canción', artist: raw.artist || '', bpm: raw.bpm || 100, speed: raw.speed || 1.6, notes });
+      return this.finalize({ title: raw.title || raw.songName || 'Canción', artist: raw.artist || '', bpm: raw.bpm || 100, speed: raw.speed || 1.6, notes, events: raw.events || [] });
     }
     throw new Error('Formato de chart no reconocido');
+  },
+
+  /* Eventos de Psych → eventos de V-Slice equivalentes */
+  psychEvent(t, name, v1, v2, bpm) {
+    const who = x => { x = String(x ?? '').toLowerCase().trim(); return /^(1|dad|opponent)$/.test(x) ? 'dad' : /^(2|gf|girlfriend)$/.test(x) ? 'gf' : 'bf'; };
+    switch (String(name || '')) {
+      case 'Hey!': { const w = String(v1 || '').toLowerCase(); const out = [];
+        if (!/^(gf|girlfriend|1)$/.test(w)) out.push({ t, e: 'PlayAnimation', v: { target: 'bf', anim: 'hey', force: true } });
+        if (!/^(bf|boyfriend|0)$/.test(w)) out.push({ t, e: 'PlayAnimation', v: { target: 'gf', anim: 'cheer', force: true } });
+        return out; }
+      case 'Play Animation': return [{ t, e: 'PlayAnimation', v: { target: who(v2), anim: String(v1 || ''), force: true } }];
+      case 'Change Scroll Speed': { const sec = +v2 || 0; return [{ t, e: 'ScrollSpeed', v: { scroll: +v1 || 1, absolute: false, duration: sec * 1000 / (60000 / bpm / 4), ease: sec ? 'linear' : 'INSTANT' } }]; }
+      case 'Camera Follow Pos': return (v1 === '' && v2 === '') ? [] : [{ t, e: 'FocusCamera', v: { char: -1, x: +v1 || 0, y: +v2 || 0, ease: 'CLASSIC' } }];
+      default: return [];
+    }
   },
 
   finalize(c) {
     if (c.scene) { for (const k of Object.keys(c.scene)) if (!c.scene[k] || typeof c.scene[k] !== 'string') delete c.scene[k]; }
     c.notes = c.notes.filter(n => isFinite(n.time)).sort((a, b) => a.time - b.time);
+    c.events = (c.events || []).filter(e => e && e.e && isFinite(e.t)).sort((a, b) => a.t - b.t);
+    c.hasFocusEvents = c.events.some(e => e.e === 'FocusCamera');
     const rnd = mulberry32(77);
     c.notes.forEach(n => { if (n.seed === undefined) n.seed = rnd(); });
     c.crochet = 60000 / c.bpm;
@@ -120,7 +163,7 @@ async function readChartFiles(files) {
   let raw = null, meta = null, inst = null; const voices = [];
   const classify = j => { if (j && (j.timeChanges || j.playData)) meta = j; else if (!raw) raw = j; };
   const audioType = n => n.endsWith('.mp3') ? 'audio/mpeg' : n.endsWith('.wav') ? 'audio/wav' : 'audio/ogg';
-  const addAudio = (name, blob) => { const b = name.split('/').pop(); if (/^inst/.test(b)) inst = inst || blob; else voices.push(blob); };
+  const addAudio = (name, blob) => { const b = name.split('/').pop(); if (/^inst/.test(b)) inst = inst || blob; else voices.push({ blob, name: b }); };
   for (const f of files) {
     const n = f.name.toLowerCase();
     if (n.endsWith('.fnfc') || n.endsWith('.zip')) {

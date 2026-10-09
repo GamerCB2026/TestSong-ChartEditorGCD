@@ -14,7 +14,26 @@ const AssetLog = {
   set(key, ok, text) { this.extra.set(key, { ok, text }); },
 };
 
+/* Progreso de carga (pantalla negra "Cargando…"): cada fetch/imagen cuenta como una tarea */
+const Loader = {
+  started: 0, done: 0, shown: 0, active: true, label: 'Cargando…',
+  begin() { this.started++; }, end() { this.done++; },
+  track(promise) { this.begin(); return Promise.resolve(promise).finally(() => this.end()); },
+  // el total no se conoce de antemano (muchas rutas se prueban en cadena): se usa el total de la última carga
+  expected() { try { return +localStorage.getItem('testsong-gcd-carga') || 140; } catch (e) { return 140; } },
+  ratio() {
+    const r = this.started ? this.done / Math.max(this.started, this.exp || 140) : 0;
+    this.shown = Math.max(this.shown, Math.min(0.99, r)); return this.active ? this.shown : 1;
+  },
+  reset(label) { this.started = this.done = 0; this.shown = 0; this.active = true; this.label = label || 'Cargando…'; this.exp = this.expected(); },
+  finish() { this.active = false; try { if (this.started > 10) localStorage.setItem('testsong-gcd-carga', String(this.started)); } catch (e) {} },
+};
+
 async function fetchFirst(list, kind) {
+  Loader.begin();
+  try { return await fetchFirstRaw(list, kind); } finally { Loader.end(); }
+}
+async function fetchFirstRaw(list, kind) {
   for (const p of uniq(list)) {
     try {
       const r = await fetch(assetUrl(p), { cache: 'no-cache' });
@@ -29,7 +48,7 @@ async function fetchFirst(list, kind) {
 }
 function loadImg(list) {
   list = uniq(list);
-  return new Promise(resolve => {
+  return Loader.track(new Promise(resolve => {
     let i = 0;
     const next = () => {
       if (i >= list.length) return resolve(null);
@@ -39,7 +58,7 @@ function loadImg(list) {
       img.src = assetUrl(p);
     };
     next();
-  });
+  }));
 }
 function parseAssetPath(ap) {
   const s = String(ap || ''); const i = s.indexOf(':');

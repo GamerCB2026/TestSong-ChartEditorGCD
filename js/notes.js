@@ -21,21 +21,33 @@ function frameFromImg(img) {
 async function loadNoteSkin() {
   const skin = { head: [], piece: [], end: [], strum: [], press: [], confirm: [], splash: [], placeholder: [false, false, false, false], src: {} };
   const Dirs = ['Left', 'Down', 'Up', 'Right'];
-  const [sheetV, sheetL, sheetS] = await Promise.all([
-    loadSparrowSheet(ASSET_CFG.strumSheets), loadSparrowSheet(ASSET_CFG.legacyNoteSheets), loadSparrowSheet(ASSET_CFG.splashSheets)]);
+  const [sheetV, sheetL, sheetS, holdImg] = await Promise.all([
+    loadSparrowSheet(ASSET_CFG.strumSheets), loadSparrowSheet(ASSET_CFG.legacyNoteSheets), loadSparrowSheet(ASSET_CFG.splashSheets), loadImg(ASSET_CFG.holdSheets)]);
   await Promise.all([0, 1, 2, 3].map(async i => {
     const v = { color: ASSET_CFG.noteColors[i], dir: LANE_NAMES[i], DIR: LANE_DIRS[i], Dir: Dirs[i] };
     const f = list => (Array.isArray(list) ? list : [list]).map(t => ASSET_CFG.noteDir + fillT(t, v));
-    const [head, piece, end, st, pr, cf] = await Promise.all([
-      loadImg(f(ASSET_CFG.noteHead)), loadImg(f(ASSET_CFG.holdPiece)), loadImg(f(ASSET_CFG.holdEnd)),
-      loadImg(f(ASSET_CFG.strumStatic)), loadImg(f(ASSET_CFG.strumPress)), loadImg(f(ASSET_CFG.strumConfirm))]);
     const fromSheet = (sh, prefix) => { if (!sh) return null; const fr = sparrowFrames(sh.atlas, prefix, null, sh.img); return fr.length ? fr : null; };
+    // las PNG sueltas (NoteAssets/) solo se buscan si las hojas no traen lo necesario (menos peticiones 404)
+    const sheetHead = fromSheet(sheetL, v.color + '0') || fromSheet(sheetL, v.color + ' instance');
+    const sheetHold = holdImg || fromSheet(sheetL, v.color + ' hold piece');
+    const sheetStrum = fromSheet(sheetV, 'static' + v.Dir + '0');
+    const none = Promise.resolve(null);
+    const [head, piece, end, st, pr, cf] = await Promise.all([
+      sheetHead ? none : loadImg(f(ASSET_CFG.noteHead)), sheetHold ? none : loadImg(f(ASSET_CFG.holdPiece)), sheetHold ? none : loadImg(f(ASSET_CFG.holdEnd)),
+      sheetStrum ? none : loadImg(f(ASSET_CFG.strumStatic)), sheetStrum ? none : loadImg(f(ASSET_CFG.strumPress)), sheetStrum ? none : loadImg(f(ASSET_CFG.strumConfirm))]);
     // nota (cabeza)
-    skin.head[i] = head ? [frameFromImg(head)] : fromSheet(sheetL, v.color + '0') || fromSheet(sheetL, v.color + ' instance');
-    skin.piece[i] = piece ? frameFromImg(piece) : (fromSheet(sheetL, v.color + ' hold piece') || [])[0] || null;
-    skin.end[i] = end ? frameFromImg(end) : (fromSheet(sheetL, v.color + ' hold end') || fromSheet(sheetL, v.dir === 'left' ? 'pruple end hold' : '\0') || [])[0] || null;
+    skin.head[i] = head ? [frameFromImg(head)] : sheetHead;
+    if (holdImg) {   // V-Slice NOTE_hold_assets.png: columnas (pieza, final) por carril; la pieza se estira, el final abajo
+      const cw = holdImg.naturalWidth / 8, ch = holdImg.naturalHeight;
+      const col = c => ({ img: holdImg, x: Math.round(c * cw) + 1, y: 0, w: Math.floor(cw) - 2, h: ch, fw: Math.floor(cw) - 2, fh: ch, dw: Math.floor(cw) - 2, dh: ch, offX: 0, offY: 0, rot: false });
+      skin.piece[i] = Object.assign(col(i * 2), { y: 1, h: ch - 12, fh: ch - 12, dh: ch - 12 }); skin.end[i] = Object.assign(col(i * 2 + 1), { h: Math.round(ch * 0.8), fh: Math.round(ch * 0.8), dh: Math.round(ch * 0.8) });
+          }
+    if (!holdImg) {
+      skin.piece[i] = piece ? frameFromImg(piece) : (fromSheet(sheetL, v.color + ' hold piece') || [])[0] || null;
+      skin.end[i] = end ? frameFromImg(end) : (fromSheet(sheetL, v.color + ' hold end') || fromSheet(sheetL, v.dir === 'left' ? 'pruple end hold' : '\0') || [])[0] || null;
+    }
     // receptores
-    skin.strum[i] = fromSheet(sheetV, 'static' + v.Dir + '0') || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR);
+    skin.strum[i] = fromSheet(sheetV, 'static' + v.Dir + '0') || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR) || fromSheet(sheetL, 'arrow static instance ' + [1, 2, 4, 3][i] + '0');
     skin.press[i] = fromSheet(sheetV, 'press' + v.Dir + '0') || (pr && [frameFromImg(pr)]) || fromSheet(sheetL, v.dir + ' press');
     skin.confirm[i] = fromSheet(sheetV, 'confirm' + v.Dir + '0') || (cf && [frameFromImg(cf)]) || fromSheet(sheetL, v.dir + ' confirm');
     if (skin.head[i]) {
@@ -49,15 +61,17 @@ async function loadNoteSkin() {
     skin.splash[i] = [fromSheet(sheetS, 'note impact 1 ' + col), fromSheet(sheetS, 'note impact 2 ' + col), fromSheet(sheetS, 'note impact 1  ' + col)].filter(Boolean);
   }));
   skin.ok = skin.head.some(Boolean);
-  skin.src = { strumSheet: sheetV && sheetV.where, legacySheet: sheetL && sheetL.where, splashSheet: sheetS && sheetS.where };
+  skin.src = { strumSheet: sheetV && sheetV.where, legacySheet: sheetL && sheetL.where, splashSheet: sheetS && sheetS.where,
+    headFrom: skin.head.some(h => h && h[0] && sheetL && h[0].img === sheetL.img) ? sheetL.where + '.xml' : (skin.head.some(Boolean) ? ASSET_CFG.noteDir : null),
+    holdFrom: holdImg ? holdImg.assetPath + ' (V-Slice)' : (sheetL && skin.piece.some(Boolean) ? sheetL.where + '.xml' : null) };
   skin.hasSplash = skin.splash.some(s => s.length);
   return skin;
 }
 
 /* ---------- Geometría (unidades del HUD) ---------- */
-function laneX(side, i) { const s = LAYOUT[side]; return s.x + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
+function laneX(side, i) { const s = LAYOUT[side], x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
 function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
-function pxPerMs(side) { return FNF.PIXELS_PER_MS * G.chart.speed * LAYOUT[side].k; }
+function pxPerMs(side) { return FNF.PIXELS_PER_MS * G.speed * LAYOUT[side].k; }   // G.speed: evento ScrollSpeed
 function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
 
 function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow = null) {
@@ -144,6 +158,7 @@ function drawStrumsAndNotes() {
   const sk = Scene.notes, hasImg = sk && sk.ok;
   for (const side of ['opponent', 'player']) {
     const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side);
+    ctx.save(); ctx.globalAlpha = LAYOUT[side].alpha ?? 1;
     for (let i = 0; i < 4; i++) {
       const x = laneX(side, i), [anim, t] = strumAnim(side, i);
       if (hasImg && sk.head[i]) {
@@ -159,12 +174,14 @@ function drawStrumsAndNotes() {
       else if (anim === 'press') drawArrow(x, y, sz * 0.92, i, LANE_DARK[i], '#ddd');
       else drawArrow(x, y, sz, i, '#87a3ad', '#c7d6e0', 0, 0.9);
     }
+    ctx.restore();
   }
   // notas (y colas de sustain). En celular vertical cada carril se recorta a su zona de la pantalla.
   const clips = LAYOUT.portrait ? { opponent: [0, LAYOUT.clip.oppBottom], player: [LAYOUT.clip.playerTop, V.h] } : null;
   for (const side of ['opponent', 'player']) {
     ctx.save();
     if (clips) { ctx.beginPath(); ctx.rect(-50, clips[side][0], V.w + 100, clips[side][1] - clips[side][0]); ctx.clip(); }
+    ctx.globalAlpha = LAYOUT[side].alpha ?? 1;
     drawNotesOf(side);
     ctx.restore();
   }
@@ -173,7 +190,7 @@ function drawStrumsAndNotes() {
 function drawNotesOf(only) {
   const sk = Scene.notes, hasImg = sk && sk.ok;
   for (const n of G.chart.notes) {
-    if (n.side !== only) continue;
+    if (n.side !== only || n.skipped) continue;
     if (n.time - G.songPos > 4000) break;
     const side = n.side, k = LAYOUT[side].k, y = noteY(side, n.time), x = laneX(side, n.lane), down = LAYOUT[side].down;
     const off = (yy) => down ? yy < -NOTE_W || yy > V.h + NOTE_W * 4 : yy > V.h + NOTE_W || yy < -NOTE_W * 4;

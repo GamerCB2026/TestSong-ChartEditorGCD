@@ -42,14 +42,14 @@ const CONFIG = {
   ],
   demoOppDrain: 0.03,                       // solo en demo: el rival baja la vida para que la barra se mueva
   showComboSprite: params.get('combo') === '1',   // combo.png (legacy). V-Slice ya no lo muestra.
-  downscroll: params.has('downscroll') ? params.get('downscroll') !== '0' : null,  // null = auto (celular vertical: abajo)
 };
 
 const LANE_COLORS = ['#c24b99', '#00ffff', '#12fa05', '#f9393f'];
 const LANE_DARK   = ['#6e2457', '#007b8a', '#0a7d03', '#8c1b1f'];
 const LANE_NAMES  = ['left', 'down', 'up', 'right'];
 const LANE_DIRS   = ['LEFT', 'DOWN', 'UP', 'RIGHT'];
-const KEY_MAP = { ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3, a: 0, s: 1, w: 2, d: 3 };
+const ARROW_KEYS = { ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3 };   // las flechas siempre funcionan (2ª asignación)
+const DEFAULT_KEYS = ['a', 's', 'w', 'd'];                                        // Asignar Teclas (se guardan en localStorage)
 const DEFAULT_COLORS = { opp: FNF.COLOR_HEALTH_RED, player: FNF.COLOR_HEALTH_GREEN };
 const COLORS = Object.assign({}, DEFAULT_COLORS);   // se reemplazan si el JSON del personaje trae colores (estilo Psych)
 
@@ -74,7 +74,9 @@ const ASSET_CFG = {
   strumConfirm: ['{color} confirm0000.png'],
   // Hojas Sparrow (xml+png) del juego, si se suben:
   strumSheets: ['shared/images/noteStrumline'],           // staticLeft0 / pressLeft0 / confirmLeft0
-  legacyNoteSheets: ['shared/images/NOTE_assets'],          // arrowLEFT / left press / left confirm / purple0
+  legacyNoteSheets: ['images/NOTE_assets', 'shared/images/NOTE_assets'],   // "purple instance 1" / "arrow static instance N" / "left press" / "left confirm"
+  holdSheets: ['images/NOTE_hold_assets.png', 'shared/images/NOTE_hold_assets.png'],  // V-Slice: 8 columnas (pieza, final) x 4 carriles
+  noteStyle: ['data/notestyle/funkin.json'],
   splashSheets: ['shared/images/noteSplashes', 'shared/images/NoteAssets/noteSplashes'],
 
   // Iconos: legacy icon-<id>.png (frames de 150x150) o animado icon-<id>.xml+png (idle/winning/losing/toWinning...)
@@ -93,8 +95,17 @@ const ASSET_CFG = {
   missSounds: ['shared/sounds/missnote{n}', 'sounds/missnote{n}'],
   menuSounds: { scroll: ['sounds/scrollMenu', 'shared/sounds/scrollMenu'] },
   pauseMusic: ['music/breakfast/breakfast', 'shared/music/breakfast/breakfast'],
-  // Canción por defecto (opcional): si existe, se usa en vez de la demo generada
-  defaultSong: { chart: ['song-chart.json'], meta: ['song-metadata.json'], inst: ['Inst', 'songs/test/Inst'], voices: ['Voices', 'songs/test/Voices'] },
+  // Canción por defecto: "test" del juego (data/songs/test/test.json + songs/test/Inst.ogg, Voices-bf.ogg, Voices-bf-pixel.ogg).
+  // ?song=<id> carga data/songs/<id>/<id>-chart.json (V-Slice) o <id>.json (legacy) + songs/<id>/...
+  defaultSongId: params.get('song') || 'test',
+  songChartPaths: ['data/songs/{id}/{id}-chart.json', 'data/songs/{id}/{id}.json', 'songs/{id}/{id}-chart.json', 'songs/{id}/{id}.json'],
+  songMetaPaths: ['data/songs/{id}/{id}-metadata.json', 'songs/{id}/{id}-metadata.json'],
+  songAudioDir: 'songs/{id}/',
+  // compatibilidad: song-chart.json / song-metadata.json / Inst.ogg / Voices.ogg junto al index
+  defaultSong: { chart: ['song-chart.json'], meta: ['song-metadata.json'], inst: ['Inst'], voices: ['Voices'] },
+  // ids del chart sin assets -> alias (bf-pixel -> bf). Si tampoco existe, el personaje por defecto del rol.
+  charAlias: { 'bf-pixel': 'bf', 'bf-car': 'bf', 'bf-christmas': 'bf', 'bf-holding-gf': 'bf', 'gf-pixel': 'gf', 'gf-car': 'gf', 'gf-christmas': 'gf' },
+  stageAlias: { stage: 'mainStage', '': 'mainStage' },
 };
 
 /* ---------- utilidades ---------- */
@@ -108,6 +119,7 @@ const fillT = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
 const assetUrl = p => ROOT + p.split('/').map(encodeURIComponent).join('/');
 const uniq = a => [...new Set(a)];
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const VERSION = '3.1.0';
 const cubeInOut = t => t < 0.5 ? 4 * t * t * t : 0.5 * Math.pow(2 * t - 2, 3) + 1;
 const formatMoney = n => Math.round(n).toLocaleString('en-US');
 const $ = id => document.getElementById(id);

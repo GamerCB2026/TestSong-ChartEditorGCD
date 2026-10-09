@@ -40,7 +40,7 @@ const Fonts = {
   measure(name, text) {
     const f = this.sheets[name]; if (!f) return { w: 0, h: 0 };
     let w = 0;
-    for (const ch of this.prep(name, text)) { if (ch === ' ') { w += 40; continue; } const g = this.glyph(f, ch); if (g) w += g[0].fw; }
+    for (const ch of this.prep(name, text)) { if (ch === ' ') { w += 40; continue; } const g = this.glyph(f, ch); w += g ? g[0].fw : this.fbW(f); }
     return { w, h: f.maxHeight };
   },
   /* Dibuja en (x,y) = esquina superior izquierda. t = ms (animación 24 fps) */
@@ -49,12 +49,20 @@ const Fonts = {
     let cx = 0; const fi = Math.floor(t / 1000 * 24);
     for (const ch of this.prep(name, text)) {
       if (ch === ' ') { cx += 40; continue; }
-      const g = this.glyph(f, ch); if (!g) continue;
+      const g = this.glyph(f, ch);
+      if (!g) { this.fbDraw(ctx, f, ch, x + cx * scale, y, scale); cx += this.fbW(f); continue; }   // p. ej. números (bold no los trae)
       const fr = g[fi % g.length];
       drawSparrowFrame(ctx, fr, x + cx * scale, y + (f.maxHeight - fr.fh) * scale, scale);
       cx += g[0].fw;
     }
     return true;
+  },
+  fbW(f) { return f.maxHeight * 0.62; },
+  fbDraw(ctx, f, ch, x, y, scale) {
+    const h = f.maxHeight * scale;
+    ctx.save(); ctx.font = `900 ${h * 0.82}px "Arial Black", "Trebuchet MS", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round'; ctx.lineWidth = h * 0.12; ctx.strokeStyle = '#000'; ctx.strokeText(ch, x + this.fbW(f) * scale / 2, y + h * 0.55);
+    ctx.fillStyle = '#fff'; ctx.fillText(ch, x + this.fbW(f) * scale / 2, y + h * 0.55); ctx.restore();
   },
   /* Canvas con el texto (para la interfaz HTML). Devuelve null si la fuente no está */
   toCanvas(name, text, height, t = 0, canvas = null) {
