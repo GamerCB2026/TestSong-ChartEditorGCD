@@ -24,9 +24,20 @@ async function loadStage(id) {
       if (xml) {
         try {
           const atlas = parseSparrow(xml.data), img = await loadImg([xml.path.replace(/\.xml$/, '.png')], { world: true });
+          // v3.4.0: todas las animaciones del prop (PlayAnimation puede pedir cualquiera; los "boppers" bailan con el ritmo)
+          prop.anims = new Map();
+          if (img) for (const an of p.animations) {
+            const fr = sparrowFrames(atlas, an.prefix || '', an.frameIndices, img);
+            if (fr.length) prop.anims.set(an.name, { name: an.name, frames: fr, fps: +an.frameRate || 24, loop: !!an.looped, off: an.offsets || [0, 0] });
+          }
           const a = p.animations.find(a => a.name === p.startingAnimation) || p.animations.find(a => a.name === 'idle') || p.animations[0];
-          const frames = img ? sparrowFrames(atlas, a.prefix || '', a.frameIndices, img) : [];
-          if (frames.length) { Object.assign(prop, { frames, fps: +a.frameRate || 24, loop: a.looped !== false, img: null, sheet: img, path: xml.path, off: a.offsets || [0, 0] }); return prop; }
+          const st = prop.anims.get(a.name) || prop.anims.values().next().value;
+          if (st) {
+            // sin danceEvery el prop repite su animación inicial (como antes); con danceEvery baila en el beat (Bopper)
+            Object.assign(prop, { img: null, sheet: img, path: xml.path, hasLR: prop.anims.has('danceLeft') && prop.anims.has('danceRight') });
+            propSet(prop, st, !(prop.danceEvery > 0) ? (a.looped !== false) : st.loop);
+            return prop;
+          }
         } catch (e) { console.warn(e); }
       }
     }
@@ -34,11 +45,44 @@ async function loadStage(id) {
     prop.img = img; prop.path = img ? img.assetPath : null; prop.tried = cands[0];
     return prop;
   }));
-  await TexLoad.cropFrames(props.flatMap(p => p.frames || []));
+  await TexLoad.cropFrames(props.flatMap(p => p.anims ? [...p.anims.values()].flatMap(a => a.frames) : (p.frames || [])));
   const st = { id, data, props, from: sj ? sj.path : '(JSON incluido en js/assets.js)' };
   stageModeFor(st);
   return st;
 }
+/* ---------- animaciones de props (Bopper / PlayAnimation sobre un prop con nombre) ---------- */
+function propSet(p, a, loop) { p.cur = a.name; p.frames = a.frames; p.fps = a.fps; p.loop = loop ?? a.loop; p.off = a.off; p.t0 = G.gameTime || 0; }
+function propFinished(p) { return !p.loop && (G.gameTime - (p.t0 || 0)) / 1000 * p.fps >= p.frames.length; }
+function propPlay(name, anim, force) {
+  const st = Scene.stage; if (!st) return false;
+  const p = st.props.find(x => x.name === name) || st.props.find(x => String(x.name).toLowerCase() === String(name).toLowerCase());
+  if (!p || !p.anims) return false;
+  const a = p.anims.get(anim); if (!a) return false;
+  if (p.lock && !(p.cur === anim && force)) return false;
+  if (!force && p.cur === anim && !propFinished(p)) return true;
+  propSet(p, a); if (force) p.lock = true;
+  return true;
+}
+/* beat: los props con danceEvery bailan (danceLeft/danceRight o idle), sin cortar una animación especial */
+function propsBeat(beat) {
+  const st = Scene.stage; if (!st) return;
+  for (const p of st.props) {
+    if (!p.anims || !(p.danceEvery > 0)) continue;
+    if (p.lock) { if (propFinished(p)) p.lock = false; else continue; }
+    const every = Math.max(1, Math.round(p.danceEvery));
+    if (((beat % every) + every) % every !== 0) continue;
+    if (p.cur && !/^(idle|dance)/.test(p.cur) && !propFinished(p)) continue;
+    let a;
+    if (p.hasLR) { p.danced = !p.danced; a = p.anims.get(p.danced ? 'danceLeft' : 'danceRight'); }
+    else a = p.anims.get('idle') || p.anims.get(p.cur);
+    if (a) propSet(p, a);
+  }
+}
+function propsReset() {
+  const st = Scene.stage; if (!st) return;
+  for (const p of st.props) if (p.anims && p.cur) { p.lock = false; p.t0 = 0; }
+}
+
 /* Optimización → Escenario: completo / simple (solo el fondo) / oculto */
 function stageModeFor(st) {
   const mode = Optim.s.stage, props = st.props.filter(p => p.img || p.color || p.frames);
@@ -58,12 +102,13 @@ function Stage_applyMode() { if (Scene.stage) stageModeFor(Scene.stage); }
    Como PlayState de V-Slice: la cámara sigue a cameraFollowPoint con lerp (CLASSIC) o se mueve con
    un tween (FocusCamera con ease); zoom = currentCameraZoom × cameraBopMultiplier. */
 const Cam = { x: 640, y: 360, init: false, bop: 1, stageZoom: 1, zoom: 1, zoomTween: null, follow: null, tween: null,
-  zoomRate: FNF.ZOOM_RATE, bopIntensity: FNF.BOP_INTENSITY, hudIntensity: FNF.HUD_BOP,
+  zoomRate: FNF.ZOOM_RATE, zoomOffset: 0, bopIntensity: FNF.BOP_INTENSITY, hudIntensity: FNF.HUD_BOP,
   resetEvents() {
     this.follow = null; this.tween = null; this.zoomTween = null; this.zoom = this.stageZoom; this.bop = 1;
-    this.zoomRate = FNF.ZOOM_RATE; this.bopIntensity = FNF.BOP_INTENSITY; this.hudIntensity = FNF.HUD_BOP;
+    this.zoomRate = FNF.ZOOM_RATE; this.zoomOffset = 0; this.bopIntensity = FNF.BOP_INTENSITY; this.hudIntensity = FNF.HUD_BOP;
   },
-  followTo(x, y) { this.tween = null; this.follow = [x, y]; },
+  /* CLASSIC: cancela el tween y mueve el punto que la cámara sigue con lerp (null = vuelve a seguir a Scene.focus) */
+  followTo(x, y) { this.tween = null; this.follow = x === null || x === undefined ? null : [x, y]; },
   tweenTo(x, y, dur, ease) {
     this.follow = [x, y];
     if (dur <= 0 || !this.init) { this.tween = null; this.x = x; this.y = y; this.init = true; }
@@ -110,7 +155,7 @@ function drawProp(p, v, zoom, R) {
   mmul(M, M, mset(_pL, 1, 0, 0, 1, p.pos[0], p.pos[1]));
   if (p.color) { R.rect(p.color, M, p.scale[0], p.scale[1], p.alpha); return; }
   if (p.frames) {
-    const n = p.frames.length, i0 = animFrame(G.gameTime, p.fps), i = p.loop ? ((i0 % n) + n) % n : clamp(i0, 0, n - 1);
+    const n = p.frames.length, i0 = animFrame(G.gameTime - (p.t0 || 0), p.fps), i = p.loop ? ((i0 % n) + n) % n : clamp(i0, 0, n - 1);
     const fr = p.frames[i]; if (!fr) return;
     mmul(M, M, mset(_pL, p.scale[0], 0, 0, p.scale[1], 0, 0));
     mmul(M, M, mset(_pL, 1, 0, 0, 1, fr.offX - p.off[0], fr.offY - p.off[1]));
@@ -162,6 +207,8 @@ function renderWorld(dt, bump, R) {
     if (c) layers.push({ z: c.z, k: 1, o: c });
     else if (role !== 'gf' && sc && direct) layers.push({ z: sc.zIndex ?? 0, k: 2, o: role, sc });
   }
+  // parlantes de GF (parlantes.js), detrás de ella
+  if (Speaker.cur && Optim.s.gf && Speaker.place()) layers.push({ z: Speaker.cur.z, k: 4, o: Speaker });
   // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)
   if (direct) for (const sp of ModRT.sprites) if (!sp.onHud) layers.push({ z: sp.zIndex ?? 5000, k: 3, o: sp });
   Cam.lastView = { v, zoom };
@@ -176,7 +223,8 @@ function renderWorld(dt, bump, R) {
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.globalAlpha = 1;
         const s = M1[3] / DPR * 400 / 215;
         if (l.o === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
-      } else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
+      } else if (l.k === 4) Speaker.draw(v, zoom, R);
+      else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
     } catch (e) { reportOnce('capa ' + (l.o && (l.o.name || l.o.id) || l.k), e); }   // una capa rota no deja sin HUD al juego
   }
 }

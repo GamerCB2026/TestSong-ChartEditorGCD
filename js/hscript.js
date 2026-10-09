@@ -780,7 +780,7 @@ const HX = (() => {
   /* ---------- análisis estático (recursos / llamadas) ---------- */
   const STD_PKG = /^(funkin|flixel|openfl|haxe|lime|polymod|sys|hxvlc|hxcodec|thx|StringTools|Std|Math|Reflect|Type|Lambda|Date|EReg|Xml|Json|Array|String|Map|Int|Float|Bool|Dynamic)\b/;
   function analyze(src) {
-    const T = tokenize(src), res = [], modules = [], scripted = [], calls = new Set(), dynamic = [];
+    const T = tokenize(src), res = [], modules = [], scripted = [], calls = new Set(), dynamic = [], chars = [];
     const str = i => T[i] && T[i].t === 'str' && !T[i].interp ? T[i].v : null;
     const PATHS = { image: 'image', sound: 'sound', music: 'music', video: 'video', frag: 'frag', vert: 'frag', font: 'font', json: 'json', file: 'file', txt: 'file', getSparrowAtlas: 'sparrow', getPackerAtlas: 'sparrow', animateAtlas: 'atlas', xml: 'file' };
     for (let i = 0; i < T.length; i++) {
@@ -800,6 +800,9 @@ const HX = (() => {
         for (; j < T.length; j++) { const v = T[j].v; if (T[j].t === 'op' && /[([{]/.test(v)) d++; else if (T[j].t === 'op' && /[)\]}]/.test(v)) { if (d === 0) break; d--; } else if (d === 0 && v === ',' && T[j].t === 'op') { argN++; start = j + 1; } if (argN === 2 && j === start) { const k = str(j); if (k !== null && T[j + 1]?.v !== '+') res.push({ kind: T[i + 2].v === 'createSparrow' ? 'sparrow' : T[i + 2].v === 'createTextureAtlas' ? 'atlas' : 'image', key: k }); } }
       }
       if (t.v === 'ModuleHandler' && T[i + 2]?.v === 'getModule') { const k = str(i + 4); if (k) modules.push(k); }
+      // personajes que crea el script (cambios de personaje): se precargan antes de jugar
+      if (t.v === 'CharacterDataParser' && T[i + 1]?.v === '.' && /^(fetchCharacter|fetchCharacterData|parseCharacterData)$/.test(T[i + 2]?.v || '') && callAt(i + 3)) { const k = str(i + 4); if (k) chars.push(k); }
+      if (t.v === 'new' && /^(BaseCharacter|Character|Boyfriend)$/.test(T[i + 1]?.v || '') && T[i + 2]?.v === '(') { const k = str(i + 3); if (k) chars.push(k); }
       if (/^Scripted\w+$/.test(t.v) && T[i + 1]?.v === '.' && /^(init|scriptInit)$/.test(T[i + 2]?.v || '')) { const k = str(i + 4); if (k) scripted.push({ base: t.v, name: k }); }
       // rutas de llamadas con raíz global (PlayState.instance.camGame.flash…)
       if (/^[A-Z]/.test(t.v) && (i === 0 || T[i - 1].v !== '.')) {
@@ -813,7 +816,7 @@ const HX = (() => {
     const imports = [];
     for (let i = 0; i < T.length; i++) if (T[i].t === 'id' && T[i].v === 'import') { let p = ''; let j = i + 1; while (T[j] && !(T[j].t === 'op' && T[j].v === ';')) { p += T[j].v; j++; } imports.push(p); }
     const custom = imports.filter(p => !STD_PKG.test(p));
-    return { res, modules: [...new Set(modules)], scripted, calls: [...calls], dynamic, imports, custom };
+    return { res, modules: [...new Set(modules)], scripted, calls: [...calls], dynamic, imports, custom, chars: [...new Set(chars)] };
   }
 
   return { tokenize, Parser, Script, HxMap, EReg, Interval, stub, isStub, note, notes: R.notes, R, analyze, Scope };

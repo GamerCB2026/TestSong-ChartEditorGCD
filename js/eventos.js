@@ -34,11 +34,14 @@ const Ease = (() => {
   };
   void EL;
   const lower = {}; for (const k of Object.keys(E)) lower[k.toLowerCase()] = E[k];
-  /* V-Slice: ease "sine" + easeDir "InOut" o directamente "sineInOut". Desconocido → linear */
+  /* V-Slice (SongEvent): nombre = ease + easeDir; easeDir por defecto "In" y se ignora si el ease ya termina en
+     In/Out/InOut o es "linear". Un ease que no existe en FlxEase → null (el evento no hace nada, como el juego). */
   E.get = (name, dir) => {
-    let n = String(name || 'linear').trim();
-    if (dir && !/(in|out)$/i.test(n) && n.toLowerCase() !== 'linear') n += dir;
-    return lower[n.toLowerCase()] || lower[n.toLowerCase() + 'inout'] || E.linear;
+    let n = String(name ?? 'linear').trim();
+    if (!n) n = 'linear';
+    const d = dir === undefined || dir === null ? 'In' : String(dir);
+    if (!/(in|out)$/i.test(n) && n.toLowerCase() !== 'linear') n += d;
+    return E[n] || lower[n.toLowerCase()] || null;
   };
   return E;
 })();
@@ -55,11 +58,27 @@ const tweenDone = tw => tw.dur <= 0 || G.gameTime - tw.t0 >= tw.dur;
 const getBool = (v, d) => v === undefined || v === null ? d : (v === true || v === 'true' || v === 1 || v === '1');
 const getNum = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
 
+/* nombres de personaje en PlayAnimation (PlayAnimationSongEvent) */
+const roleOfTarget = t => { t = String(t ?? '').toLowerCase().trim(); return /^(bf|boyfriend|player|0)$/.test(t) ? 'bf' : /^(dad|opponent|1)$/.test(t) ? 'dad' : /^(gf|girlfriend|2)$/.test(t) ? 'gf' : null; };
+/* eventos personalizados de "cambiar personaje" (V-Slice/.hxc): ChangeCharacter, Change Character, switchCharacter… */
+const CHANGE_CHAR_RX = /^(change|switch|swap|set)[\s_-]?(char|character|player|opponent|dad|bf|gf)$/i;
+function changeCharInfo(ev) {
+  if (!ev || !CHANGE_CHAR_RX.test(ev.e || '')) return null;
+  const v = ev.v && typeof ev.v === 'object' && !Array.isArray(ev.v) ? ev.v : Array.isArray(ev.v) ? { target: ev.v[0], char: ev.v[1] } : { char: ev.v };
+  const id = v.char ?? v.character ?? v.id ?? v.newChar ?? v.newCharacter ?? v.charId ?? v.name ?? v.value2;
+  if (typeof id !== 'string' || !id) return null;
+  let role = roleOfTarget(v.target ?? v.role ?? v.strumline ?? v.who ?? v.type ?? v.value1);
+  if (!role) { const m = /(player|bf|opponent|dad|gf)$/i.exec(ev.e); role = m ? roleOfTarget(m[1]) : 'dad'; }
+  return { role, id: String(id) };
+}
+
 const Events = {
-  idx: 0, fired: 0, log: [], iconCache: new Map(),
+  idx: 0, fired: 0, log: [], iconCache: new Map(), charCache: new Map(), soundCache: new Map(), lastStep: null,
+  INTERNAL: ['ChangeCharacter', '_AddCameraZoom', '_SetGFSpeed', '_AltAnim', '_ScreenShake', '_PlaySound'],
   get list() { return (G.chart && G.chart.events) || []; },
-  stepMs() { return G.chart.crochet / 4; },
-  /* valor "v" normalizado a objeto (algunos charts guardan solo el personaje) */
+  stepMs() { return Cond.stepMs(G.songPos); },
+  isBuiltin(name) { return Mods.BUILTIN_EVENTS.includes(name) || this.INTERNAL.includes(name); },
+  /* valor "v" normalizado a objeto (algunos charts guardan solo el valor principal) */
   vals(ev) {
     const v = ev.v;
     if (v && typeof v === 'object' && !Array.isArray(v)) return v;
@@ -67,14 +86,22 @@ const Events = {
     if (ev.e === 'ZoomCamera') return { zoom: v };
     if (ev.e === 'ScrollSpeed') return { scroll: v };
     if (ev.e === 'SetCameraBop') return { rate: v };
+    if (ev.e === 'PlayAnimation') return { anim: v };
+    if (ev.e === 'SetHealthIcon') return { id: v };
     return {};
   },
   /* estado inicial (al reiniciar / buscar) */
   reset() {
-    this.idx = 0; this.log.length = 0;
+    this.idx = 0; this.log.length = 0; this.lastStep = null;
     Cam.resetEvents();
-    G.speed = G.chart.speed; G.speedTween = null;
+    G.speed = G.chart.speed; G.speedTween = null; G.speedSide = { player: G.chart.speed, opponent: G.chart.speed }; G.speedTweens = {};
     if (Scene.baseIcons) { Scene.icons.player = Scene.baseIcons.player; Scene.icons.opponent = Scene.baseIcons.opponent; }
+    if (Scene.baseChars) {
+      let changed = false;
+      for (const r of ['bf', 'dad', 'gf']) if (Scene.chars[r] !== Scene.baseChars[r]) { Scene.chars[r] = Scene.baseChars[r]; changed = true; }
+      if (changed && typeof applyBarColors === 'function') applyBarColors();
+    }
+    for (const c of Object.values(Scene.chars)) if (c) { c.idleSuffix = ''; c.altSing = false; if (c.baseDanceEvery !== undefined) c.danceEvery = c.baseDanceEvery; }
   },
   /* al buscar una posición: se aplican al instante los eventos "de estado" anteriores (sin animaciones) */
   seek(pos) {
@@ -85,7 +112,11 @@ const Events = {
   update(pos) {
     const list = this.list;
     while (this.idx < list.length && list[this.idx].t <= pos) { this.fire(list[this.idx], false); this.idx++; }
-    if (G.speedTween) { G.speed = tweenValue(G.speedTween); if (tweenDone(G.speedTween)) G.speedTween = null; }
+    for (const side of ['player', 'opponent']) {
+      const tw = G.speedTweens && G.speedTweens[side];
+      if (tw) { G.speedSide[side] = tweenValue(tw); if (tweenDone(tw)) G.speedTweens[side] = null; }
+    }
+    G.speed = G.speedSide ? G.speedSide.player : G.speed;
   },
   fire(ev, instant) {
     const v = this.vals(ev);
@@ -93,78 +124,208 @@ const Events = {
     const step = this.stepMs();
     switch (ev.e) {
       case 'FocusCamera': {
-        const ch = Math.round(getNum(v.char, 0)), x = getNum(v.x, 0), y = getNum(v.y, 0);
+        // FocusCameraSongEvent: x/y (0), char (0; -1 = solo posición), duration (4 steps), ease ("CLASSIC"), easeDir ("In")
+        let ch = v.char === undefined || v.char === null || v.char === '' ? 0 : Math.round(getNum(v.char, 0));
+        const x = getNum(v.x, 0), y = getNum(v.y, 0);
+        if (ch === -2) { Cam.followTo(null); return; }      // Psych "Camera Follow Pos" vacío: vuelve a seguir a quien canta
         let tx = x, ty = y;
-        if (ch !== -1) {
-          const role = ch === 0 ? 'bf' : ch === 2 ? 'gf' : 'dad';
+        const role = ch === 0 ? 'bf' : ch === 1 ? 'dad' : ch === 2 ? 'gf' : null;
+        if (role) {
+          if (!Scene.chars[role] && !(role !== 'gf' && focusPoint(role))) return;   // no hay personaje: no hace nada
           const p = focusPoint(role); if (!p) return;
           tx += p[0]; ty += p[1]; Scene.focus = role;
-        } else Scene.focus = null;
+        }
         const ease = String(v.ease ?? 'CLASSIC');
-        if (instant || ease === 'INSTANT') Cam.tweenTo(tx, ty, 0);
-        else if (ease === 'CLASSIC') Cam.followTo(tx, ty);
-        else Cam.tweenTo(tx, ty, getNum(v.duration, 4) * step, Ease.get(ease, v.easeDir));
+        if (ease === 'CLASSIC') { if (instant) Cam.tweenTo(tx, ty, 0); else Cam.followTo(tx, ty); }
+        else if (instant || ease === 'INSTANT') Cam.tweenTo(tx, ty, 0);
+        else { const fn = Ease.get(ease, v.easeDir); if (!fn) return; Cam.tweenTo(tx, ty, getNum(v.duration, 4) * step, fn); }
         break;
       }
       case 'ZoomCamera': {
-        const zoom = getNum(v.zoom, 1), direct = String(v.mode ?? 'direct') === 'direct';   // V-Slice: modo "direct" (por defecto) o "stage" (× zoom del escenario)
+        // ZoomCameraSongEvent: zoom (1), duration (4), mode ("direct" = zoom tal cual · "stage" = × zoom del escenario), ease ("linear")
+        const zoom = getNum(v.zoom, 1), direct = String(v.mode ?? 'direct') === 'direct';
         const target = zoom * (direct ? 1 : Cam.stageZoom);
         const ease = String(v.ease ?? 'linear');
-        Cam.zoomTo(target, instant || ease === 'INSTANT' ? 0 : getNum(v.duration, 4) * step, Ease.get(ease, v.easeDir));
+        if (instant || ease === 'INSTANT') { Cam.zoomTo(target, 0); break; }
+        const fn = Ease.get(ease, v.easeDir); if (!fn) return;
+        Cam.zoomTo(target, getNum(v.duration, 4) * step, fn);
         break;
       }
       case 'SetCameraBop': {
-        const rate = Math.round(getNum(v.rate, 4)), intensity = getNum(v.intensity, 1);
-        Cam.zoomRate = rate; Cam.bopIntensity = (FNF.BOP_INTENSITY - 1) * intensity + 1; Cam.hudIntensity = (FNF.BOP_INTENSITY - 1) * intensity * 2;
+        // SetCameraBopSongEvent: rate (4 beats, decimal), offset (0 beats), intensity (1)
+        const intensity = getNum(v.intensity, 1);
+        Cam.zoomRate = getNum(v.rate, FNF.ZOOM_RATE); Cam.zoomOffset = getNum(v.offset, 0);
+        Cam.bopIntensity = (FNF.BOP_INTENSITY - 1) * intensity + 1; Cam.hudIntensity = (FNF.BOP_INTENSITY - 1) * intensity * 2;
         break;
       }
       case 'PlayAnimation': {
         if (instant) return;
-        const tg = String(v.target ?? 'bf').toLowerCase(), anim = String(v.anim ?? 'idle'), force = getBool(v.force, false);
-        const role = /^(bf|boyfriend|player|0)$/.test(tg) ? 'bf' : /^(dad|opponent|1)$/.test(tg) ? 'dad' : /^(gf|girlfriend|2)$/.test(tg) ? 'gf' : null;
-        const c = role && Scene.chars[role];
+        const tg = String(v.target ?? 'boyfriend'), anim = String(v.anim ?? 'idle'), force = getBool(v.force, false);
+        const role = roleOfTarget(tg), c = role && Scene.chars[role];
         if (c) c.playEvent(anim, force);
-        else if (role && role !== 'gf') { const st = role === 'bf' ? G.bf : G.dad; const lane = LANE_DIRS.findIndex(d => anim.toUpperCase().includes(d)); if (lane >= 0) sing(st, lane); }
+        else if (role) { if (role !== 'gf') { const st = role === 'bf' ? G.bf : G.dad; const lane = LANE_DIRS.findIndex(d => anim.toUpperCase().includes(d)); if (lane >= 0) sing(st, lane); } }
+        else propPlay(tg, anim, force);                    // prop del escenario con nombre (getNamedProp)
         break;
       }
       case 'SetHealthIcon': {
-        const ch = Math.round(getNum(v.char, 0)), key = this.iconKey(ch, v);
-        const apply = ic => { if (ic && ic.ok) { Scene.icons[ch === 0 ? 'player' : 'opponent'] = ic; } };
+        // SetHealthIconSongEvent: id ("face"), char (0 = jugador · 1 = rival), scale, flipX, isPixel, offsetX/Y, shouldBop
+        const ch = Math.round(getNum(v.char, 0)); if (ch !== 0 && ch !== 1) return;
+        const key = this.iconKey(ch, v);
+        const apply = ic => { if (ic && ic.ok) { ic.shouldBop = getBool(v.shouldBop, true); Scene.icons[ch === 0 ? 'player' : 'opponent'] = ic; } };
         const cached = this.iconCache.get(key);
         if (cached && cached.then) cached.then(apply); else if (cached) apply(cached);
-        else { const p = this.loadIcon(ch, v); p.then(apply); }
+        else this.loadIcon(ch, v).then(apply);
         break;
       }
       case 'ScrollSpeed': {
+        // ScrollSpeedEvent: scroll (1), duration (4), ease ("linear"), strumline ("both" | "player" | "opponent"), absolute (false → × velocidad del chart)
         const abs = getBool(v.absolute, false), target = getNum(v.scroll, 1) * (abs ? 1 : G.chart.speed);
-        const ease = String(v.ease ?? 'linear');
-        if (instant || ease === 'INSTANT' || getNum(v.duration, 4) <= 0) { G.speed = target; G.speedTween = null; }
-        else G.speedTween = makeTween(G.speed, target, getNum(v.duration, 4) * step, Ease.get(ease, v.easeDir));
+        const sl = String(v.strumline ?? 'both').toLowerCase(), sides = sl === 'player' ? ['player'] : sl === 'opponent' ? ['opponent'] : ['player', 'opponent'];
+        const ease = String(v.ease ?? 'linear'), dur = getNum(v.duration, 4);
+        let fn = null;
+        if (!(instant || ease === 'INSTANT')) { fn = Ease.get(ease, v.easeDir); if (!fn) return; }
+        for (const sd of sides) {
+          if (!fn || dur <= 0) { G.speedSide[sd] = target; G.speedTweens[sd] = null; }
+          else G.speedTweens[sd] = makeTween(G.speedSide[sd], target, dur * step, fn);
+        }
+        G.speed = G.speedSide.player;
         break;
       }
-      default:
+      /* ---- eventos internos (convertidos de Psych / Codename) ---- */
+      case 'ChangeCharacter': this.changeChar(v.target, v.char, instant); break;
+      case '_AddCameraZoom': {
+        if (instant || !Optim.s.bop) return;
+        if (Cam.zoom * Cam.bop < 1.35 * Cam.stageZoom) { Cam.bop += getNum(v.game, 0.015) / Math.max(0.1, Cam.zoom); G.hudZoom += getNum(v.hud, 0.03); }
+        break;
+      }
+      case '_SetGFSpeed': { const gf = Scene.chars.gf; if (gf) { if (gf.baseDanceEvery === undefined) gf.baseDanceEvery = gf.danceEvery; gf.danceEvery = Math.max(1, getNum(v.speed, 1)); } break; }
+      case '_AltAnim': {
+        const c = Scene.chars[v.role]; if (!c) return;
+        if (v.sing !== undefined) c.altSing = !!v.sing;
+        if (v.idle !== undefined) c.idleSuffix = v.idle ? '-alt' : '';
+        if (v.idleSuffix !== undefined) c.idleSuffix = String(v.idleSuffix || '');
+        break;
+      }
+      case '_ScreenShake': {
+        if (instant) return;
+        for (const w of ['game', 'hud']) { const o = v[w]; if (o && o.dur > 0 && o.i > 0) CamFX[w].shake = { i: o.i, t0: G.gameTime, dur: o.dur * 1000, axes: 0x11 }; }
+        break;
+      }
+      case '_PlaySound': {
+        if (instant) return;
+        const buf = this.soundCache.get(String(v.sound)); const c = Sfx.ensureCtx && Sfx.ensureCtx();
+        if (buf && c) { const src = c.createBufferSource(), g = c.createGain(); g.gain.value = getNum(v.volume, 1); src.buffer = buf; src.connect(g).connect(c.destination); src.start(); }
+        break;
+      }
+      default: {
+        // "cambiar personaje" de V-Slice/Codename/.hxc: si ningún .hxc lo implementa, se imita con el personaje precargado
+        const cc = !Mods.events.has(ev.e) && changeCharInfo(ev);
+        if (cc) { this.changeChar(cc.role, cc.id, instant); break; }
         // eventos de mods: si se cargó su .hxc, se ejecuta handleEvent (imitación); al buscar no se reproducen
         if (!instant) { try { Mods.fireEvent(ev); } catch (e) { console.warn('[hxc] evento', ev.e, e); HX.note(`${ev.e}: error al ejecutar (${e.message})`); } }
         break;
+      }
     }
+  },
+  /* cambio de personaje: ya está cargado y subido a la GPU desde la pantalla de carga → sin tirón */
+  changeChar(target, id, instant) {
+    const role = roleOfTarget(target) || (['bf', 'dad', 'gf'].includes(target) ? target : null); if (!role || !id) return;
+    const base = Scene.baseChars && Scene.baseChars[role];
+    let c = null, icon = null;
+    if (base && base.id === id) { c = base; icon = Scene.baseIcons && Scene.baseIcons[role === 'bf' ? 'player' : 'opponent']; }
+    else { const rec = this.charCache.get(role + '|' + id); if (!rec || !(rec.char instanceof RealChar)) { if (!instant) console.warn('[eventos] personaje sin cargar:', id); return; } c = rec.char; icon = rec.icon; }
+    const old = Scene.chars[role];
+    if (old === c) return;
+    placeChar(c, role);
+    if (old && !instant) { c.danced = old.danced; }
+    c.reset();
+    Scene.chars[role] = c;
+    if (role !== 'gf' && icon && icon.ok) Scene.icons[role === 'bf' ? 'player' : 'opponent'] = icon;
+    applyBarColors();
+    if (Scene.focus === role && !Cam.tween) { const p = focusPoint(role); if (p && Cam.follow) Cam.follow = p; }
   },
   iconKey(ch, v) { return JSON.stringify([ch, v.id, v.scale, v.flipX, v.isPixel, v.offsetX, v.offsetY]); },
   loadIcon(ch, v) {
-    const key = this.iconKey(ch, v);
-    const p = new HealthIcon(ch === 0 ? 0 : 1).load(String(v.id ?? 'bf'), { id: String(v.id ?? 'bf'), scale: getNum(v.scale, 1), flipX: getBool(v.flipX, false), isPixel: getBool(v.isPixel, false), offsets: [getNum(v.offsetX, 0), getNum(v.offsetY, 0)] })
+    const key = this.iconKey(ch, v), id = String(v.id ?? 'face');
+    const p = new HealthIcon(ch === 0 ? 0 : 1).load(id, { id, scale: getNum(v.scale, 1), flipX: getBool(v.flipX, false), isPixel: getBool(v.isPixel, false), offsets: [getNum(v.offsetX, 0), getNum(v.offsetY, 0)] })
       .then(ic => { this.iconCache.set(key, ic); return ic; });
     this.iconCache.set(key, p);
     return p;
   },
-  /* precarga (pantalla de carga): iconos de SetHealthIcon */
+
+  /* ---------- análisis por variación: qué eventos usa el chart y qué assets necesitan ---------- */
+  analyze(chart) {
+    const counts = new Map(), chars = new Map(), icons = new Set(), sounds = new Set();
+    for (const ev of (chart && chart.events) || []) {
+      counts.set(ev.e, (counts.get(ev.e) || 0) + 1);
+      const v = this.vals(ev);
+      if (ev.e === 'ChangeCharacter' && v.char) { const role = roleOfTarget(v.target) || 'dad', k = role + '|' + v.char; chars.set(k, { role, id: String(v.char), n: (chars.get(k)?.n || 0) + 1, from: 'Change Character' }); }
+      else if (ev.e === 'SetHealthIcon') icons.add(String(v.id ?? 'face'));
+      else if (ev.e === '_PlaySound' && v.sound) sounds.add(String(v.sound));
+      else { const cc = changeCharInfo(ev); if (cc) { const k = cc.role + '|' + cc.id; chars.set(k, { role: cc.role, id: cc.id, n: (chars.get(k)?.n || 0) + 1, from: ev.e }); } }
+    }
+    // personajes que piden los .hxc cargados (CharacterDataParser.fetchCharacter("…"))
+    for (const rec of Mods.scripts.values()) for (const id of (rec.analysis && rec.analysis.chars) || []) { const k = 'dad|' + id; if (![...chars.values()].some(c => c.id === id)) chars.set(k, { role: 'dad', id, n: 0, from: rec.name }); }
+    return { counts, chars: [...chars.values()], icons: [...icons], sounds: [...sounds] };
+  },
+  charStatus(id) {
+    for (const [k, r] of this.charCache) if (k.endsWith('|' + id)) return r.loading ? 'loading' : r.char instanceof RealChar ? 'ok' : 'missing';
+    return 'none';
+  },
+  /* lo que falta (para la ventana de "Eventos y note kinds") */
+  requirements() {
+    const out = [];
+    if (!G.chart) return out;
+    const a = this.analyze(G.chart);
+    for (const c of a.chars) out.push({ type: 'evchar', key: c.id, role: c.role, from: `${c.from}${c.n ? ' ×' + c.n : ''}` });
+    for (const sn of a.sounds) out.push({ type: 'res', kind: 'sound', key: sn, lib: null, from: 'evento Play Sound' });
+    return out;
+  },
+  async preloadChar(role, id) {
+    const key = role + '|' + id;
+    const rec = { loading: true, char: null, icon: null };
+    this.charCache.set(key, rec);
+    const c = await loadCharacter(role, id).catch(e => ({ error: e.message }));
+    rec.loading = false;
+    if (!(c instanceof RealChar)) { rec.char = c; return rec; }
+    rec.char = c;
+    rec.icon = await new HealthIcon(role === 'bf' ? 0 : 1).load(c.id, c.data && c.data.healthIcon).catch(() => null);
+    return rec;
+  },
+  /* precarga (pantalla de carga): iconos de SetHealthIcon, personajes de Change Character, sonidos de Play Sound */
   preload(chart) {
-    this.iconCache.clear();
+    this.iconCache.clear(); this.soundCache.clear();
+    const keep = new Map(); for (const [k, r] of this.charCache) if (r.char instanceof RealChar) keep.set(k, r);
+    this.charCache = keep;
     const tasks = [];
     for (const ev of chart.events || []) if (ev.e === 'SetHealthIcon') { const v = this.vals(ev); const ch = Math.round(getNum(v.char, 0)); if (!this.iconCache.has(this.iconKey(ch, v))) tasks.push(this.loadIcon(ch, v)); }
-    return Promise.all(tasks);
+    const a = this.analyze(chart);
+    for (const c of a.chars) if (!this.charCache.has(c.role + '|' + c.id)) tasks.push(this.preloadChar(c.role, c.id));
+    for (const sn of a.sounds) tasks.push(ModRes.load('sound', sn, null).then(buf => { if (buf) this.soundCache.set(sn, buf); }).catch(() => {}));
+    // recursos que piden los .hxc cargados (imágenes, sparrow, sonidos…): listos antes de jugar
+    for (const rec of Mods.scripts.values()) for (const r of (rec.analysis && rec.analysis.res) || []) if (r.kind !== 'atlas') tasks.push(Promise.resolve(ModRes.load(r.kind, r.key, r.lib)).catch(() => {}));
+    return Promise.all(tasks).then(() => {
+      // texturas de los personajes de los eventos: recortadas y subidas ya (al cambiar no hay tirón)
+      try { if (typeof Render !== 'undefined') Render.prewarm(this.eventTextures()); } catch (e) { console.warn('[eventos] precarga GPU', e); }
+    });
+  },
+  eventTextures() {
+    const set = new Set();
+    for (const r of this.charCache.values()) if (r.char instanceof RealChar) for (const a of r.char.anims.values()) {
+      if (a.type === 'atlas') for (const sp of a.model.sprites.values()) set.add(sp.img); else for (const f of a.frames) if (f && f.img) set.add(f.img);
+    }
+    return [...set];
   },
   summary() {
     const c = {}; for (const e of this.list) c[e.e] = (c[e.e] || 0) + 1;
-    return Object.entries(c).map(([k, n]) => `${k}×${n}${Mods.BUILTIN_EVENTS.includes(k) ? '' : Mods.events.has(k) ? ' (.hxc)' : ' (sin .hxc)'}`).join(', ') || 'ninguno';
+    return Object.entries(c).map(([k, n]) => `${k}×${n}${this.isBuiltin(k) ? '' : Mods.events.has(k) ? ' (.hxc)' : CHANGE_CHAR_RX.test(k) ? ' (imitado: cambio de personaje)' : ' (sin .hxc)'}`).join(', ') || 'ninguno';
+  },
+  statusLines() {
+    const out = [];
+    for (const [k, r] of this.charCache) {
+      const [role, id] = k.split('|');
+      out.push(r.char instanceof RealChar ? `✔ evento cambio de personaje: ${id} (${role}) precargado · ${r.char.anims.size} anims` : `✘ evento cambio de personaje: falta ${id} (data/characters/${id}.json + su imagen) → Eventos / note kinds`);
+    }
+    return out;
   },
 };

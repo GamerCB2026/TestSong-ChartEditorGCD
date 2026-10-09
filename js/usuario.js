@@ -72,9 +72,15 @@ const UserAssets = {
   /* ---------- personajes ---------- */
   async loadChar(role) {
     const [f] = await this.pick('.json', false); if (!f) return;
-    let data; try { data = JSON.parse(await f.text()); } catch (e) { toast('JSON inválido: ' + e.message); return; }
+    let data; try { data = normalizeCharData(JSON.parse(await f.text())); } catch (e) { toast('JSON inválido: ' + e.message); return; }
     if (!Array.isArray(data.animations)) { toast('Ese JSON no parece un personaje de V-Slice (no tiene "animations")', 4000); return; }
     const id = f.name.replace(/\.json$/i, '');
+    this.roles[role] = this.charRecord(id, data, f);
+    this.render();
+    toast(`${this.ROLE_ES[role]}: ${data.name || id} (${data.renderType || 'sparrow'}) — elige sus archivos`, 3500);
+  },
+  /* necesidades de un JSON de personaje V-Slice (según su renderType) */
+  charRecord(id, data, f) {
     const rt = String(data.renderType || 'sparrow').toLowerCase();
     const atlas = rt.includes('animateatlas'), multi = rt.startsWith('multi');
     const mainAp = data.assetPath || `characters/${id}`;
@@ -89,12 +95,10 @@ const UserAssets = {
     });
     const notes = [];
     if (rt === 'packer') notes.push('renderType "packer" (txt) no se imita: se intenta como Sparrow');
-    this.roles[role] = { id, data, rt, atlas, multi, needs, notes, json: f };
-    this.render();
-    toast(`${this.ROLE_ES[role]}: ${data.name || id} (${data.renderType || 'sparrow'}) — elige sus archivos`, 3500);
+    return { id, data, rt, atlas, multi, needs, notes, json: f };
   },
-  matchChar(role, files) {
-    const c = this.roles[role]; if (!c) return 0; let n = 0;
+  matchChar(role, files, rec) {
+    const c = rec || this.roles[role]; if (!c) return 0; let n = 0;
     const dirOf = f => { const r = this.rel(f); return r.includes('/') ? r.slice(0, r.lastIndexOf('/')) : ''; };
     if (c.atlas) {
       const groups = new Map();
@@ -129,6 +133,121 @@ const UserAssets = {
   ready(c) { return c.needs.filter(n => !n.optional).every(n => n.file || (n.files && n.files.length)); },
   remove(role) { if (role === 'stage') { this.stage = null; delete this.applied.stage; } else { this.roles[role] = null; delete this.applied[role]; } this.render(); },
 
+  /* ---------- personaje que pide un evento (Change Character…) ---------- */
+  async provideEventChar(id, role, files) {
+    const jsons = files.filter(f => /\.json$/i.test(f.name) && !/^(Animation|spritemap\d*)\.json$/i.test(f.name));
+    let jf = jsons.find(f => f.name.toLowerCase() === id.toLowerCase() + '.json');
+    let data = null;
+    for (const f of jf ? [jf] : jsons) { try { const d = normalizeCharData(JSON.parse(await f.text())); if (Array.isArray(d.animations)) { data = d; jf = f; break; } } catch (e) {} }
+    if (!data) { toast(`Falta data/characters/${id}.json (el JSON del personaje) entre los archivos`, 4500); return false; }
+    const rec = this.charRecord(id, data, jf);
+    const n = this.matchChar(role, files, rec);
+    this.putChar(rec);
+    this.putIcons(files, data);
+    Events.charCache.delete(role + '|' + id);
+    const r = await Events.preloadChar(role, id);
+    if (r.char instanceof RealChar) { try { Render.prewarm(Events.eventTextures()); } catch (e) {} toast(`✔ Personaje "${id}" listo para el evento (${r.char.anims.size} anims)`, 3500); }
+    else toast(`✘ "${id}": ${r.char && r.char.error || 'no se pudo cargar'} (${n} archivo(s) reconocidos)`, 5000);
+    return r.char instanceof RealChar;
+  },
+  /* iconos que vienen junto al personaje (icon-<id>.png/.astc [+ .xml]) → images/icons/ */
+  putIcons(files, data) {
+    const hi = data && data.healthIcon && data.healthIcon.id ? String(data.healthIcon.id).toLowerCase() : null;
+    for (const f of files.filter(x => this.IMG.test(x.name) && /^icon-/i.test(x.name))) {
+      const st = this.stem(f.name);
+      if (hi && st !== 'icon-' + hi && files.filter(x => /^icon-/i.test(x.name) && this.IMG.test(x.name)).length > 1) continue;
+      const id = hi && files.filter(x => /^icon-/i.test(x.name) && this.IMG.test(x.name)).length === 1 ? hi : st.replace(/^icon-/, '');
+      this.put(this.realExt(`images/icons/icon-${id}.png`, f), f, f.name);
+      const xml = files.find(x => /\.xml$/i.test(x.name) && this.stem(x.name) === st); if (xml) this.put(`images/icons/icon-${id}.xml`, xml, xml.name);
+    }
+  },
+  putChar(c) {
+    this.put(`data/characters/${c.id}.json`, c.json, c.json.name);
+    for (const nd of c.needs) {
+      if (nd.file) this.put(this.realExt(`${nd.base}.${nd.kind}`, nd.file), nd.file, nd.file.name);
+      if (nd.files) for (const f of nd.files) this.put(`${nd.base}/${f.name}`, f, f.name);
+    }
+  },
+
+  /* ---------- Asignar icono (Player / Enemigo) ---------- */
+  iconIds: {},
+  iconIdFor(role) {
+    const c = Scene.chars[role], hi = c && c.data && c.data.healthIcon;
+    return String((hi && hi.id) || (c && c.id) || (role === 'bf' ? 'bf' : 'dad'));
+  },
+  async assignIcon(role) {
+    const files = await this.pick('.png,.xml,.json,' + ASTC_ACCEPT, true); if (!files.length) return;
+    let want = this.iconIdFor(role);
+    // un JSON de personaje: su healthIcon.id
+    for (const f of files.filter(x => /\.json$/i.test(x.name))) { try { const d = JSON.parse(await f.text()); if (d.healthIcon && d.healthIcon.id) want = String(d.healthIcon.id); else if (Array.isArray(d.animations)) want = f.name.replace(/\.json$/i, ''); } catch (e) {} }
+    const imgs = files.filter(f => this.IMG.test(f.name)), xmls = files.filter(f => /\.xml$/i.test(f.name));
+    const byName = (list, id) => list.find(f => this.stem(f.name) === 'icon-' + id.toLowerCase() || this.stem(f.name) === id.toLowerCase());
+    let img = byName(imgs, want), xml = byName(xmls, want), id = want;
+    if (!img) {
+      // sin coincidencia por healthIcon: la imagen elegida (si es una sola, o la primera icon-*)
+      img = imgs.length === 1 ? imgs[0] : imgs.find(f => /^icon-/i.test(f.name)) || imgs[0];
+      if (!img) { toast('Elige un icono .png / .astc (icon-<id>.png, frames de 150×150) o su .xml'); return; }
+      id = this.stem(img.name).replace(/^icon-/, '');
+      xml = byName(xmls, id) || (xmls.length === 1 ? xmls[0] : null);
+    }
+    const uid = 'usuario-' + role + '-' + id.replace(/[^\w-]/g, '_');
+    for (const d of ASSET_CFG.iconDirs) {
+      this.put(this.realExt(`${d}icon-${uid}.png`, img), img, img.name);
+      if (xml) this.put(`${d}icon-${uid}.xml`, xml, xml.name);
+    }
+    this.iconIds[role] = uid;
+    const c = Scene.chars[role], hi = Object.assign({}, c && c.data && c.data.healthIcon || {}, { id: uid });
+    const ic = await new HealthIcon(role === 'bf' ? 0 : 1).load(uid, hi);
+    if (!ic.ok || ic.fallbackFace) { toast('✘ No se pudo leer ese icono', 3500); return; }
+    const k = role === 'bf' ? 'player' : 'opponent';
+    Scene.icons[k] = ic; if (Scene.baseIcons) Scene.baseIcons[k] = ic;
+    this.iconInfo = this.iconInfo || {}; this.iconInfo[role] = `${img.name}${xml ? ' + ' + xml.name : ''} (healthIcon "${want}"${id !== want ? ', elegido a mano' : ''}) — ${ic.kind}`;
+    toast(`✔ Icono ${this.ROLE_ES[role]}: ${img.name} (${ic.kind})`, 3000);
+    this.render();
+  },
+
+  /* ---------- Asignar parlante (GF) ---------- */
+  async assignSpeaker(dir) {
+    const files = await this.pick(dir ? '' : '.xml,.png,.json,' + ASTC_ACCEPT, true, dir); if (!files.length) return;
+    const anim = files.find(f => f.name === 'Animation.json');
+    let ap, label;
+    if (anim) {
+      const d = this.rel(anim).split('/').slice(0, -1).join('/') || 'atlas';
+      for (const f of files.filter(x => this.rel(x).startsWith(d + '/') || !this.rel(x).includes('/'))) if (/\.(json|png|astc|ktx2?)$/i.test(f.name)) this.put(`shared/images/parlante-usuario/${f.name}`, f, f.name);
+      ap = 'shared:parlante-usuario'; label = d + '/ (Animate)';
+    } else {
+      const xml = files.find(f => /\.xml$/i.test(f.name)), img = (xml && files.find(f => this.IMG.test(f.name) && this.stem(f.name) === this.stem(xml.name).replace(/\.xml$/i, ''))) || files.find(f => this.IMG.test(f.name));
+      if (!img) { toast('Elige la hoja del parlante: .png/.astc + .xml (Sparrow), o una carpeta Animate'); return; }
+      if (xml) this.put('shared/images/parlante-usuario.xml', xml, xml.name);
+      this.put(this.realExt('shared/images/parlante-usuario.png', img), img, img.name);
+      ap = 'shared:parlante-usuario'; label = img.name + (xml ? ' + ' + xml.name : '');
+    }
+    Speaker.user = { ap, label, rt: anim ? 'animateatlas' : 'sparrow' };
+    await this.reloadSpeaker();
+    toast(Speaker.cur && !Speaker.cur.improv ? `✔ Parlante asignado: ${label}` : '✘ No se pudo leer el parlante', 3500);
+  },
+  async reloadSpeaker() {
+    const ids = Scene.ids ? JSON.parse(Scene.ids) : {};
+    await Speaker.setup(Scene.stage, Scene.chars.gf, (Scene.chars.gf && Scene.chars.gf.id) || ids.gf);
+    try { Render.prewarm(Speaker.textures()); } catch (e) {}
+    this.render(); if (typeof renderAssetList === 'function') renderAssetList();
+  },
+
+  /* ---------- Cargar shaders ---------- */
+  async loadShader(kind) {
+    const files = await this.pick(kind === 'hxc' ? '.hxc' : '.frag,.vert,.glsl', true); if (!files.length) return;
+    if (!Render.wantGL()) toast('Los shaders necesitan WebGL (Optimización → Render: Auto/WebGL). Se cargan pero no se ven con Canvas.', 5000);
+    let sh = null;
+    if (kind === 'hxc') { for (const f of files.filter(x => /\.hxc$/i.test(x.name))) sh = await Shaders.addHxc(f); }
+    else sh = await Shaders.addFrag(files);
+    if (sh) {
+      const miss = Shaders.requirements().filter(r => r.sh === sh && r.sh[r.part] == null);
+      if (miss.length) { toast(`${sh.name}: falta ${miss.map(r => r.key).join(' y ')} (no está en shaders/) → elígelo`, 5000); for (const r of miss) { const fs = await this.pick(r.part === 'vert' ? '.vert,.glsl' : '.frag,.glsl', false); if (fs.length) await Shaders.provide(r, fs); } }
+      toast(sh.prog ? `✔ Shader ${sh.name} activo${Optim.s.shaders ? '' : ' (Optimización → Shaders está en Off)'}` : `✘ Shader ${sh.name}: ${sh.error}`, 5000);
+    }
+    this.render();
+  },
+
   /* ---------- aplicar ---------- */
   put(path, blob, name) { this.registered.push(VFS.put(path, blob, name)); },
   register() {
@@ -141,11 +260,7 @@ const UserAssets = {
     }
     for (const role of ['bf', 'gf', 'dad']) {
       const c = this.roles[role]; if (!c) continue;
-      this.put(`data/characters/${c.id}.json`, c.json, c.json.name);
-      for (const nd of c.needs) {
-        if (nd.file) this.put(this.realExt(`${nd.base}.${nd.kind}`, nd.file), nd.file, nd.file.name);
-        if (nd.files) for (const f of nd.files) this.put(`${nd.base}/${f.name}`, f, f.name);
-      }
+      this.putChar(c);
       ov[role] = c.id;
     }
     return ov;
@@ -176,6 +291,7 @@ const UserAssets = {
     const out = [];
     if (this.applied.stage) out.push(`✔ escenario propio: ${this.applied.stage}`);
     for (const r of ['bf', 'gf', 'dad']) if (this.applied[r]) out.push(`✔ ${this.ROLE_ES[r]} propio: ${this.applied[r]}`);
+    for (const r of ['bf', 'dad']) if (this.iconInfo && this.iconInfo[r]) out.push(`✔ icono ${this.ROLE_ES[r]} asignado: ${this.iconInfo[r]}`);
     return out;
   },
 
@@ -199,6 +315,19 @@ const UserAssets = {
         ${c.notes.map(t => `<div class="warn">• ${escHtml(t)}</div>`).join('')}
         <div class="ua-btns"><button class="btn mini" type="button" data-ua="files:${role}">📎 Elegir archivos</button><button class="btn mini alt" type="button" data-ua="dir:${role}">📁 Seleccionar carpeta</button></div></div>`);
     }
+    // iconos (Player / Enemigo)
+    const icoTxt = role => { const ic = Scene.icons[role === 'bf' ? 'player' : 'opponent']; return ic ? (ic.ok ? `${ic.where ? ic.where.split('/').pop() : ''} (${ic.kind}${ic.fallbackFace ? ', sin icon-' + escHtml(ic.wanted) + ' → icon-face' : ''})` : 'cara improvisada') : '—'; };
+    h.push(`<h4>Iconos</h4><div class="ua-roles">${['bf', 'dad'].map(r => `<button class="btn mini" type="button" data-ua="icon:${r}">🙂 Asignar icono ${this.ROLE_ES[r]}</button>`).join('')}</div>
+      <div class="ua-info">${['bf', 'dad'].map(r => `<div class="ok">${this.ROLE_ES[r]} (healthIcon "${escHtml(this.iconIdFor(r))}"): ${escHtml(icoTxt(r))}</div>`).join('')}</div>`);
+    // parlante de GF
+    h.push(`<h4>Parlante de GF</h4><div class="ua-roles"><button class="btn mini" type="button" data-ua="spk">🔊 Asignar parlante</button><button class="btn mini alt" type="button" data-ua="spkdir">📁 Parlante Animate (carpeta)</button></div>
+      <div class="ua-info"><div class="${Speaker.cur && !Speaker.cur.improv ? 'ok' : Speaker.need ? 'warn' : 'ok'}">${escHtml(Speaker.info || '—')}</div>
+      ${Speaker.cur ? `<div class="ua-off">Ajuste X <input type="number" step="10" data-spk="0" value="${SPEAKER_CFG.offset[0]}"> Y <input type="number" step="10" data-spk="1" value="${SPEAKER_CFG.offset[1]}"></div>` : ''}</div>`);
+    // shaders
+    h.push(`<h4>Shaders (WebGL)</h4><div class="ua-roles"><button class="btn mini" type="button" data-ua="shhxc">✨ Cargar shader (.hxc)</button><button class="btn mini alt" type="button" data-ua="shfrag">✨ Cargar .frag / .vert</button></div>`);
+    if (Shaders.list.length) h.push(`<div class="ua-info">${Shaders.list.map((sh, i) => `<div class="${sh.prog ? 'ok' : 'bad'}">${sh.prog ? '✔' : '✘'} ${escHtml(sh.name)}${sh.prog ? '' : ' — ' + escHtml(sh.error)} <label><input type="checkbox" data-sh="${i}" ${sh.on ? 'checked' : ''}> activo</label> <button class="btn mini x" type="button" data-ua="shrm:${i}">✕</button></div>`).join('')}
+      <div class="row"><label for="shTarget">Aplicar a</label><select id="shTarget"><option value="mundo" ${Shaders.target === 'mundo' ? 'selected' : ''}>Cámara del juego (mundo)</option><option value="todo" ${Shaders.target === 'todo' ? 'selected' : ''}>Todo (mundo + HUD)</option></select></div>
+      ${!Optim.s.shaders ? '<div class="warn">Optimización → Shaders está en Off</div>' : ''}${!Render.wantGL() ? '<div class="warn">Render actual: Canvas → los shaders no se ven (Optimización → Render: WebGL)</div>' : ''}</div>`);
     h.push(`<button class="btn apply" type="button" data-ua="apply">✔ Aplicar cambios</button>
       <button class="btn mini alt" type="button" data-ua="mods">🧩 Eventos / note kinds (.hxc)</button>`);
     box.innerHTML = h.join('');
@@ -213,6 +342,13 @@ const UserAssets = {
       else if (a.startsWith('files:')) this.charFiles(a.slice(6), false);
       else if (a.startsWith('dir:')) this.charFiles(a.slice(4), true);
       else if (a.startsWith('rm:')) this.remove(a.slice(3));
+      else if (a.startsWith('icon:')) this.assignIcon(a.slice(5)).catch(err => toast('Error: ' + err.message));
+      else if (a === 'spk' || a === 'spkdir') this.assignSpeaker(a === 'spkdir').catch(err => toast('Error: ' + err.message));
+      else if (a === 'shhxc' || a === 'shfrag') this.loadShader(a === 'shhxc' ? 'hxc' : 'frag').catch(err => toast('Error: ' + err.message));
+      else if (a.startsWith('shrm:')) { Shaders.remove(+a.slice(5)); this.render(); }
     }));
+    box.querySelectorAll('[data-sh]').forEach(c => c.addEventListener('change', e => { e.stopPropagation(); const sh = Shaders.list[+c.dataset.sh]; if (sh) sh.on = c.checked; }));
+    box.querySelectorAll('[data-spk]').forEach(c => c.addEventListener('change', e => { e.stopPropagation(); SPEAKER_CFG.offset[+c.dataset.spk] = +c.value || 0; }));
+    const st2 = $('shTarget'); if (st2) st2.addEventListener('change', e => { e.stopPropagation(); Shaders.target = st2.value; });
   },
 };

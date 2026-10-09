@@ -35,25 +35,25 @@ async function loadScene(ids) {
   for (const [role, c] of [['bf', bf], ['dad', dad], ['gf', gf]]) {
     if (c instanceof RealChar) {
       Scene.chars[role] = c; Scene.errors[role] = null;
-      const sc = stage?.data?.characters?.[role] || { position: role === 'bf' ? [989.5, 885] : role === 'dad' ? [335, 885] : [751.5, 787], zIndex: role === 'bf' ? 300 : role === 'dad' ? 200 : 100 };
-      c.place(sc);
+      placeChar(c, role, stage);
       st.push(`✔ ${role}: ${c.id} — ${c.kind === 'atlas' ? 'Animate Atlas' : 'Sparrow'} (${c.where}) · ${c.anims.size} anims · ${c.flipX ? 'volteado' : 'sin voltear'}${role === 'bf' ? ' (jugador: !flipX del JSON)' : ''}${c.missing.length ? ' · faltan: ' + c.missing.join(', ') : ''}${c.fallbackFrom ? ` · (el chart pedía "${c.fallbackFrom}")` : ''}`);
     } else { Scene.chars[role] = null; Scene.errors[role] = c.error; st.push(`✘ ${role}: ${ids[role]} — ${c.error} → dibujo improvisado`); }
   }
-  // iconos de vida (healthIcon del JSON o id del personaje)
-  const iconData = role => { const c = Scene.chars[role]; const d = c ? c.data : DEFAULT_DATA.characters[ids[role]]; return [c ? c.id : ids[role], d && d.healthIcon]; };
+  Scene.baseChars = Object.assign({}, Scene.chars);
+  // parlantes de GF (parlantes.js): del escenario, del sprite de GF, asignados, por defecto o improvisados
+  await Speaker.setup(stage, Scene.chars.gf, ids.gf).catch(e => { console.warn('[parlante]', e); Speaker.cur = null; Speaker.info = 'error: ' + e.message; });
+  if (token !== Scene.token) return;
+  // iconos de vida (healthIcon del JSON o id del personaje; sin icono → icon-face)
+  const iconData = role => {
+    const c = Scene.chars[role]; const d = c ? c.data : DEFAULT_DATA.characters[ids[role]];
+    const user = UserAssets.iconIds[role];     // "Asignar icono"
+    return user ? [user, Object.assign({}, d && d.healthIcon || {}, { id: user })] : [c ? c.id : ids[role], d && d.healthIcon];
+  };
   const [iP1, iP2] = await Promise.all([new HealthIcon(0).load(...iconData('bf')), new HealthIcon(1).load(...iconData('dad'))]);
   if (token !== Scene.token) return;
   Scene.icons = { player: iP1, opponent: iP2 }; Scene.baseIcons = { player: iP1, opponent: iP2 };
   Cam.stageZoom = +(stage?.data?.cameraZoom) || 1; Cam.zoom = Cam.stageZoom;
-  // colores de la barra: rojo/verde del juego; si el JSON trae colores (estilo Psych) se usan
-  for (const [role, k] of [['dad', 'opp'], ['bf', 'player']]) {
-    const d = Scene.chars[role]?.data, col = d && (d.healthbar_colors || d.healthBarColor || d.healthbarColor || d.healthIcon?.color);
-    let rgb = null;
-    if (Array.isArray(col) && col.length >= 3) rgb = col.slice(0, 3).map(Number);
-    else if (typeof col === 'string' && /^#?[0-9a-f]{6}/i.test(col)) rgb = hexRgb('#' + col.replace(/^#/, '').slice(0, 6));
-    COLORS[k] = rgb ? `rgb(${rgb.join(',')})` : DEFAULT_COLORS[k];
-  }
+  applyBarColors();
   const loadedProps = stage ? stage.props.filter(p => p.img || p.color || p.frames) : [];
   if (stage) st.push(`${loadedProps.length ? '✔' : '✘'} escenario: ${stage.data.name || stage.id} (${stage.from}) · props ${loadedProps.length}/${stage.props.length} · zoom ${stage.data.cameraZoom ?? 1}` +
     (stage.props.filter(p => !p.img && !p.color && !p.frames).length ? ' · faltan: ' + stage.props.filter(p => !p.img && !p.color && !p.frames).map(p => p.tried).join(', ') + ' → fondo improvisado' : ''));
@@ -63,7 +63,8 @@ async function loadScene(ids) {
   st.push(notes.placeholder.some(Boolean) ? '✘ receptores (strums): no hay noteStrumline.xml / NOTE_assets.xml / "<color> static0000.png" → receptor gris generado'
     : `✔ receptores: ${notes.src.strumSheet || notes.src.legacySheet || 'NoteAssets/*static*'}`);
   st.push(notes.hasSplash ? `✔ splashes: ${notes.src.splashSheet}.xml` : '✘ splashes: falta shared/images/noteSplashes.xml/.png → destello improvisado (solo en SICK)');
-  for (const [k, ic] of [['jugador', iP1], ['rival', iP2]]) st.push(ic.ok ? `✔ icono ${k}: ${ic.where} — ${ic.kind}${ic.id !== ic.where ? '' : ''}` : `✘ icono ${k}: falta images/icons/icon-${ic.id}.png → cara improvisada`);
+  for (const [k, ic] of [['jugador', iP1], ['rival', iP2]]) st.push(ic.ok ? `✔ icono ${k}: ${ic.where} — ${ic.kind}${ic.fallbackFace ? ` (no hay icon-${ic.wanted}: se usa icon-face)` : ''}` : `✘ icono ${k}: falta images/icons/icon-${ic.id}.png (y icon-face.png) → cara improvisada`);
+  st.push(`${Speaker.cur && !Speaker.cur.improv ? '✔' : Speaker.need ? '✘' : '✔'} parlantes GF: ${Speaker.info}`);
   Scene.status = st;
   Scene.world = !!(stage && (loadedProps.length || bf instanceof RealChar || dad instanceof RealChar));
   // v3.3.0: se liberan las hojas enormes ya recortadas y se suben/calientan todas las texturas
@@ -77,6 +78,23 @@ async function loadScene(ids) {
   if (isFile && !(bf instanceof RealChar && dad instanceof RealChar)) toast('Abierto como archivo (file://): el navegador bloquea los assets. Usa GitHub Pages o un servidor local (python -m http.server).', 7000);
   else if (!any) toast('No encontré assets reales (data/, shared/images/…): uso los dibujos improvisados', 4000);
   console.info('[TestSong] assets\n' + statusLines().join('\n'));
+}
+
+/* coloca un personaje en su sitio del escenario (Stage.addCharacter) */
+function placeChar(c, role, stage) {
+  stage = stage || Scene.stage;
+  const sc = stage?.data?.characters?.[role] || { position: role === 'bf' ? [989.5, 885] : role === 'dad' ? [335, 885] : [751.5, 787], zIndex: role === 'bf' ? 300 : role === 'dad' ? 200 : 100 };
+  c.place(sc);
+}
+/* colores de la barra: rojo/verde del juego; si el JSON trae colores (estilo Psych) se usan */
+function applyBarColors() {
+  for (const [role, k] of [['dad', 'opp'], ['bf', 'player']]) {
+    const d = Scene.chars[role]?.data, col = d && (d.healthbar_colors || d.healthBarColor || d.healthbarColor || d.healthIcon?.color);
+    let rgb = null;
+    if (Array.isArray(col) && col.length >= 3) rgb = col.slice(0, 3).map(Number);
+    else if (typeof col === 'string' && /^#?[0-9a-f]{6}/i.test(col)) rgb = hexRgb('#' + col.replace(/^#/, '').slice(0, 6));
+    COLORS[k] = rgb ? `rgb(${rgb.join(',')})` : DEFAULT_COLORS[k];
+  }
 }
 
 function statusLines() {
@@ -93,6 +111,8 @@ function statusLines() {
   if (G.pack) out.push(`✔ variación: ${G.variation} · disponibles: ${G.pack.vars.map(v => v.id).join(', ')} · ${G.pack.entries.length} dificultades`);
   for (const rec of Mods.scripts.values()) out.push(`✔ script ${rec.name}: ${[...rec.events, ...rec.kinds, ...rec.modules].join(', ') || 'sin registros'} (imitación)`);
   if (G.chart) { const u = ModUI.unknown(G.chart); if (u.ev.size || u.nk.size) out.push(`✘ sin .hxc: ${[...u.ev.keys(), ...u.nk.keys()].join(', ')} (Assets cargados → Eventos / note kinds)`); }
+  out.push(...Events.statusLines());
+  out.push(...Shaders.statusLines());
   out.push(...UserAssets.statusLines());
   for (const m of SongLoad.missing) out.push('✘ ' + m);
   if (!Sfx.unlocked) out.push('… el sonido se activa al primer toque/tecla (regla del navegador)');
@@ -143,7 +163,7 @@ function restart(paused) {
   G.songPos = start;
   G.health = G.healthLerp = FNF.HEALTH_START;
   G.score = G.misses = G.combo = G.judged = G.accSum = 0;
-  G.lastBeat = Math.floor(G.songPos / c.crochet); G.hudZoom = 1; Cam.bop = 1; G.noteIdx = 0;
+  G.lastBeat = Math.floor(Cond.beat(G.songPos)); G.lastStep = Math.floor(Cond.step(G.songPos)); G.hudZoom = 1; Cam.bop = 1; G.noteIdx = 0;
   Popups.length = 0; Splashes.length = 0;
   resetActors();
   Cam.init = false; Scene.focus = 'dad';
@@ -157,6 +177,7 @@ function restart(paused) {
 function resetActors() {
   for (const ch of [G.dad, G.bf]) { ch.pose = 'idle'; ch.poseUntil = -1e9; ch.miss = false; }
   for (const ch of Object.values(Scene.chars)) if (ch) ch.reset();
+  propsReset();
   for (const ic of Object.values(Scene.icons)) if (ic) ic.reset();
   for (const s of Object.values(G.strums)) { s.confirmAt.fill(-1e9); s.hold.fill(0); }
   G.strums.player.pressed.fill(false); G.strums.player.confirmHeld.fill(false);
@@ -175,7 +196,7 @@ function seekTo(pos) {
   pos = clamp(pos, 0, Math.max(0, total - 50));
   G.songPos = pos; Music.seek(pos);
   skipNotesBefore(pos);
-  G.lastBeat = Math.floor(pos / c.crochet);
+  G.lastBeat = Math.floor(Cond.beat(pos)); G.lastStep = Math.floor(Cond.step(pos));
   Popups.length = 0; Splashes.length = 0;
   resetActors();
   Cam.init = false;
@@ -194,7 +215,7 @@ function changeHealth(delta) {
 
 function sing(ch, lane, miss = false, holdMs = 0, suffix = '') {
   ch.pose = LANE_NAMES[lane]; ch.miss = miss; ch.poseAt = G.gameTime;
-  ch.poseUntil = G.gameTime + Math.max(G.chart.crochet * 0.85, holdMs);
+  ch.poseUntil = G.gameTime + Math.max(Cond.crochet(G.songPos) * 0.85, holdMs);
   const real = Scene.chars[ch === G.bf ? 'bf' : 'dad'];
   if (real) real.sing(lane, miss, holdMs, suffix);
 }
@@ -287,10 +308,19 @@ function demoShouldMiss(n) {
 /* ---------- update ---------- */
 function onBeat(beat) {
   for (const c of Object.values(Scene.chars)) if (c) c.onBeat(beat);
-  for (const ic of Object.values(Scene.icons)) if (ic) ic.bop();                // HealthIcon.onStepHit (cada 4 steps)
-  if (Optim.s.bop && Cam.zoomRate > 0 && beat % Cam.zoomRate === 0 && G.hudZoom < 1.35) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }   // SetCameraBop
+  for (const ic of Object.values(Scene.icons)) if (ic && ic.shouldBop !== false) ic.bop();   // HealthIcon.onStepHit (cada 4 steps)
+  propsBeat(beat); Speaker.beat(beat);
   if (beat >= -4 && beat <= -1) Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME);   // introTHREE/TWO/ONE/GO
   if (Mods.modules.size) Mods.hook('onBeatHit', { beat });
+}
+/* PlayState.stepHit: bop de cámara cada "rate" beats (decimal) con "offset" (SetCameraBop), si el HUD está por debajo de 135 % */
+function onStep(step) {
+  const rate = Cam.zoomRate, spb = 4;
+  if (Optim.s.bop && rate > 0 && G.hudZoom < 1.35) {
+    const m = (step + Cam.zoomOffset * spb) % (rate * spb);
+    if (Math.abs(m) < 1e-6 || Math.abs(Math.abs(m) - rate * spb) < 1e-6) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }
+  }
+  if (Mods.modules.size) Mods.hook('onStepHit', { step });
 }
 
 function update(dt) {
@@ -300,14 +330,14 @@ function update(dt) {
   Music.tick();
   G.songPos = Music.position();
   Events.update(G.songPos);
-  const beat = Math.floor(G.songPos / c.crochet);
+  const step = Math.floor(Cond.step(G.songPos)), beat = Math.floor(step / 4);
+  if (step !== G.lastStep) { if (G.lastStep == null || step < G.lastStep || step - G.lastStep > 32) G.lastStep = step - 1; for (let s2 = G.lastStep + 1; s2 <= step; s2++) onStep(s2); G.lastStep = step; }
   if (beat !== G.lastBeat) { for (let b = G.lastBeat + 1; b <= beat && b - G.lastBeat < 8; b++) onBeat(b); G.lastBeat = beat; }
-  if (Mods.modules.size) { const step = Math.floor(G.songPos / (c.crochet / 4)); if (step !== G.lastStep) { G.lastStep = step; Mods.hook('onStepHit', { step }); } }
   Mods.update(dt); CamFX.tick();
 
   // cámara / HUD: vuelven a 1 (0.95 por frame a 60 fps)
   const decay = Math.pow(0.95, dt / (1000 / 60));
-  Cam.bop = lerp(1, Cam.bop, decay); G.hudZoom = lerp(1, G.hudZoom, decay);
+  if (Cam.zoomRate > 0) { Cam.bop = lerp(1, Cam.bop, decay); G.hudZoom = lerp(1, G.hudZoom, decay); }   // solo con bop activo (como el juego)
   G.healthLerp = lerp(G.health, G.healthLerp, Math.pow(0.85, dt / (1000 / 60)));
 
   let focusSet = false;
@@ -334,7 +364,7 @@ function update(dt) {
     const diff = n.time - G.songPos;
     // cámara: enfoca a quien canta la próxima nota (como los eventos FocusCamera)
     // (solo si el chart no trae eventos FocusCamera; con eventos manda el evento, como en V-Slice)
-    if (!focusSet && !c.hasFocusEvents) { focusSet = true; if (diff < c.crochet * 2 && G.songPos >= 0) Scene.focus = n.side === 'player' ? 'bf' : 'dad'; }
+    if (!focusSet && !c.hasFocusEvents) { focusSet = true; if (diff < Cond.crochet(G.songPos) * 2 && G.songPos >= 0) Scene.focus = n.side === 'player' ? 'bf' : 'dad'; }
     if (n.side === 'opponent') { if (diff <= 0) hitNote(n, 0); continue; }
     if (isBot() && diff <= 0) {
       if (n.kind && NoteKinds.isHurt(n.kind)) { /* el bot esquiva las notas que hacen daño */ }
@@ -412,7 +442,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 /* ---------- render ---------- */
-const beatPos = () => G.songPos / G.chart.crochet;
+const beatPos = () => Cond.beat(G.songPos);
 const beatFrac = () => { const b = beatPos(); return b - Math.floor(b); };
 const bob = () => Math.pow(1 - beatFrac(), 3);        // 1 justo en el beat → 0
 
@@ -453,6 +483,8 @@ function render(dt = 16) {
     try { R = Render.beginWorld(worldNeedsDirect()); renderWorld(G.paused ? 0 : dt, Optim.s.bop ? Cam.bop : 1, R); }
     catch (e) { reportOnce('mundo', e); }
     try { if (R) Render.endWorld(R); } catch (e) { reportOnce('fin del mundo', e); }
+    // v3.4.0: shaders cargados (post-proceso WebGL de la cámara del juego)
+    if (Shaders.list.length && Shaders.target === 'mundo') { try { Shaders.apply(R === GLW ? GLW.cv : cv); } catch (e) { reportOnce('shader', e); } }
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.globalAlpha = 1; ctx.filter = 'none';
   } else {
     Render.showGL(false);
@@ -468,6 +500,13 @@ function render(dt = 16) {
   CamFX.overlay('game');        // camGame.flash / fade
   if (hudLayer) CamFX.drawLayer(hudLayer, 'hud'); else drawHudLayer();
   CamFX.overlay('hud');
+  if (Shaders.list.length && Shaders.target === 'todo' && Shaders.active()) {
+    try {
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (Render.glShown) { ctx.globalCompositeOperation = 'destination-over'; ctx.drawImage(GLW.cv, 0, 0, cv.width, cv.height); }
+      ctx.restore(); Shaders.apply(cv);
+    } catch (e) { reportOnce('shader', e); }
+  }
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   drawTouchZones();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -538,7 +577,8 @@ window.GCDPlay = {
   music: Music, events: Events, cam: Cam, opts: Opts, loader: Loader, version: VERSION,
   perf: Perf, optim: Optim, tex: TexLoad, render: Render, astc: ASTC,
   mods: Mods, camfx: CamFX, noteKinds: NoteKinds, userAssets: UserAssets, modUI: ModUI, vfs: VFS, movil: Movil, hx: HX,
-  get pack() { return G.pack; }, get variation() { return G.variation; },
+  get pack() { return G.pack; }, get variation() { return G.variation; }, get set() { return G.set; },
+  cond: Cond, chartTools: Chart, speaker: Speaker, songImport: SongImport, shaders: typeof Shaders !== 'undefined' ? Shaders : null,
   reloadAssets: ids => { Scene.ids = null; Scene.notes = null; return loadScene(ids); },
   status: statusLines,
 };
@@ -560,7 +600,7 @@ async function boot() {
     /^https?:/.test(location.protocol) ? loadSongById(ASSET_CFG.defaultSongId).catch(e => { console.warn('canción por defecto no válida', e); SongLoad.missing.push('canción por defecto: ' + e.message); return null; }) : null,
   ]).catch(e => { console.warn(e); return []; });
   if (song) {
-    if (!params.has('modo')) G.mode = 'keyboard';
+    if (!params.has('modo')) G.mode = Movil.isTouch() && !matchMedia('(pointer: fine)').matches ? 'mobile' : 'keyboard';   // celular: táctil · PC: teclado
     setMode(['demo', 'keyboard', 'mobile', 'botplay'].includes(G.mode) ? G.mode : 'keyboard');
     await loadChart(song.chart, song.audio, { keepLoader: true });
   } else {

@@ -24,11 +24,12 @@ const OPTIM_DEF = {
   renderer: 'auto',      // auto | webgl | canvas
   auto: true,            // modo bajo rendimiento automático
   tirones: true,         // protección contra tirones (las notas que pasaron durante un tirón no cuentan como fallo)
+  shaders: true,         // v3.4.0: shaders cargados (post-proceso WebGL)
 };
 const OPTIM_PRESETS = {
-  alta:  { tex: 100, res: 100, stage: 'completo', gf: true,  anim: 'normal',   bop: true,  splashes: true,  aa: true,  fps: 0 },
-  media: { tex: 75,  res: 100, stage: 'simple',   gf: true,  anim: 'normal',   bop: true,  splashes: true,  aa: true,  fps: 60 },
-  baja:  { tex: 50,  res: 75,  stage: 'simple',   gf: false, anim: 'reducida', bop: false, splashes: false, aa: false, fps: 60 },
+  alta:  { tex: 100, res: 100, stage: 'completo', gf: true,  anim: 'normal',   bop: true,  splashes: true,  aa: true,  fps: 0,  shaders: true },
+  media: { tex: 75,  res: 100, stage: 'simple',   gf: true,  anim: 'normal',   bop: true,  splashes: true,  aa: true,  fps: 60, shaders: true },
+  baja:  { tex: 50,  res: 75,  stage: 'simple',   gf: false, anim: 'reducida', bop: false, splashes: false, aa: false, fps: 60, shaders: false },
 };
 const PRESET_KEYS = Object.keys(OPTIM_PRESETS.alta);
 

@@ -96,9 +96,9 @@ function drawPopups() {
 /* ---------- cuenta regresiva (Countdown.hx: 5 beats antes; THREE sin imagen) ---------- */
 function drawCountdown() {
   if (G.songPos >= 0) return;
-  const b = Math.floor(G.songPos / G.chart.crochet), step = b + 4;   // 0=THREE 1=TWO 2=ONE 3=GO
+  const bp = Cond.beat(G.songPos), b = Math.floor(bp), step = b + 4;   // 0=THREE 1=TWO 2=ONE 3=GO
   if (step < 0 || step > 3) return;
-  const f = (G.songPos / G.chart.crochet) - b, alpha = 1 - cubeInOut(f);
+  const f = bp - b, alpha = 1 - cubeInOut(f);
   const anyImg = HudImg.countdown.some(Boolean), img = HudImg.countdown[step];
   ctx.save(); ctx.globalAlpha = alpha;
   if (img) blitAll(ctx, img, (V.w - img.naturalWidth) / 2, (V.h - img.naturalHeight) / 2);

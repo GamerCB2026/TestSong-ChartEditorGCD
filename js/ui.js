@@ -38,6 +38,7 @@ const OPT_ITEMS = {
   renderer: { name: 'Render', vals: ['auto', 'webgl', 'canvas'], lab: v => ({ auto: 'Auto', webgl: 'WebGL', canvas: 'Canvas' }[v]),
               hint: 'Auto: WebGL si hay tarjeta gráfica (sube las texturas ASTC comprimidas a la GPU), si no Canvas' },
   auto:     { name: 'Bajo Rendimiento Auto', vals: [true, false], lab: onOff, hint: 'Si el juego va por debajo de ~40 FPS unos segundos, baja la calidad sola (te avisa)' },
+  shaders:  { name: 'Shaders', vals: [true, false], lab: onOff, hint: 'Shaders cargados en Assets cargados → Cargar shaders (post-proceso WebGL; en Calidad Baja se apagan)' },
   tirones:  { name: 'Anti Tirones', vals: [true, false], lab: onOff, hint: 'Si la pantalla se congela un momento, las notas que pasaron mientras tanto no cuentan como fallo' },
 };
 function optLabel(k) {
@@ -85,7 +86,7 @@ function menuItems(menu) {
       ['middlescroll', 'Middlescroll: ' + onOff(Opts.middlescroll)],
       ['downscroll', Opts.isDown() ? 'Downscroll' : 'Upscroll'],
       ['keybinds', 'Asignar Teclas'],
-      ['vslice', 'Controles V-Slice: ' + ({ off: 'Off', arrows: 'Flechas', hitbox: 'Hitbox' }[Opts.vslice] || 'Off')],
+      ['vslice', 'Controles V-Slice: ' + (VSLICE_LABEL[Opts.vslice] || 'Toque')],
       ['optimizacion', 'Optimización'],
     ];
     case 'optimizacion': return [['back', 'Back'], ...Object.keys(OPT_ITEMS).map(k => ['opt:' + k, optLabel(k)])];
@@ -185,9 +186,9 @@ function activate(id) {
   else if (id === 'middlescroll') { Opts.middlescroll = !Opts.middlescroll; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4); }
   else if (id === 'downscroll') { Opts.downscroll = !Opts.isDown(); Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4); }
   else if (id === 'vslice') {
-    const order = ['off', 'arrows', 'hitbox']; Opts.vslice = order[(order.indexOf(Opts.vslice) + 1) % order.length]; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4);
-    toast({ off: 'Controles V-Slice: Off → 4 zonas grandes de toque (las de siempre)', arrows: 'Controles V-Slice: Flechas → tocas los receptores (zonas invisibles más pequeñas, como el juego en móvil)', hitbox: 'Controles V-Slice: Hitbox → 4 carriles invisibles que se iluminan al tocar' }[Opts.vslice], 4200);
-    if (Opts.vslice !== 'off' && G.mode !== 'mobile') toast('Controles V-Slice: se usan en modo Táctil (toca la pantalla o elige "Táctil" en Chart y modo)', 4200);
+    const order = VSLICE_MODES; Opts.vslice = order[(order.indexOf(Opts.vslice) + 1) % order.length]; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4);
+    toast({ toque: 'Controles V-Slice: Toque → tocas directamente las flechas (receptores) del jugador; cada una tiene una zona invisible grande alrededor', hitbox: 'Controles V-Slice: Hitbox → 4 carriles verticales de toda la pantalla que se iluminan al tocar', arrows: 'Controles V-Slice: Flechas grandes → receptores grandes abajo al centro (FunkinHitbox "Arrows")', off: 'Controles V-Slice: 4 zonas → la pantalla dividida en 4 columnas de colores' }[Opts.vslice], 4200);
+    if (G.mode !== 'mobile') toast('Los controles táctiles se usan en modo Táctil (toca la pantalla o elige "Táctil" en Chart y modo). En PC se juega con el teclado.', 4200);
   }
   else if (id === 'reset') { Opts.resetKeys(); buildMenu('keybinds', true); toast('Teclas por defecto: A S W D (+ flechas)'); }
   else if (id.startsWith('key:')) { UI.waitKey = +id.slice(4); buildMenu('keybinds', true); }
@@ -199,6 +200,7 @@ function changeDifficulty(d) {
     if (v !== G.variation) { loadVariation(G.pack, v, diff).catch(err => { console.error(err); toast('Error: ' + err.message); }); return; }
     d = diff;
   }
+  if (G.set && G.set.diffs[d]) { loadEngineSong(G.set, d).catch(err => { console.error(err); toast('Error: ' + err.message); }); return; }
   if (!G.raw) { toast('Este chart solo tiene una dificultad'); return; }
   try {
     const chart = Chart.parse(G.raw, G.meta, d);
@@ -215,7 +217,7 @@ function changeDifficulty(d) {
 async function loadVariation(pack, vid, diff) {
   const va = pack.vars.find(x => x.id === vid); if (!va) throw new Error('no existe la variación ' + vid);
   const chart = Chart.parse(va.chart, va.meta, diff);
-  G.raw = va.chart; G.meta = va.meta; G.pack = pack; G.variation = vid;
+  G.raw = va.chart; G.meta = va.meta; G.pack = pack; G.variation = vid; G.set = null;
   const au = packAudio(pack, vid);
   SongLoad.missing = [...pack.missing, ...au.notes.map(n => `audio (${vid}): ${n}`)];
   await loadChart(chart, au.list, { label: vid === 'default' ? 'Cargando…' : `Cargando variación ${vid}…`, minMs: 450 });
@@ -227,6 +229,7 @@ function togglePanel(id) {
   $('pausePanel').classList.toggle('show', !!UI.panel);
   document.body.classList.toggle('panel-abierto', !!UI.panel);   // el botón de pantalla completa no tapa el panel
   if (UI.panel === 'assets') { renderAssetList(); UserAssets.render(); }
+  if (UI.panel === 'chart') SongImport.render();
   syncTimeBar();
 }
 function syncTimeBar() { $('timeBar').hidden = !(UI.kind === 'pause' && UI.menu === 'pause' && !UI.panel); }
@@ -340,7 +343,7 @@ $('modeSel').addEventListener('change', e => { setMode(e.target.value); toast('M
 $('btnLoad').addEventListener('click', () => $('fileInput').click());
 $('btnDemo').addEventListener('click', async () => {
   const song = await loadSongById(ASSET_CFG.defaultSongId).catch(() => null);
-  G.pack = null; G.variation = 'default';
+  G.pack = null; G.variation = 'default'; G.set = null;
   if (song) { if (G.mode === 'demo') setMode('keyboard'); await loadChart(song.chart, song.audio); toast('Canción "test" cargada'); }
   else { G.raw = G.meta = null; setMode('demo'); await loadChart(Chart.makeDemo(), []); toast('Canción demo cargada'); }
 });
@@ -352,6 +355,14 @@ $('fileInput').addEventListener('change', async e => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && !G.overlayKind && !Loader.active) openOverlay('pause'); });
 
 async function handleFiles(files) {
+  // Psych / Codename / Kade (una dificultad por archivo): se agrupan y convierten igual que en "Otros motores"
+  const peek = await SongImport.expand(files.filter(f => /\.json$/i.test(f.name)));
+  const fmts = peek.map(it => Chart.detect(it.json));
+  if (!fmts.includes('V-Slice') && !files.some(f => /\.(fnfc|zip)$/i.test(f.name)) && fmts.some(f => /^(Psych|Kade|Codename|legacy)/.test(f))) {
+    const engine = fmts.includes('Codename') ? 'codename' : fmts.includes('Kade') ? 'kade' : 'psych';
+    const songs = SongImport.groupEngine(await SongImport.expand(files), engine);
+    if (songs.size) { if (G.mode === 'demo') setMode('keyboard'); await loadEngineSong([...songs.values()][0]); return; }
+  }
   const { raw, meta, inst, voices, pack } = await readChartFiles(files);
   if (G.mode === 'demo') setMode('keyboard');
   if (pack) {
@@ -361,7 +372,7 @@ async function handleFiles(files) {
     await loadVariation(pack, first.v, first.d);
     return;
   }
-  G.pack = null; G.variation = 'default';
+  G.pack = null; G.variation = 'default'; G.set = null;
   const chart = Chart.parse(raw, meta);
   G.raw = raw; G.meta = meta;
   const sc = chart.scene || {}, lc = x => String(x || '').toLowerCase();

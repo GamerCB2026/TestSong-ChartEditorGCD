@@ -138,7 +138,8 @@ const Music = {
     }
   },
   /* V-Slice: la voz del jugador se silencia al fallar y vuelve al acertar */
-  setVolume(role, v) { for (const t of this.tracks) if (t.role === role) { if (t.gain) t.gain.gain.value = v; if (t.el) t.el.volume = v; } },
+  setVolume(role, v) { this.vol = this.vol || {}; this.vol[role] = v; for (const t of this.tracks) if (t.role === role) { if (t.gain) t.gain.gain.value = v; if (t.el) t.el.volume = v; } },
+  getVolume(role) { return this.vol && role in this.vol ? this.vol[role] : 1; },
 };
 
 /* ---------- Efectos ---------- */

@@ -71,7 +71,7 @@ async function loadNoteSkin() {
 /* ---------- Geometría (unidades del HUD) ---------- */
 function laneX(side, i) { const s = LAYOUT[side], x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
 function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
-function pxPerMs(side) { return FNF.PIXELS_PER_MS * G.speed * LAYOUT[side].k; }   // G.speed: evento ScrollSpeed
+function pxPerMs(side) { return FNF.PIXELS_PER_MS * ((G.speedSide && G.speedSide[side]) || G.speed) * LAYOUT[side].k; }   // evento ScrollSpeed (por strumline)
 function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
 
 function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow = null) {

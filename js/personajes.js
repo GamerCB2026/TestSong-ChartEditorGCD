@@ -10,6 +10,11 @@
    ===================================================================== */
 'use strict';
 
+/* PlayAnimation con "force": la animación se reproduce completa (ni el baile ni el canto la cortan).
+   En el código actual de V-Slice (BaseCharacter: ignoreExclusionPref = ['sing']) el canto SÍ puede cortarla;
+   pon singRompeForzada: true para imitar eso exactamente. */
+const PLAYANIM_CFG = { singRompeForzada: false };
+
 /* ---------- utilidades de dibujo ---------- */
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
 function ell(x, y, rx, ry, fill, stroke, lw) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.stroke(); } }
@@ -47,6 +52,7 @@ class RealChar {
   }
   reset() {
     this.singUntil = this.holdUntil = -1e9; this.missTint = false; this.danced = false;
+    this.lock = false; this.tempVocals = false; this.finishFired = true; this.idleSuffix = ''; this.altSing = false;
     const st = this.data.startingAnimation;
     this.play(st && this.anims.has(st) ? st : (this.hasLR ? 'danceRight' : 'idle'), true);
   }
@@ -61,10 +67,15 @@ class RealChar {
   camPoint() {   // resetCameraFocusPoint: centro + cameraOffsets del personaje + cameraOffsets del escenario
     return [this.bx + this.ref.w * this.ts / 2 + this.camOff[0] + this.stageCam[0], this.by + this.ref.h * this.ts / 2 + this.camOff[1] + this.stageCam[1]];
   }
-  play(name, force) {
+  /* Bopper.playAnimation(name, restart, ignoreOther): con ignoreOther la animación bloquea a todas las demás
+     (canto y baile incluidos) hasta que termina; solo se puede reiniciar la misma. */
+  play(name, restart, ignoreOther) {
+    if (this.lock && !(this.curName === name && restart) && !(PLAYANIM_CFG.singRompeForzada && name.startsWith('sing'))) return false;
     const a = this.anims.get(name); if (!a) return false;
-    if (!force && this.curName === name) return true;
-    this.curName = name; this.cur = a; this.t0 = G.gameTime; return true;
+    if (!restart && this.curName === name && !this.finished()) return true;    // FlxAnimationController.play sin Force
+    this.curName = name; this.cur = a; this.t0 = G.gameTime; this.finishFired = false;
+    if (ignoreOther) this.lock = true;
+    return true;
   }
   frameIdx() {
     const a = this.cur, n = a.frames.length;
@@ -73,46 +84,74 @@ class RealChar {
   }
   finished() { return !this.cur.loop && (G.gameTime - this.t0) / 1000 * this.cur.fps >= this.cur.frames.length; }
   singing() { return G.gameTime < this.singUntil; }
+  isSingAnim() { const n = this.curName || ''; return n.startsWith('sing') && !n.endsWith('-end'); }
+  /* BaseCharacter.dance: sin forzar no interrumpe el canto ni una animación especial que no terminó */
   dance(force) {
-    if (this.singing() && !force) return;
-    if (this.hasLR) { this.danced = !this.danced; this.play(this.danced ? 'danceLeft' : 'danceRight', true); }
-    else this.play('idle', true);
+    if (!force) {
+      if (this.singing() && this.isSingAnim()) return;
+      const n = this.curName || '';
+      if (!n.startsWith('dance') && !n.startsWith('idle') && !this.finished()) return;
+    }
+    const sf = this.idleSuffix || '';
+    if (this.hasLR) {
+      this.danced = !this.danced;
+      const n = (this.danced ? 'danceLeft' : 'danceRight');
+      if (!this.play(n + sf, true) && sf) this.play(n, true);
+    } else if (!this.play('idle' + sf, true) && sf) this.play('idle', true);
   }
   onBeat(beat) {
-    if (this.singing()) return;
-    if (this.curName === 'hey' || this.curName === 'cheer') { if (!this.finished()) return; }
+    if (this.singing() && this.isSingAnim()) return;
     const every = Math.max(1, Math.round(this.danceEvery || 1));
     if (((beat % every) + every) % every === 0) this.dance();
   }
   sing(lane, miss, holdMs, suffix = '') {
+    if (this.lock && !PLAYANIM_CFG.singRompeForzada) return; // PlayAnimation forzada en curso: no canta hasta que termine
     const dir = LANE_DIRS[lane]; let n = 'sing' + dir + (miss ? 'miss' : '');   // sin intercambio LEFT/RIGHT (igual que el juego)
     this.missTint = false;
+    if (!suffix && this.altSing) suffix = '-alt';          // Codename "Alt Animation Toggle"
     // note kind con sufijo (alt → singLEFT-alt): si el personaje no la tiene, canta la normal
     if (suffix && this.anims.has(n + suffix)) n += suffix;
     else if (!this.anims.has(n)) { if (miss) this.missTint = true; n = 'sing' + dir; }
     if (!this.play(n, true)) { this.play(this.hasLR ? 'danceRight' : 'idle', true); }
-    const step = G.chart.crochet / 4;
+    const step = Cond.stepMs(G.songPos);
     this.holdUntil = G.gameTime + holdMs;
-    this.singUntil = G.gameTime + holdMs + this.singTime * step;
+    this.singUntil = G.gameTime + holdMs + this.singTime * step * (miss ? 2 : 1);
   }
-  /* evento PlayAnimation: la animación no se interrumpe por el baile hasta que termina */
+  /* evento PlayAnimation (PlayAnimationSongEvent): tempVocals = force; playAnimation(anim, force, force).
+     Con force la animación se reproduce COMPLETA: ni el baile ni el canto la interrumpen hasta que termina.
+     Sin force: el canto puede interrumpirla, pero el baile espera a que termine. */
   playEvent(name, force) {
     if (!this.anims.has(name)) return false;
-    if (!force && this.curName !== name && this.singing() && !this.finished()) return false;
-    this.play(name, true);
-    const a = this.anims.get(name);
-    this.singUntil = G.gameTime + (a.loop ? G.chart.crochet * 2 : a.frames.length / a.fps * 1000);
-    this.holdUntil = -1e9;
-    return true;
+    this.tempVocals = !!force;
+    if (this.tempVocals) {
+      const r = this.role === 'bf' ? 'player' : this.role === 'dad' ? 'opponent' : null;
+      if (r && Music.getVolume(r) === 0) Music.setVolume(r, 1); else this.tempVocals = false;
+    }
+    const ok = this.play(name, !!force, !!force);
+    if (ok) { this.singUntil = -1e9; this.holdUntil = -1e9; }
+    return ok;
   }
-  special(name) { if (this.anims.has(name)) { this.play(name, true); this.singUntil = G.gameTime + G.chart.crochet; return true; } return false; }
-  holdOn() { this.holdUntil = Math.max(this.holdUntil, G.gameTime + 60); this.singUntil = Math.max(this.singUntil, G.gameTime + this.singTime * G.chart.crochet / 4); }
+  /* animaciones de GF (combo/drop) y especiales de note kinds: sin bloqueo; el baile espera a que terminen */
+  special(name) { if (this.anims.has(name)) { this.play(name, true); this.singUntil = -1e9; return true; } return false; }
+  holdOn() { if (this.lock && !PLAYANIM_CFG.singRompeForzada) return; this.holdUntil = Math.max(this.holdUntil, G.gameTime + 60); this.singUntil = Math.max(this.singUntil, G.gameTime + this.singTime * Cond.stepMs(G.songPos)); }
+  /* Bopper/BaseCharacter.onAnimationFinished */
+  onFinished(name) {
+    this.lock = false;
+    if ((name.endsWith('-end') && !name.startsWith('idle') && !name.startsWith('dance')) || name.startsWith('combo') || name.startsWith('drop')) this.dance(true);
+    if (this.tempVocals) {
+      const r = this.role === 'bf' ? 'player' : this.role === 'dad' ? 'opponent' : null;
+      if (r && Music.getVolume(r) === 1) Music.setVolume(r, 0);
+      this.tempVocals = false;
+    }
+  }
   update() {
     if (!this.cur) return;
+    if (!this.finishFired && this.finished()) { this.finishFired = true; this.onFinished(this.curName); }
+    if (this.lock) return;
     if (this.curName.startsWith('sing') && !this.singing()) { this.missTint = false; this.dance(true); return; }
-    // sustain: al terminar la animación de canto pasa a "<anim>-hold" en loop (si existe)
-    if (G.gameTime < this.holdUntil && this.finished() && this.anims.has(this.curName + '-hold')) this.play(this.curName + '-hold', true);
-    else if (G.gameTime >= this.holdUntil && this.curName.endsWith('-hold') && !this.curName.startsWith('idle')) this.play(this.curName.replace(/-hold$/, ''), false);
+    // al terminar una animación pasa a "<anim>-hold" en loop si existe (sustain del canto, poses de Darnell…)
+    if (this.finished() && !this.curName.endsWith('-hold') && this.anims.has(this.curName + '-hold') && (!this.curName.startsWith('sing') || G.gameTime < this.holdUntil)) this.play(this.curName + '-hold', true);
+    else if (G.gameTime >= this.holdUntil && this.curName.startsWith('sing') && this.curName.endsWith('-hold')) this.play(this.curName.replace(/-hold$/, ''), false);
   }
   /* M = matriz mundo -> píxeles del canvas; R = destino (render.js: Canvas o WebGL) */
   draw(M, R) {
@@ -139,9 +178,23 @@ function animFrame(ms, fps) {
   return Math.floor(ms / 1000 * fps);
 }
 
+/* v3.4.0: personaje de Psych Engine (image, animations[{anim,name,fps,loop,indices,offsets}], flip_x…) → formato V-Slice */
+function normalizeCharData(d) {
+  if (!d || typeof d !== 'object' || !Array.isArray(d.animations)) return d;
+  const psych = typeof d.image === 'string' && d.animations.some(a => a && a.anim !== undefined);
+  if (!psych) return d;
+  return {
+    name: d.name || d.image, renderType: /^characters\/.*\/$/.test(d.image) ? 'animateatlas' : 'sparrow', assetPath: String(d.image).split(',')[0].trim(),
+    scale: +d.scale || 1, flipX: !!d.flip_x, isPixel: !!d.no_antialiasing, singTime: (+d.sing_duration || 4) * 2,
+    healthIcon: { id: d.healthicon || 'face' }, healthbar_colors: d.healthbar_colors,
+    offsets: Array.isArray(d.position) ? d.position : [0, 0], cameraOffsets: Array.isArray(d.camera_position) ? d.camera_position : [0, 0],
+    animations: d.animations.map(a => ({ name: a.anim, prefix: a.name, frameRate: +a.fps || 24, looped: !!a.loop, frameIndices: Array.isArray(a.indices) && a.indices.length ? a.indices : undefined, offsets: a.offsets || [0, 0] })),
+    convertedFrom: 'Psych',
+  };
+}
 async function loadCharacter(role, id) {
   const dj = await fetchFirst(ASSET_CFG.charDataPaths.map(t => fillT(t, { id })));
-  const data = dj ? dj.data : DEFAULT_DATA.characters[id];
+  const data = normalizeCharData(dj ? dj.data : DEFAULT_DATA.characters[id]);
   if (!data) return { error: `no hay data/characters/${id}.json` };
   const mainAp = data.assetPath || `characters/${id}`;
   const main = await loadGraphic(parseAssetPath(mainAp), data.renderType);
@@ -193,8 +246,11 @@ class HealthIcon {
     this.id = hi.id || charId || 'face';
     this.size = +hi.scale || 1; this.isPixel = !!hi.isPixel; this.offsets = Array.isArray(hi.offsets) ? hi.offsets : [0, 0];
     this.flipX = !!hi.flipX; if (this.playerId === 0) this.flipX = !this.flipX;   // initHealthIcon: "BF is looking the other way"
-    this.anims = new Map(); this.kind = 'improvisado'; this.where = null;
+    this.anims = new Map(); this.kind = 'improvisado'; this.where = null; this.wanted = this.id; this.fallbackFace = false;
+    this.shouldBop = hi.shouldBop !== false;
+    // sin icono propio → icon-face (Constants.DEFAULT_HEALTH_ICON), como el juego
     for (const id of uniq([this.id, 'face'])) {
+      if (id === 'face' && this.id !== 'face') this.fallbackFace = true;
       const bases = []; for (const d of ASSET_CFG.iconDirs) bases.push(`${d}icon-${id}`, `${d}icon-${id}/icon-${id}`);
       const sheet = await loadSparrowSheet(bases);
       if (sheet) {
@@ -214,6 +270,7 @@ class HealthIcon {
         this.kind = `legacy (${n} frame${n > 1 ? 's' : ''} de ${grid}px)`; this.where = img.assetPath; break;
       }
     }
+    if (!this.anims.size) this.fallbackFace = false;
     this.reset();
     return this;
   }
@@ -246,7 +303,7 @@ class HealthIcon {
   targetSize() {
     const fr = this.frame(), base = FNF.ICON_SIZE * this.size;
     const fw = fr ? fr.fw : 150, fh = fr ? fr.fh : 150;
-    const tween = Math.min(G.chart.crochet / 4 * 0.002, 0.175) * 1000, k = clamp((G.gameTime - this.bopAt) / tween, 0, 1);
+    const tween = Math.min(Cond.stepMs(G.songPos) * 0.002, 0.175) * 1000, k = clamp((G.gameTime - this.bopAt) / tween, 0, 1);
     const bop = fw >= fh ? base * FNF.ICON_BOP_SCALE * (1 - k) : 0;
     const w = fw >= fh ? base + bop : (base * fw / fh) * (1 + FNF.ICON_BOP_SCALE * (1 - k));
     return { w, h: w * fh / fw };

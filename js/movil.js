@@ -1,12 +1,15 @@
 /* =====================================================================
    movil.js — celular: SOLO horizontal ("Gira tu dispositivo" en vertical,
    con la partida en pausa), botón de pantalla completa (+ bloqueo de
-   orientación) y controles táctiles:
-     · Off      → 4 zonas grandes (toda la pantalla, como antes)
-     · Flechas  → como V-Slice móvil (FunkinHitbox "Arrows"): zonas invisibles
-                  que siguen a los receptores del jugador (ancho de la nota ×1.35)
-     · Hitbox   → como V-Slice (FunkinHitbox "FourLanes"): 4 carriles invisibles
-                  que se iluminan con un degradado al tocar
+   orientación) y controles táctiles (v3.4.0):
+     · Toque    → (por defecto en celular) se tocan directamente las flechas
+                  (receptores) del jugador, en su sitio normal; cada una tiene
+                  una zona invisible GRANDE alrededor (ajustable en TOQUE_CFG)
+     · Hitbox   → como V-Slice (FunkinHitbox "FourLanes"): 4 carriles verticales
+                  de toda la pantalla que se iluminan con un degradado al tocar
+     · Flechas grandes → FunkinHitbox "Arrows": receptores grandes abajo al centro
+     · 4 zonas  → la pantalla dividida en 4 columnas de colores
+   En PC el modo por defecto es Teclado.
    ===================================================================== */
 'use strict';
 
@@ -54,7 +57,31 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 $('fsBtn').addEventListener('click', e => { e.stopPropagation(); Movil.fullscreen(); });
 $('rotarFs').addEventListener('click', e => { e.stopPropagation(); Movil.fullscreen(); });
 
-/* ---------- zonas de toque ---------- */
+/* ---------- zonas de toque ----------
+   TOQUE_CFG: medidas de las zonas invisibles de "Toque" (para ajustarlas fácil con la imagen de referencia).
+   Unidades: "ancho" y "lados" en separaciones entre flechas; "arriba"/"abajo" en fracción del alto de la pantalla.
+   Para verlas: ?zonas=1 en la URL (se dibujan semitransparentes). */
+const TOQUE_CFG = {
+  ancho: 1.0,         // ancho de cada zona = separación entre flechas × ancho (1 = contiguas, sin huecos)
+  lados: 1.5,         // las flechas de los extremos (← y →) se alargan hacia afuera (en separaciones)
+  arriba: 1.0,        // alto por encima del centro de la flecha (fracción del alto: 1 = hasta el borde)
+  abajo: 1.0,         // alto por debajo (1 = hasta el borde: columnas de toda la pantalla)
+  mostrar: params.get('zonas') === '1',
+};
+/* zonas de "Toque" en px de pantalla, alrededor de cada receptor del jugador */
+function toqueZones() {
+  const s = LAYOUT.player, k = s.k, pitch = FNF.NOTE_SPACING * s.spacing * k;
+  const cy = strumCY('player'), w = pitch * TOQUE_CFG.ancho;
+  return [0, 1, 2, 3].map(i => {
+    const cx = laneX('player', i);
+    let x0 = cx - w / 2, x1 = cx + w / 2;
+    if (i === 0) x0 -= pitch * TOQUE_CFG.lados;
+    if (i === 3) x1 += pitch * TOQUE_CFG.lados;
+    const [sx0, sy0] = HUD_TO_SCREEN(x0, cy), [sx1] = HUD_TO_SCREEN(x1, cy);
+    const top = Math.max(0, sy0 - H * TOQUE_CFG.arriba), bot = Math.min(H, sy0 + H * TOQUE_CFG.abajo);
+    return { x: sx0, y: top, w: sx1 - sx0, h: bot - top };
+  });
+}
 const HUD_TO_SCREEN = (x, y) => [V.ox + x * V.s, V.oy + y * V.s];
 /* carriles de "Flechas": rectángulos (px de pantalla) que siguen a los receptores del jugador */
 function arrowHints() {
@@ -67,8 +94,8 @@ function arrowHints() {
   });
 }
 function touchLane(cx, cy) {
-  if (Opts.vslice === 'arrows') {
-    const hs = arrowHints();
+  if (Opts.vslice === 'toque' || Opts.vslice === 'arrows') {
+    const hs = Opts.vslice === 'toque' ? toqueZones() : arrowHints();
     for (let i = 0; i < 4; i++) { const r = hs[i]; if (cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h) return i; }
     return -1;
   }
@@ -105,7 +132,14 @@ function drawTouchZones() {
   if (G.mode !== 'mobile') return;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   const pressed = G.strums.player.pressed;
-  if (Opts.vslice === 'arrows') return;     // invisibles: el receptor hace de botón (como el juego)
+  if (Opts.vslice === 'toque' || Opts.vslice === 'arrows') {     // invisibles: el receptor hace de botón (como el juego)
+    if (TOQUE_CFG.mostrar) {
+      const hs = Opts.vslice === 'toque' ? toqueZones() : arrowHints();
+      hs.forEach((r, i) => { ctx.globalAlpha = pressed[i] ? 0.35 : 0.15; ctx.fillStyle = LANE_COLORS[i]; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.globalAlpha = 0.8; ctx.strokeStyle = LANE_COLORS[i]; ctx.lineWidth = 2; ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); });
+      ctx.globalAlpha = 1;
+    }
+    return;
+  }
   if (Opts.vslice === 'hitbox') {
     // FourLanes: carril invisible (alpha 0.00001); al tocar, degradado radial del color del carril (alpha 0.3)
     // y en reposo dos tiras con degradado arriba/abajo (3.5% del alto) a 0.3

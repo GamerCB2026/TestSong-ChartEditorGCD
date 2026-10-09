@@ -13,7 +13,7 @@ const ModUI = {
   unknown(chart) {
     const ev = new Map(), nk = new Map();
     if (!chart) return { ev, nk };
-    for (const e of chart.events || []) if (e.e && !Mods.BUILTIN_EVENTS.includes(e.e) && !Mods.events.has(e.e)) ev.set(e.e, (ev.get(e.e) || 0) + 1);
+    for (const e of chart.events || []) if (e.e && !Events.isBuiltin(e.e) && !Mods.events.has(e.e) && !changeCharInfo(e)) ev.set(e.e, (ev.get(e.e) || 0) + 1);
     for (const n of chart.notes || []) if (n.kind && !NoteKinds.known(n.kind)) nk.set(n.kind, (nk.get(n.kind) || 0) + 1);
     return { ev, nk };
   },
@@ -25,8 +25,10 @@ const ModUI = {
   },
   check(chart) {
     const u = this.unknown(chart);
-    const key = (chart.title || '') + '|' + [...u.ev.keys(), '#', ...u.nk.keys()].join(',');
-    if ((u.ev.size || u.nk.size) && !this.dismissed.has(key)) { this.key = key; this.show(); }
+    // v3.4.0: también se abre si un evento necesita un personaje / sonido que no se encontró
+    const miss = Events.requirements().filter(r => this.reqStatus(r) === 'missing').map(r => r.type + ':' + r.key);
+    const key = (chart.title || '') + '|' + [...u.ev.keys(), '#', ...u.nk.keys(), '#', ...miss].join(',');
+    if ((u.ev.size || u.nk.size || miss.length) && !this.dismissed.has(key)) { this.key = key; this.show(); }
   },
   show() {
     this.open = true; $('modModal').hidden = false; this.render();
@@ -58,6 +60,8 @@ const ModUI = {
       for (const c of a.custom || []) { const n = c.split('.').pop(); if (!/^\*$/.test(n)) add({ type: 'class', key: c, short: n, from: rec.name }); }
     }
     for (const k of Mods.kinds.values()) if (k.styleId) add({ type: 'notestyle', key: k.styleId, from: k.file });
+    for (const r of Events.requirements()) add(r);        // personajes de "Change Character", sonidos de "Play Sound"…
+    if (typeof Shaders !== 'undefined') for (const r of Shaders.requirements()) add(r);
     return out;
   },
   reqStatus(r) {
@@ -66,6 +70,8 @@ const ModUI = {
     if (r.type === 'scripted' || r.type === 'class') return Mods.classes.has(r.short || r.key) ? 'ok' : 'missing';
     if (r.type === 'hxcfile') return [...Mods.scripts.keys()].some(n => n.toLowerCase() === r.key.split('/').pop().toLowerCase()) ? 'ok' : 'missing';
     if (r.type === 'notestyle') { const s = NoteStyles.map.get(r.key); return s ? s.status : 'none'; }
+    if (r.type === 'evchar') return Events.charStatus(r.key);
+    if (r.type === 'shader') return Shaders.reqStatus(r);
     return 'none';
   },
   reqLabel(r) {
@@ -79,6 +85,8 @@ const ModUI = {
     if (r.type === 'scripted') return `clase scripted "${r.key}" (${r.base}) → su .hxc`;
     if (r.type === 'class') return `import ${r.key} → el .hxc que define "${r.short}"`;
     if (r.type === 'hxcfile') return `${r.key}`;
+    if (r.type === 'evchar') return `personaje "${r.key}" (${UserAssets.ROLE_ES[r.role] || r.role}): data/characters/${r.key}.json + su .xml/.png (o .astc) o carpeta Animate`;
+    if (r.type === 'shader') return `shaders/${r.key}`;
     if (r.type === 'notestyle') {
       const s = NoteStyles.map.get(r.key), need = s && s.sheetKey && s.status !== 'ok' ? ` + images/${s.sheetKey}.xml + images/${s.sheetKey}.png/.astc` : '';
       return `data/notestyles/${r.key}.json${need}`;
@@ -86,6 +94,8 @@ const ModUI = {
     return r.key;
   },
   reqAccept(r) {
+    if (r.type === 'evchar') return '.json,.xml,.png,.txt,' + ASTC_ACCEPT;
+    if (r.type === 'shader') return '.frag,.vert,.glsl';
     if (r.type !== 'res') return r.type === 'notestyle' ? '.json,.xml,.png,' + ASTC_ACCEPT : '.hxc';
     return { image: '.png,.jpg,.jpeg,.webp,' + ASTC_ACCEPT, sparrow: '.xml,.png,' + ASTC_ACCEPT, sound: '.ogg,.mp3,.wav', music: '.ogg,.mp3,.wav', video: '.mp4,.webm', frag: '.frag,.glsl', font: '.ttf,.otf,.woff,.woff2', json: '.json' }[r.kind] || '';
   },
@@ -127,6 +137,8 @@ const ModUI = {
   },
   /* archivo pedido por un script: se guarda con la ruta que espera el juego */
   async provide(r, files) {
+    if (r.type === 'evchar') { await UserAssets.provideEventChar(r.key, r.role, files); this.render(); return; }
+    if (r.type === 'shader') { await Shaders.provide(r, files); this.render(); return; }
     for (const f of files) {
       const ext = (f.name.split('.').pop() || '').toLowerCase();
       if (ext === 'hxc') { await this.loadHxc([f]); continue; }
@@ -221,7 +233,7 @@ const ModUI = {
     box.querySelectorAll('[data-act="hxc"]').forEach(b => b.addEventListener('click', async e => { e.stopPropagation(); await this.loadHxc(await this.pick('.hxc', true)); }));
     box.querySelectorAll('[data-act="req"]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation(); const r = reqs[+b.dataset.i];
-      const files = await this.pick(this.reqAccept(r), r.kind === 'sparrow' || r.type === 'notestyle');
+      const files = await this.pick(this.reqAccept(r), r.kind === 'sparrow' || r.type === 'notestyle' || r.type === 'evchar', r.type === 'evchar' && e.shiftKey);
       if (files.length) await this.provide(r, files);
     }));
   },

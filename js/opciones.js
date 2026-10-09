@@ -7,26 +7,31 @@
 'use strict';
 
 const OPTS_KEY = 'testsong-gcd-opciones';
+const VSLICE_MODES = ['toque', 'hitbox', 'arrows', 'off'];
+const VSLICE_LABEL = { toque: 'Toque', hitbox: 'Hitbox', arrows: 'Flechas grandes', off: '4 zonas' };
 const Opts = {
   middlescroll: false,
-  downscroll: null,          // null = automático (arriba; con Controles V-Slice "Flechas" en táctil: abajo, como el juego)
-  vslice: 'off',             // Controles V-Slice (táctil): off = 4 zonas grandes · arrows = receptores (Flechas) · hitbox = 4 carriles invisibles
+  downscroll: null,          // null = automático (arriba; con "Flechas grandes" en táctil: abajo)
+  // Controles táctiles (v3.4.0): toque = tocar los receptores donde están (zonas invisibles grandes, por defecto)
+  // · hitbox = 4 carriles verticales de toda la pantalla · arrows = flechas grandes abajo · off = 4 zonas de colores
+  vslice: 'toque',
   keys: DEFAULT_KEYS.slice(),
   load() {
     try {
       const d = JSON.parse(localStorage.getItem(OPTS_KEY) || '{}');
       if (typeof d.middlescroll === 'boolean') this.middlescroll = d.middlescroll;
       if (typeof d.downscroll === 'boolean') this.downscroll = d.downscroll;
-      if (['off', 'arrows', 'hitbox'].includes(d.vslice)) this.vslice = d.vslice;
+      // v3.4.0: el antiguo valor por defecto ("Flechas"/"Off") pasa al nuevo control por toque; Hitbox se respeta
+      if (VSLICE_MODES.includes(d.vslice) && (d.ver >= 34 || d.vslice === 'hitbox')) this.vslice = d.vslice;
       if (Array.isArray(d.keys) && d.keys.length === 4 && d.keys.every(k => typeof k === 'string' && k)) this.keys = d.keys.slice();
     } catch (e) { /* almacenamiento bloqueado o JSON roto: valores por defecto */ }
     // la URL manda (no se guarda): ?downscroll=1 / ?middlescroll=1
     if (params.has('downscroll')) this.downscroll = params.get('downscroll') !== '0';
     if (params.has('middlescroll')) this.middlescroll = params.get('middlescroll') !== '0';
-    if (['off', 'arrows', 'hitbox'].includes(params.get('vslice'))) this.vslice = params.get('vslice');
+    if (VSLICE_MODES.includes(params.get('vslice'))) this.vslice = params.get('vslice');
   },
   save() {
-    try { localStorage.setItem(OPTS_KEY, JSON.stringify({ middlescroll: this.middlescroll, downscroll: this.downscroll, keys: this.keys, vslice: this.vslice })); } catch (e) {}
+    try { localStorage.setItem(OPTS_KEY, JSON.stringify({ ver: 34, middlescroll: this.middlescroll, downscroll: this.downscroll, keys: this.keys, vslice: this.vslice })); } catch (e) {}
   },
   isDown() { if (typeof G !== 'undefined' && G.mode === 'mobile' && this.vslice === 'arrows') return true; return this.downscroll ?? false; },
   /* carril de una tecla: asignación del usuario o flechas */

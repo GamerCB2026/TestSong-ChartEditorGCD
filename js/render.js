@@ -289,6 +289,7 @@ function worldTextures() {
   for (const c of Object.values(Scene.chars)) if (c) for (const a of c.anims.values()) {
     if (a.type === 'atlas') for (const sp of a.model.sprites.values()) set.add(sp.img); else addFrames(a.frames);
   }
-  if (Scene.stage) for (const p of Scene.stage.props) { if (p.img) set.add(p.img); addFrames(p.frames); }
+  if (Scene.stage) for (const p of Scene.stage.props) { if (p.img) set.add(p.img); addFrames(p.frames); if (p.anims) for (const a of p.anims.values()) addFrames(a.frames); }
+  if (typeof Speaker !== 'undefined') for (const t of Speaker.textures()) set.add(t);
   return [...set];
 }

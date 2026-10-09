@@ -381,7 +381,7 @@ function strumlineW(side) {
     get alpha() { return st().alpha; }, set alpha(v) { st().alpha = +v; },
     get visible() { return st().visible; }, set visible(v) { st().visible = !!v; },
     get x() { return st().x; }, set x(v) { st().x = +v; }, get y() { return st().y; }, set y(v) { st().y = +v; },
-    get scrollSpeed() { return G.speed; }, set scrollSpeed(v) { G.speed = +v; G.speedTween = null; },
+    get scrollSpeed() { return G.speed; }, set scrollSpeed(v) { G.speed = +v; G.speedTween = null; if (G.speedSide) { G.speedSide.player = G.speedSide.opponent = +v; G.speedTweens = {}; } },
     strumlineNotes: { members, forEach: f => members.forEach(f) }, members,
     getByIndex: i => members[i], getByDirection: d => members[typeof d === 'number' ? d : LANE_DIRS.indexOf(String(d).toUpperCase())],
     forEach: f => members.forEach(f), get isPlayer() { return side === 'player'; },
@@ -451,10 +451,10 @@ const HOST = (() => {
   };
   const conductor = {
     __host: 'Conductor.instance',
-    get songPosition() { return G.songPos; }, get bpm() { return G.chart.bpm; }, get beatLengthMs() { return G.chart.crochet; }, get stepLengthMs() { return G.chart.crochet / 4; },
-    get measureLengthMs() { return G.chart.crochet * 4; }, get currentBeat() { return Math.floor(G.songPos / G.chart.crochet); }, get currentStep() { return Math.floor(G.songPos / (G.chart.crochet / 4)); },
-    get currentMeasure() { return Math.floor(G.songPos / (G.chart.crochet * 4)); }, get currentBeatTime() { return G.songPos / G.chart.crochet; }, get currentStepTime() { return G.songPos / (G.chart.crochet / 4); },
-    get crochet() { return G.chart.crochet; }, get stepCrochet() { return G.chart.crochet / 4; },
+    get songPosition() { return G.songPos; }, get bpm() { return 60000 / Cond.crochet(G.songPos); }, get beatLengthMs() { return Cond.crochet(G.songPos); }, get stepLengthMs() { return Cond.stepMs(G.songPos); },
+    get measureLengthMs() { return Cond.crochet(G.songPos) * 4; }, get currentBeat() { return Math.floor(Cond.beat(G.songPos)); }, get currentStep() { return Math.floor(Cond.step(G.songPos)); },
+    get currentMeasure() { return Math.floor(Cond.beat(G.songPos) / 4); }, get currentBeatTime() { return Cond.beat(G.songPos); }, get currentStepTime() { return Cond.step(G.songPos); },
+    get crochet() { return Cond.crochet(G.songPos); }, get stepCrochet() { return Cond.stepMs(G.songPos); },
   };
   const paths = {
     __host: 'Paths',
