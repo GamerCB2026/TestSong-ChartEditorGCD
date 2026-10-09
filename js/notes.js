@@ -1,0 +1,189 @@
+/* =====================================================================
+   notes.js — notas, receptores (strums), colas de sustain y splashes.
+   Assets (en orden de preferencia):
+     · shared/images/NoteAssets/<color>0000.png, "<color> hold piece0000.png", "<color> hold end0000.png"
+     · receptores: shared/images/noteStrumline.xml/png (V-Slice: staticLeft0/pressLeft0/confirmLeft0)
+                   o NOTE_assets.xml (legacy: arrowLEFT / left press / left confirm)
+                   o NoteAssets/"<color> static0000.png" / "<color> press0000.png" / "<color> confirm0000.png"
+                   (si no hay: receptor gris generado a partir de la nota)
+     · splashes:   shared/images/noteSplashes.xml/png ("note impact 1 purple0"...) — si no: destello improvisado
+   Posiciones como Strumline.hx (STRUMLINE_SIZE 104, NOTE_SPACING 112, escala 0.7).
+   ===================================================================== */
+'use strict';
+
+const NOTE_W = 157 * FNF.NOTE_SCALE;      // ancho de la nota/receptor del juego a escala 0.7 (≈110 px)
+
+function frameFromImg(img) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  return { img, x: 0, y: 0, w, h, fw: w, fh: h, dw: w, dh: h, offX: 0, offY: 0, rot: false };
+}
+
+async function loadNoteSkin() {
+  const skin = { head: [], piece: [], end: [], strum: [], press: [], confirm: [], splash: [], placeholder: [false, false, false, false], src: {} };
+  const Dirs = ['Left', 'Down', 'Up', 'Right'];
+  const [sheetV, sheetL, sheetS] = await Promise.all([
+    loadSparrowSheet(ASSET_CFG.strumSheets), loadSparrowSheet(ASSET_CFG.legacyNoteSheets), loadSparrowSheet(ASSET_CFG.splashSheets)]);
+  await Promise.all([0, 1, 2, 3].map(async i => {
+    const v = { color: ASSET_CFG.noteColors[i], dir: LANE_NAMES[i], DIR: LANE_DIRS[i], Dir: Dirs[i] };
+    const f = list => (Array.isArray(list) ? list : [list]).map(t => ASSET_CFG.noteDir + fillT(t, v));
+    const [head, piece, end, st, pr, cf] = await Promise.all([
+      loadImg(f(ASSET_CFG.noteHead)), loadImg(f(ASSET_CFG.holdPiece)), loadImg(f(ASSET_CFG.holdEnd)),
+      loadImg(f(ASSET_CFG.strumStatic)), loadImg(f(ASSET_CFG.strumPress)), loadImg(f(ASSET_CFG.strumConfirm))]);
+    const fromSheet = (sh, prefix) => { if (!sh) return null; const fr = sparrowFrames(sh.atlas, prefix, null, sh.img); return fr.length ? fr : null; };
+    // nota (cabeza)
+    skin.head[i] = head ? [frameFromImg(head)] : fromSheet(sheetL, v.color + '0') || fromSheet(sheetL, v.color + ' instance');
+    skin.piece[i] = piece ? frameFromImg(piece) : (fromSheet(sheetL, v.color + ' hold piece') || [])[0] || null;
+    skin.end[i] = end ? frameFromImg(end) : (fromSheet(sheetL, v.color + ' hold end') || fromSheet(sheetL, v.dir === 'left' ? 'pruple end hold' : '\0') || [])[0] || null;
+    // receptores
+    skin.strum[i] = fromSheet(sheetV, 'static' + v.Dir + '0') || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR);
+    skin.press[i] = fromSheet(sheetV, 'press' + v.Dir + '0') || (pr && [frameFromImg(pr)]) || fromSheet(sheetL, v.dir + ' press');
+    skin.confirm[i] = fromSheet(sheetV, 'confirm' + v.Dir + '0') || (cf && [frameFromImg(cf)]) || fromSheet(sheetL, v.dir + ' confirm');
+    if (skin.head[i]) {
+      const h0 = skin.head[i][0], hImg = h0.img === head ? head : null;
+      const base = hImg || (() => { const c = document.createElement('canvas'); c.width = h0.fw; c.height = h0.fh; drawSparrowFrame(c.getContext('2d'), h0, 0, 0); return c; })();
+      if (!skin.strum[i]) { skin.strum[i] = [frameFromImg(tintCanvas(base, [18, 22, 30], [135, 163, 173]))]; skin.placeholder[i] = true; }
+      if (!skin.press[i]) { const c = hexRgb(LANE_DARK[i]); skin.press[i] = [frameFromImg(tintCanvas(base, [10, 6, 18], c.map(x => Math.min(255, x * 1.6 + 30))))]; }
+    }
+    // splashes (2 variantes por color)
+    const col = v.color;
+    skin.splash[i] = [fromSheet(sheetS, 'note impact 1 ' + col), fromSheet(sheetS, 'note impact 2 ' + col), fromSheet(sheetS, 'note impact 1  ' + col)].filter(Boolean);
+  }));
+  skin.ok = skin.head.some(Boolean);
+  skin.src = { strumSheet: sheetV && sheetV.where, legacySheet: sheetL && sheetL.where, splashSheet: sheetS && sheetS.where };
+  skin.hasSplash = skin.splash.some(s => s.length);
+  return skin;
+}
+
+/* ---------- Geometría (unidades del HUD) ---------- */
+function laneX(side, i) { const s = LAYOUT[side]; return s.x + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
+function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
+function pxPerMs(side) { return FNF.PIXELS_PER_MS * G.chart.speed * LAYOUT[side].k; }
+function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
+
+function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow = null) {
+  if (!frames || !frames.length) return;
+  const n = frames.length, i = Math.floor(t / 1000 * 24), fr = frames[loop ? i % n : Math.min(i, n - 1)];
+  ctx.save(); ctx.globalAlpha *= alpha;
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 30 * sc; }
+  drawSparrowFrame(ctx, fr, cx - fr.fw * sc / 2, cy - fr.fh * sc / 2, sc);
+  ctx.restore();
+}
+
+/* --- Flecha vectorial (si no hay NoteAssets) --- */
+const ARROW = [[-0.46, 0], [-0.02, -0.42], [-0.02, -0.16], [0.42, -0.16], [0.42, 0.16], [-0.02, 0.16], [-0.02, 0.42]];
+const ROT = [0, -Math.PI / 2, Math.PI / 2, Math.PI];
+function drawArrow(x, y, size, lane, fill, edge = '#fff', glow = 0, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(ROT[lane]); ctx.scale(size, size);
+  ctx.beginPath(); ARROW.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath();
+  ctx.lineJoin = 'round';
+  if (glow) { ctx.shadowColor = LANE_COLORS[lane]; ctx.shadowBlur = size * 0.5 * glow; }
+  ctx.lineWidth = 0.2; ctx.strokeStyle = '#000'; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.lineWidth = 0.055; ctx.strokeStyle = edge; ctx.stroke();
+  ctx.restore();
+}
+
+/* --- cola de sustain: de yA (cabeza/receptor) a yB (final) --- */
+function drawSustain(side, lane, x, yA, yB, alpha) {
+  const sk = Scene.notes, k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, down = LAYOUT[side].down;
+  const piece = sk && sk.piece[lane], end = sk && sk.end[lane];
+  const len = Math.abs(yB - yA); if (len <= 1) return;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  if (piece || end) {
+    const ref = piece || end, pw = ref.fw * sc, eh = Math.min(end ? end.fh * sc : 0, len);
+    ctx.translate(x, yA); if (down) ctx.scale(1, -1);     // en downscroll la cola va hacia arriba
+    if (piece) drawSparrowFrame(ctx, piece, -pw / 2, 0, pw / piece.fw, (len - eh + 1) / piece.fh);
+    if (end) drawSparrowFrame(ctx, end, -pw / 2, len - eh, pw / end.fw, eh / end.fh);
+  } else {
+    const w = NOTE_W * k * 0.3, top = Math.min(yA, yB);
+    ctx.fillStyle = LANE_COLORS[lane]; ctx.globalAlpha *= 0.8;
+    rr(x - w / 2, top, w, len, w / 2); ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* --- splashes --- */
+const Splashes = [];
+function spawnSplash(side, lane) {
+  const sk = Scene.notes, list = sk && sk.splash[lane];
+  Splashes.push({ side, lane, t0: G.gameTime, frames: list && list.length ? list[randInt(0, list.length - 1)] : null, fps: 24 + randInt(-2, 2) });
+  if (Splashes.length > 12) Splashes.shift();
+}
+function drawSplashes() {
+  for (let i = Splashes.length - 1; i >= 0; i--) {
+    const s = Splashes[i], t = G.gameTime - s.t0, k = LAYOUT[s.side].k, x = laneX(s.side, s.lane), y = strumCY(s.side);
+    if (s.frames) {
+      const n = s.frames.length, fi = Math.floor(t / 1000 * s.fps);
+      if (fi >= n) { Splashes.splice(i, 1); continue; }
+      const fr = s.frames[fi], sc = k;   // noteSplashes del juego ya vienen a su tamaño (escala 1)
+      ctx.save(); ctx.globalAlpha = FNF.SPLASH_ALPHA;
+      drawSparrowFrame(ctx, fr, x - fr.fw * sc / 2, y - fr.fh * sc / 2, sc); ctx.restore();
+    } else {
+      // improvisado: destello del color del carril
+      if (t > 320) { Splashes.splice(i, 1); continue; }
+      const p = t / 320, r = NOTE_W * k * (0.45 + 0.55 * p);
+      ctx.save(); ctx.globalAlpha = FNF.SPLASH_ALPHA * (1 - p); ctx.strokeStyle = LANE_COLORS[s.lane]; ctx.lineCap = 'round';
+      ctx.lineWidth = 9 * k * (1 - p) + 2;
+      for (let a = 0; a < 8; a++) { const ang = a * Math.PI / 4 + 0.3; ctx.beginPath(); ctx.moveTo(x + Math.cos(ang) * r * 0.55, y + Math.sin(ang) * r * 0.55); ctx.lineTo(x + Math.cos(ang) * r, y + Math.sin(ang) * r); ctx.stroke(); }
+      ctx.restore();
+    }
+  }
+}
+
+/* --- receptores + notas --- */
+function strumAnim(side, i) {
+  const st = G.strums[side], age = G.gameTime - st.confirmAt[i];
+  if (side === 'player' && !isBot()) {
+    if (st.pressed[i]) return (st.confirmHeld[i] || age < 150) ? ['confirm', age] : ['press', G.gameTime - st.pressAt[i]];
+    return age < 150 ? ['confirm', age] : ['static', 0];
+  }
+  return (age < 150 || st.hold[i]) ? ['confirm', age] : ['static', 0];
+}
+
+function drawStrumsAndNotes() {
+  const sk = Scene.notes, hasImg = sk && sk.ok;
+  for (const side of ['opponent', 'player']) {
+    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side);
+    for (let i = 0; i < 4; i++) {
+      const x = laneX(side, i), [anim, t] = strumAnim(side, i);
+      if (hasImg && sk.head[i]) {
+        if (anim === 'confirm') {
+          if (sk.confirm[i]) drawFrameCentered(sk.confirm[i], t, x, y, sc);
+          else drawFrameCentered(sk.head[i], 0, x, y, sc * (1 + 0.08 * Math.max(0, 1 - t / 140)), 1, false, LANE_COLORS[i]);
+        } else if (anim === 'press') drawFrameCentered(sk.press[i], t, x, y, sc * (sk.placeholder[i] ? 0.92 : 1));
+        else drawFrameCentered(sk.strum[i], 0, x, y, sc, 1);
+        continue;
+      }
+      const sz = NOTE_W * k * 0.95;
+      if (anim === 'confirm') drawArrow(x, y, sz * (1 + 0.08 * Math.max(0, 1 - t / 140)), i, LANE_COLORS[i], '#fff', 1.2);
+      else if (anim === 'press') drawArrow(x, y, sz * 0.92, i, LANE_DARK[i], '#ddd');
+      else drawArrow(x, y, sz, i, '#87a3ad', '#c7d6e0', 0, 0.9);
+    }
+  }
+  // notas (y colas de sustain). En celular vertical cada carril se recorta a su zona de la pantalla.
+  const clips = LAYOUT.portrait ? { opponent: [0, LAYOUT.clip.oppBottom], player: [LAYOUT.clip.playerTop, V.h] } : null;
+  for (const side of ['opponent', 'player']) {
+    ctx.save();
+    if (clips) { ctx.beginPath(); ctx.rect(-50, clips[side][0], V.w + 100, clips[side][1] - clips[side][0]); ctx.clip(); }
+    drawNotesOf(side);
+    ctx.restore();
+  }
+  drawSplashes();
+}
+function drawNotesOf(only) {
+  const sk = Scene.notes, hasImg = sk && sk.ok;
+  for (const n of G.chart.notes) {
+    if (n.side !== only) continue;
+    if (n.time - G.songPos > 4000) break;
+    const side = n.side, k = LAYOUT[side].k, y = noteY(side, n.time), x = laneX(side, n.lane), down = LAYOUT[side].down;
+    const off = (yy) => down ? yy < -NOTE_W || yy > V.h + NOTE_W * 4 : yy > V.h + NOTE_W || yy < -NOTE_W * 4;
+    if (n.sustain > 0 && !n.dropped && !(n.hit && !n.holding)) {
+      const yEnd = noteY(side, n.time + n.sustain), yStart = n.hit ? strumCY(side) : y;
+      if (!(off(yStart) && off(yEnd))) drawSustain(side, n.lane, x, yStart, yEnd, n.missed ? 0.3 : 1);
+    }
+    if (n.hit) continue;
+    if (y < -NOTE_W * 2 || y > V.h + NOTE_W * 2) continue;
+    if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, n.missed ? 0.35 : 1);
+    else drawArrow(x, y, NOTE_W * k * 0.95, n.lane, LANE_COLORS[n.lane], '#fff', 0, n.missed ? 0.35 : 1);
+  }
+}
