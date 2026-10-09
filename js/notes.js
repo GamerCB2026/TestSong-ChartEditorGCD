@@ -157,9 +157,13 @@ function strumAnim(side, i) {
 function drawStrumsAndNotes() {
   const sk = Scene.notes, hasImg = sk && sk.ok;
   for (const side of ['opponent', 'player']) {
-    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side);
-    ctx.save(); ctx.globalAlpha = LAYOUT[side].alpha ?? 1;
+    const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0, lane: [] };   // alpha/visible/x/y que tocan los scripts .hxc
+    if (!ss.visible) continue;
+    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side), base = (LAYOUT[side].alpha ?? 1) * ss.alpha;
+    ctx.save(); ctx.translate(ss.x, ss.y);
     for (let i = 0; i < 4; i++) {
+      const ln = ss.lane[i] || { alpha: 1, visible: true }; if (!ln.visible) continue;
+      ctx.globalAlpha = clamp(base * ln.alpha, 0, 1);
       const x = laneX(side, i), [anim, t] = strumAnim(side, i);
       if (hasImg && sk.head[i]) {
         if (anim === 'confirm') {
@@ -176,12 +180,12 @@ function drawStrumsAndNotes() {
     }
     ctx.restore();
   }
-  // notas (y colas de sustain). En celular vertical cada carril se recorta a su zona de la pantalla.
-  const clips = LAYOUT.portrait ? { opponent: [0, LAYOUT.clip.oppBottom], player: [LAYOUT.clip.playerTop, V.h] } : null;
+  // notas (y colas de sustain). Rival en "mini modo" (controles V-Slice: Flechas): solo receptores.
   for (const side of ['opponent', 'player']) {
-    ctx.save();
-    if (clips) { ctx.beginPath(); ctx.rect(-50, clips[side][0], V.w + 100, clips[side][1] - clips[side][0]); ctx.clip(); }
-    ctx.globalAlpha = LAYOUT[side].alpha ?? 1;
+    const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0 };
+    if (!ss.visible || LAYOUT[side].hideNotes) continue;
+    ctx.save(); ctx.translate(ss.x, ss.y);
+    ctx.globalAlpha = clamp((LAYOUT[side].alpha ?? 1) * ss.alpha, 0, 1);
     drawNotesOf(side);
     ctx.restore();
   }
@@ -198,9 +202,18 @@ function drawNotesOf(only) {
       const yEnd = noteY(side, n.time + n.sustain), yStart = n.hit ? strumCY(side) : y;
       if (!(off(yStart) && off(yEnd))) drawSustain(side, n.lane, x, yStart, yEnd, n.missed ? 0.3 : 1);
     }
-    if (n.hit) continue;
+    if (n.hit || n.passed) continue;
     if (y < -NOTE_W * 2 || y > V.h + NOTE_W * 2) continue;
-    if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, n.missed ? 0.35 : 1);
-    else drawArrow(x, y, NOTE_W * k * 0.95, n.lane, LANE_COLORS[n.lane], '#fff', 0, n.missed ? 0.35 : 1);
+    const a = n.missed ? 0.35 : 1;
+    // note kind con estilo propio (noteStyleId del .hxc + data/notestyles/<id>.json)
+    const st = n.kind ? NoteStyles.headFor(n.kind) : null;
+    if (st && st.head && st.head[n.lane]) drawFrameCentered(st.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k * (st.scale || 1), a);
+    else if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, a);
+    else drawArrow(x, y, NOTE_W * k * 0.95, n.lane, LANE_COLORS[n.lane], '#fff', 0, a);
+    // note kind "hurt" sin estilo cargado: marca roja para distinguirla
+    if (!st && n.kind && NoteKinds.isHurt(n.kind)) {
+      ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = '#ff2a2a'; ctx.lineWidth = 7 * k; const r = NOTE_W * k * 0.28;
+      ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke(); ctx.restore();
+    }
   }
 }

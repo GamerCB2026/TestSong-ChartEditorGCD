@@ -25,7 +25,7 @@ function text(t, x, y, size, color = '#fff', align = 'center', weight = '900', f
 }
 
 /* ---------- Personaje real ---------- */
-const NEEDED_ANIM = /^(idle|danceLeft|danceRight|idle-hold|sing(LEFT|DOWN|UP|RIGHT)(miss)?(-hold)?|hey|cheer|combo\d+|drop\d+)$/;
+const NEEDED_ANIM = /^(idle|danceLeft|danceRight|idle-hold|sing(LEFT|DOWN|UP|RIGHT)(miss)?(-[A-Za-z0-9]+)?(-hold)?|hey|cheer|combo\d+|drop\d+)$/;
 class RealChar {
   constructor(role, id, data, anims, missing, kind, where) {
     Object.assign(this, { role, id, data, anims, missing, kind, where });
@@ -83,10 +83,12 @@ class RealChar {
     const every = Math.max(1, Math.round(this.danceEvery || 1));
     if (((beat % every) + every) % every === 0) this.dance();
   }
-  sing(lane, miss, holdMs) {
+  sing(lane, miss, holdMs, suffix = '') {
     const dir = LANE_DIRS[lane]; let n = 'sing' + dir + (miss ? 'miss' : '');   // sin intercambio LEFT/RIGHT (igual que el juego)
     this.missTint = false;
-    if (!this.anims.has(n)) { if (miss) this.missTint = true; n = 'sing' + dir; }
+    // note kind con sufijo (alt → singLEFT-alt): si el personaje no la tiene, canta la normal
+    if (suffix && this.anims.has(n + suffix)) n += suffix;
+    else if (!this.anims.has(n)) { if (miss) this.missTint = true; n = 'sing' + dir; }
     if (!this.play(n, true)) { this.play(this.hasLR ? 'danceRight' : 'idle', true); }
     const step = G.chart.crochet / 4;
     this.holdUntil = G.gameTime + holdMs;
@@ -112,7 +114,7 @@ class RealChar {
     else if (G.gameTime >= this.holdUntil && this.curName.endsWith('-hold') && !this.curName.startsWith('idle')) this.play(this.curName.replace(/-hold$/, ''), false);
   }
   draw(M) {   // M = matriz mundo -> píxeles del canvas
-    const a = this.cur; if (!a) return;
+    const a = this.cur; if (!a || this.visible === false) return;
     const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off = a.off || [0, 0];
     ctx.save();
     ctx.globalAlpha = this.alpha ?? 1;

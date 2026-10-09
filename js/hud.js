@@ -114,12 +114,4 @@ function drawHUD() {
   if (Scene.loading) text('Cargando assets…', 14, V.h - 20, 14, 'rgba(255,255,255,' + (0.5 + 0.4 * Math.sin(G.gameTime / 200)) + ')', 'left', '700');
 }
 
-/* zonas táctiles (pantalla completa, 4 columnas) */
-function drawTouchZones() {
-  if (G.mode !== 'mobile') return;
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  for (let i = 0; i < 4; i++) {
-    ctx.fillStyle = LANE_COLORS[i]; ctx.globalAlpha = G.strums.player.pressed[i] ? 0.22 : 0.05; ctx.fillRect(i * W / 4, 0, W / 4, H);
-    ctx.globalAlpha = 0.45; ctx.fillRect(i * W / 4, H - 5, W / 4, 5); ctx.globalAlpha = 1;
-  }
-}
+/* zonas táctiles: js/movil.js (drawTouchZones) */

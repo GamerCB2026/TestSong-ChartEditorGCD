@@ -84,6 +84,10 @@ function statusLines() {
   out.push(Sfx.found.scrollMenu ? `✔ sonido de menú: ${Sfx.found.scrollMenu}` : '✘ sonido de menú: falta sounds/scrollMenu.ogg');
   out.push(Music.has ? `✔ música de la canción: ${Music.tracks.map(t => (t.name || t.role) + ' [' + t.role + ']').join(', ')} · ${Music.mode === 'webaudio' ? 'Web Audio (reloj del AudioContext)' : '<audio> + resincronización'}` : '✘ música de la canción: no hay Inst/Voices (demo sin audio)');
   if (G.chart) out.push(`✔ chart: ${G.chart.title} · formato ${G.chart.format || '?'} · ${G.chart.notes.length} notas · dificultad ${G.chart.difficulty || '—'} · eventos: ${Events.summary()}`);
+  if (G.pack) out.push(`✔ variación: ${G.variation} · disponibles: ${G.pack.vars.map(v => v.id).join(', ')} · ${G.pack.entries.length} dificultades`);
+  for (const rec of Mods.scripts.values()) out.push(`✔ script ${rec.name}: ${[...rec.events, ...rec.kinds, ...rec.modules].join(', ') || 'sin registros'} (imitación)`);
+  if (G.chart) { const u = ModUI.unknown(G.chart); if (u.ev.size || u.nk.size) out.push(`✘ sin .hxc: ${[...u.ev.keys(), ...u.nk.keys()].join(', ')} (Assets cargados → Eventos / note kinds)`); }
+  out.push(...UserAssets.statusLines());
   for (const m of SongLoad.missing) out.push('✘ ' + m);
   if (!Sfx.unlocked) out.push('… el sonido se activa al primer toque/tecla (regla del navegador)');
   return out;
@@ -112,18 +116,21 @@ async function loadChart(chart, audio = [], opts = {}) {
   if (!opts.keepLoader) Loader.reset(opts.label);
   Loader.active = true; G.paused = true; Music.pause(); hideOverlay();
   G.chart = chart; G.speed = chart.speed;
-  await Promise.all([loadScene(chart.scene || {}), opts.keepAudio ? null : Music.set(audio), Events.preload(chart)]);
+  // personajes / escenario elegidos en "Assets cargados" mandan sobre los del chart
+  const ids = Object.assign({}, chart.scene || {}, UserAssets.overrides());
+  await Promise.all([loadScene(ids), opts.keepAudio ? null : Music.set(audio), Events.preload(chart), Mods.ready, opts.minMs ? new Promise(ok => setTimeout(ok, opts.minMs)) : null]);
   if (tok !== loadToken) return;
   Loader.finish();
   restart(true);
   if (!params.has('t') || opts.ready) openOverlay('ready');
   else closeOverlay();
+  ModUI.check(chart);    // eventos / note kinds desconocidos → ventana para cargar sus .hxc
 }
 
 /* Reinicia la canción (paused = queda detenida esperando "Jugar") */
 function restart(paused) {
   const c = G.chart;
-  c.notes.forEach(n => { n.judged = n.hit = n.missed = n.holding = n.dropped = n.skipped = false; });
+  c.notes.forEach(n => { n.judged = n.hit = n.missed = n.holding = n.dropped = n.skipped = n.passed = false; });
   const start = params.has('t') && !G.startedOnce ? +params.get('t') : -c.crochet * 5;   // Countdown.hx: empieza 5 beats antes
   G.startedOnce = true;
   Music.pause(); Music.seek(start);
@@ -134,6 +141,7 @@ function restart(paused) {
   Popups.length = 0; Splashes.length = 0;
   resetActors();
   Cam.init = false; Scene.focus = 'dad';
+  Mods.resetRuntime(true);
   Events.seek(Math.max(0, start));         // eventos en t<=0 (p. ej. FocusCamera inicial) se aplican al instante
   if (start > 0) skipNotesBefore(start);
   Music.setVolume('player', 1); Music.setVolume('voices', 1);
@@ -151,7 +159,7 @@ function resetActors() {
 function skipNotesBefore(pos) {
   for (const n of G.chart.notes) {
     const skip = n.time < pos;
-    n.judged = n.skipped = skip; n.hit = n.missed = n.holding = n.dropped = false;
+    n.judged = n.skipped = skip; n.hit = n.missed = n.holding = n.dropped = n.passed = false;
   }
 }
 /* Buscar (barra de tiempo de la pausa): canción + chart + eventos juntos */
@@ -164,6 +172,7 @@ function seekTo(pos) {
   Popups.length = 0; Splashes.length = 0;
   resetActors();
   Cam.init = false;
+  Mods.resetRuntime(false);
   Events.seek(pos);
   if (!c.hasFocusEvents) Scene.focus = nextFocus(pos) || Scene.focus;
 }
@@ -171,16 +180,44 @@ function songLength() { return Math.max(G.chart.endTime - 1800, Music.duration |
 function nextFocus(pos) { const n = G.chart.notes.find(n => n.time >= pos); return n ? (n.side === 'player' ? 'bf' : 'dad') : null; }
 
 function changeHealth(delta) {
+  if (!Number.isFinite(delta)) return;
   G.health = clamp(G.health + delta, 0, FNF.HEALTH_MAX);
   if (G.health <= 0 && !isBot()) openOverlay('over');
 }
 
-function sing(ch, lane, miss = false, holdMs = 0) {
+function sing(ch, lane, miss = false, holdMs = 0, suffix = '') {
   ch.pose = LANE_NAMES[lane]; ch.miss = miss; ch.poseAt = G.gameTime;
   ch.poseUntil = G.gameTime + Math.max(G.chart.crochet * 0.85, holdMs);
   const real = Scene.chars[ch === G.bf ? 'bf' : 'dad'];
-  if (real) real.sing(lane, miss, holdMs);
+  if (real) real.sing(lane, miss, holdMs, suffix);
 }
+/* animación especial (hey, ugh, golpes de Blazin'…): la primera que exista en el personaje */
+function playSpecial(role, names, alt) {
+  const c = Scene.chars[role]; if (!c) return false;
+  const list = alt && names.length > 1 ? [names[1], names[0], ...names.slice(2)] : names;
+  for (const nm of list) if (c.anims.has(nm)) { c.playEvent(nm, true); return true; }
+  return false;
+}
+/* animación de una nota según su note kind (juego base imitado o .hxc) */
+function noteAnim(n, kind, miss) {
+  const isP = n.side === 'player', st = isP ? G.bf : G.dad, role = isP ? 'bf' : 'dad';
+  const plain = () => sing(st, n.lane, miss, miss ? 0 : n.sustain, kind && kind.suffix || '');
+  if (!kind || !kind.id) return plain();
+  if (kind.blazin) {
+    // weekend-1-*: Pico (jugador) y Darnell (rival) hacen los golpes; si no tienen esas anims, cantan normal
+    if (miss) { if (!playSpecial('bf', ['hitHigh', 'hitLow'])) plain(); return; }
+    const alt = Math.round(n.time / 10) % 2 === 1;
+    const a = playSpecial('bf', kind.blazin[0], alt), b = playSpecial('dad', kind.blazin[1], alt);
+    if (!(isP ? a : b)) plain();
+    return;
+  }
+  if (kind.hurt && !miss && isP) return sing(st, n.lane, true);
+  if (kind.noAnim && !miss) return;
+  if (kind.gf) { const gf = Scene.chars.gf; if (gf) { gf.sing(n.lane, miss, miss ? 0 : n.sustain); return; } return plain(); }
+  if (kind.special && !miss && playSpecial(role, kind.special)) return;
+  plain();
+}
+const needsModEvent = n => (n.kind && Mods.kinds.has(n.kind)) || Mods.modules.size > 0;
 
 /* Scoring.hx (PBOT1) */
 function scoreNote(ms) {
@@ -190,18 +227,23 @@ function scoreNote(ms) {
 }
 
 function hitNote(n, diff) {
-  n.judged = n.hit = true; n.holding = n.sustain > 0;
+  const kind = n.kind ? NoteKinds.get(n.kind) : null, isP = n.side === 'player';
+  const j = CONFIG.judgments.find(j => diff <= j.ms) || CONFIG.judgments[CONFIG.judgments.length - 1];
+  // onNoteHit de los scripts (.hxc): pueden cancelar la nota o cambiar la vida
+  const ev = needsModEvent(n) ? Mods.noteEvent('NOTE_HIT', n, { judgement: j.id, score: isP ? scoreNote(diff) : 0, healthChange: isP ? (kind && kind.hitHealth != null ? kind.hitHealth : j.health) : 0, isComboBreak: false, hitDiff: diff }) : null;
+  n.judged = n.hit = true; n.holding = n.sustain > 0 && !(ev && ev.canceled);
+  if (ev && ev.canceled) return;
   const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime;
-  if (n.side === 'player') { s.confirmHeld[n.lane] = true; Music.setVolume('player', 1); Music.setVolume('voices', 1); }
-  sing(n.side === 'player' ? G.bf : G.dad, n.lane, false, n.sustain);
-  if (n.side === 'opponent') {
+  if (isP) { s.confirmHeld[n.lane] = true; Music.setVolume('player', 1); Music.setVolume('voices', 1); }
+  noteAnim(n, kind, false);
+  if (!isP) {
     if (G.mode === 'demo' && G.health > 0.35) changeHealth(-CONFIG.demoOppDrain);
     return;
   }
-  const j = CONFIG.judgments.find(j => diff <= j.ms) || CONFIG.judgments[CONFIG.judgments.length - 1];
-  G.score += scoreNote(diff); G.judged++; G.accSum += j.acc;
+  if (kind && kind.hurt) { changeHealth(ev ? +ev.healthChange || 0 : kind.hitHealth); playMissSound(); return; }   // nota "hurt": tocarla duele
+  G.score += ev ? +ev.score || 0 : scoreNote(diff); G.judged++; G.accSum += j.acc;
   if (j.id === 'bad' || j.id === 'shit') breakCombo(); else { G.combo++; comboMilestone(); }
-  changeHealth(j.health);
+  changeHealth(ev ? +ev.healthChange || 0 : j.health);
   if (j.id === 'sick') spawnSplash(n.side, n.lane);
   displayRating(j.id);
   if (G.combo >= 10) displayCombo(G.combo);
@@ -214,13 +256,18 @@ function breakCombo() {
 }
 
 function missNote(n) {
+  const kind = n.kind ? NoteKinds.get(n.kind) : null;
+  if (kind && kind.hurt && !Mods.kinds.has(n.kind)) { n.judged = n.passed = true; return; }   // dejar pasar una nota "hurt" no es fallo
+  const ev = needsModEvent(n) ? Mods.noteEvent('NOTE_MISS', n, { healthChange: FNF.HEALTH_MISS, playSound: true }) : null;
   n.judged = n.missed = true;
+  if (ev && ev.canceled) { n.missed = false; n.passed = true; return; }
+  if (kind && kind.hurt) { n.missed = false; n.passed = true; if (ev) changeHealth(+ev.healthChange || 0); return; }
   if (G.combo >= 10) displayCombo(0);
   G.misses++; G.judged++; G.score -= 100; breakCombo();
-  sing(G.bf, n.lane, true);
+  noteAnim(n, kind, true);
   Music.setVolume('player', 0); Music.setVolume('voices', 0);     // V-Slice: se silencia la voz del jugador
-  playMissSound();
-  changeHealth(FNF.HEALTH_MISS);
+  if (!ev || ev.playSound !== false) playMissSound();
+  changeHealth(ev ? +ev.healthChange || 0 : FNF.HEALTH_MISS);
 }
 
 /* En demo el bot falla a propósito en "olas" para que la barra de vida se mueva */
@@ -236,6 +283,7 @@ function onBeat(beat) {
   for (const ic of Object.values(Scene.icons)) if (ic) ic.bop();                // HealthIcon.onStepHit (cada 4 steps)
   if (Cam.zoomRate > 0 && beat % Cam.zoomRate === 0 && G.hudZoom < 1.35) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }   // SetCameraBop
   if (beat >= -4 && beat <= -1) Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME);   // introTHREE/TWO/ONE/GO
+  if (Mods.modules.size) Mods.hook('onBeatHit', { beat });
 }
 
 function update(dt) {
@@ -247,6 +295,8 @@ function update(dt) {
   Events.update(G.songPos);
   const beat = Math.floor(G.songPos / c.crochet);
   if (beat !== G.lastBeat) { for (let b = G.lastBeat + 1; b <= beat && b - G.lastBeat < 8; b++) onBeat(b); G.lastBeat = beat; }
+  if (Mods.modules.size) { const step = Math.floor(G.songPos / (c.crochet / 4)); if (step !== G.lastStep) { G.lastStep = step; Mods.hook('onStepHit', { step }); } }
+  Mods.update(dt); CamFX.tick();
 
   // cámara / HUD: vuelven a 1 (0.95 por frame a 60 fps)
   const decay = Math.pow(0.95, dt / (1000 / 60));
@@ -275,7 +325,8 @@ function update(dt) {
     if (!focusSet && !c.hasFocusEvents) { focusSet = true; if (diff < c.crochet * 2 && G.songPos >= 0) Scene.focus = n.side === 'player' ? 'bf' : 'dad'; }
     if (n.side === 'opponent') { if (diff <= 0) hitNote(n, 0); continue; }
     if (isBot() && diff <= 0) {
-      if (G.mode === 'demo' && demoShouldMiss(n)) { /* deja pasar la nota */ }
+      if (n.kind && NoteKinds.isHurt(n.kind)) { /* el bot esquiva las notas que hacen daño */ }
+      else if (G.mode === 'demo' && demoShouldMiss(n)) { /* deja pasar la nota */ }
       else { hitNote(n, 0); continue; }
     }
     if (diff < -FNF.HIT_WINDOW_MS) missNote(n);
@@ -311,34 +362,36 @@ function release(lane) {
 /* ---------- layout (pantalla del juego 1280x720 escalada para caber) ---------- */
 const V = { w: 1280, h: 720, s: 1, ox: 0, oy: 0, portrait: false };
 const LAYOUT = { opponent: {}, player: {}, bar: {}, popup: {}, clip: {}, portrait: false };
+/* Solo horizontal (en celular vertical se muestra "Gira tu dispositivo"). En celular la pantalla del juego
+   se ensancha al aspecto del teléfono (como V-Slice móvil: FlxG.width crece) para llenarla sin barras. */
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-  const portrait = H > W * 1.05;
-  V.portrait = LAYOUT.portrait = portrait;
-  if (!portrait) {
-    V.w = FNF.WIDTH; V.h = FNF.HEIGHT; V.s = Math.min(W / V.w, H / V.h); V.ox = (W - V.w * V.s) / 2; V.oy = (H - V.h * V.s) / 2;
+  V.portrait = LAYOUT.portrait = false;
+  const wide = Movil.isTouch() && W > H;
+  V.h = FNF.HEIGHT; V.w = wide ? Math.max(FNF.WIDTH, Math.round(FNF.HEIGHT * W / H)) : FNF.WIDTH;
+  V.s = Math.min(W / V.w, H / V.h); V.ox = (W - V.w * V.s) / 2; V.oy = (H - V.h * V.s) / 2;
+  const vsArrows = G.mode === 'mobile' && Opts.vslice === 'arrows';
+  if (vsArrows) {
+    // FunkinHitbox "Arrows" (PlayState.initNoteHitbox): strumline del jugador grande abajo al centro, downscroll forzado,
+    // rival en mini modo (0.4, solo receptores) arriba a la izquierda, barra de vida arriba
+    const amp = (V.w / V.h) / (FNF.WIDTH / FNF.HEIGHT);
+    const kp = (V.h / V.w) * 1.95 * amp, pitch = (V.h / V.w) * 2.8 * amp * FNF.NOTE_SPACING, ko = 0.4 * amp;
+    const px = V.w / 2 - (FNF.INITIAL_OFFSET * kp + 1.5 * pitch) - NOTE_W * kp / 2;
+    Object.assign(LAYOUT.player, { x: px, y: (V.h - NOTE_W * kp) * 0.95 - 24, k: kp, spacing: pitch / (FNF.NOTE_SPACING * kp), down: true, alpha: 1, splitX: null, hideNotes: false });
+    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET - 30, y: FNF.STRUMLINE_Y_OFFSET * 0.3, k: ko, spacing: 1, down: false, alpha: 1, splitX: null, hideNotes: true });
+    Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: V.h * 0.1 });
+  } else {
     const down = Opts.isDown(), sy = down ? V.h - NOTE_W - FNF.STRUMLINE_Y_OFFSET : FNF.STRUMLINE_Y_OFFSET;
     const mid = Opts.middlescroll, centerX = V.w / 2 - (FNF.INITIAL_OFFSET + 1.5 * FNF.NOTE_SPACING) - NOTE_W / 2;
     // middlescroll (como Psych/V-Slice): jugador al centro; rival a los lados (2 y 2) y transparente
-    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET, y: sy, k: 1, spacing: 1, down, alpha: mid ? 0.35 : 1, splitX: mid ? V.w / 2 + FNF.STRUMLINE_X_OFFSET : null });
-    Object.assign(LAYOUT.player, { x: mid ? centerX : V.w / 2 + FNF.STRUMLINE_X_OFFSET, y: sy, k: 1, spacing: 1, down, alpha: 1, splitX: null });
+    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET, y: sy, k: 1, spacing: 1, down, alpha: mid ? 0.35 : 1, splitX: mid ? V.w / 2 + FNF.STRUMLINE_X_OFFSET : null, hideNotes: false });
+    Object.assign(LAYOUT.player, { x: mid ? centerX : V.w / 2 + FNF.STRUMLINE_X_OFFSET, y: sy, k: 1, spacing: 1, down, alpha: 1, splitX: null, hideNotes: false });
     Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: down ? V.h * 0.1 : V.h * 0.9 });
-  } else {
-    // celular vertical: rival en mini arriba, jugador grande abajo (como el modo móvil del juego)
-    V.w = 720; V.s = W / V.w; V.h = H / V.s; V.ox = 0; V.oy = 0;
-    const center = k => V.w / 2 - (FNF.INITIAL_OFFSET + 1.5 * FNF.NOTE_SPACING) * k - NOTE_W * k / 2;
-    const ko = 0.55, kp = Math.min(1.3, (V.w - 40) / (4 * FNF.NOTE_SPACING));
-    const down = Opts.isDown(), mid = Opts.middlescroll;
-    const barTop = FNF.STRUMLINE_Y_OFFSET + NOTE_W * ko + 70;
-    Object.assign(LAYOUT.opponent, { x: center(ko), y: FNF.STRUMLINE_Y_OFFSET + 10, k: ko, spacing: 1, down: false, alpha: mid ? 0.35 : 1, splitX: null });
-    // downscroll: receptores abajo (las notas bajan... suben desde abajo); upscroll: receptores arriba, bajo la barra de vida
-    Object.assign(LAYOUT.player, { x: center(kp), y: down ? V.h - NOTE_W * kp - FNF.STRUMLINE_Y_OFFSET - 40 : barTop + 120, k: kp, spacing: 1, down, alpha: 1, splitX: null });
-    Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: down ? barTop : V.h - 150 });
-    Object.assign(LAYOUT.clip, { oppBottom: down ? V.h * 0.6 : barTop + 100, playerTop: down ? LAYOUT.bar.y + 110 : barTop + 100 });
   }
-  Object.assign(LAYOUT.popup, { rx: V.w * 0.474, ry: (portrait ? V.h * 0.42 : V.h * 0.45) - 60, nx: V.w * 0.507, ny: portrait ? V.h * 0.41 : V.h * 0.44 });
+  Object.assign(LAYOUT.popup, { rx: V.w * 0.474, ry: V.h * 0.45 - 60, nx: V.w * 0.507, ny: V.h * 0.44 });
   improvLayout();
+  if (typeof Movil !== 'undefined') Movil.check();
 }
 window.addEventListener('resize', resize);
 
@@ -360,9 +413,23 @@ function drawLoading() {
   ctx.fillStyle = '#fff'; ctx.fillRect(x, y, bw * r, 4);
 }
 
+/* HUD (camHUD): pantalla del juego escalada, con su propio zoom desde el centro */
+function drawHudLayer() {
+  const hz = G.hudZoom, k = DPR * V.s * hz;
+  ctx.setTransform(k, 0, 0, k, DPR * (V.ox + V.s * V.w / 2 * (1 - hz)), DPR * (V.oy + V.s * V.h / 2 * (1 - hz)));
+  const hudSprites = ModRT.sprites.filter(sp => sp.onHud);
+  for (const sp of hudSprites) if (sp.behind) { ctx.save(); sp.render(null); ctx.restore(); }   // insert(indexOf(strumLine) - 1)
+  drawStrumsAndNotes();
+  for (const sp of hudSprites) if (!sp.behind) { ctx.save(); sp.render(null); ctx.restore(); }
+  drawHUD();
+}
 function render(dt = 16) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   if (Loader.active || !G.chart) { drawLoading(); return; }
+  // efectos de cámara de los scripts (rotar/mover/alpha/shake de camHUD): el HUD se dibuja aparte y se pega transformado
+  let hudLayer = null;
+  if (CamFX.active('hud')) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); drawHudLayer(); hudLayer = CamFX.snapshot('hud'); }
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, W, H);
   if (Scene.world) renderWorld(G.paused ? 0 : dt, Cam.bop);
   else {
@@ -374,11 +441,11 @@ function render(dt = 16) {
     drawCharacter(G.bf, drawBoy, L.plX, L.floorY, s * 1.05, -1);      // bf mira hacia el rival (izquierda)
     ctx.restore();
   }
-  // HUD (camHUD): 1280x720 escalado, con su propio zoom desde el centro
-  const hz = G.hudZoom, k = DPR * V.s * hz;
-  ctx.setTransform(k, 0, 0, k, DPR * (V.ox + V.s * V.w / 2 * (1 - hz)), DPR * (V.oy + V.s * V.h / 2 * (1 - hz)));
-  drawStrumsAndNotes();
-  drawHUD();
+  CamFX.applyGame();            // camGame: ángulo, desplazamiento, alpha, shake
+  CamFX.overlay('game');        // camGame.flash / fade
+  if (hudLayer) CamFX.drawLayer(hudLayer, 'hud'); else drawHudLayer();
+  CamFX.overlay('hud');
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   drawTouchZones();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
@@ -431,6 +498,8 @@ window.GCDPlay = {
   loadChart(raw, meta, audioBlobs = []) { G.raw = raw; G.meta = meta; return loadChart(Chart.parse(raw, meta), audioBlobs.map((b, i) => b && (b.blob ? b : { blob: b, role: i ? 'voices' : 'inst' }))); },
   restart, pause: () => openOverlay('pause'), resume: () => closeOverlay(), setMode, seek: seekTo, state: G, scene: Scene, layout: LAYOUT,
   music: Music, events: Events, cam: Cam, opts: Opts, loader: Loader, version: VERSION,
+  mods: Mods, camfx: CamFX, noteKinds: NoteKinds, userAssets: UserAssets, modUI: ModUI, vfs: VFS, movil: Movil, hx: HX,
+  get pack() { return G.pack; }, get variation() { return G.variation; },
   reloadAssets: ids => { Scene.ids = null; Scene.notes = null; return loadScene(ids); },
   status: statusLines,
 };
@@ -444,6 +513,7 @@ async function boot() {
   resize();
   requestAnimationFrame(frame);
   Loader.reset('Cargando…');
+  Mods.ready = Mods.restore().catch(e => console.warn('[hxc] restore', e));   // scripts .hxc y archivos guardados (IndexedDB)
   const [, , , song] = await Promise.all([
     Fonts.load(), loadHudAssets(), loadSounds(),
     /^https?:/.test(location.protocol) ? loadSongById(ASSET_CFG.defaultSongId).catch(e => { console.warn('canción por defecto no válida', e); SongLoad.missing.push('canción por defecto: ' + e.message); return null; }) : null,

@@ -69,19 +69,10 @@ function worldView(dt) {
   if (Cam.zoomTween) { Cam.zoom = tweenValue(Cam.zoomTween); if (tweenDone(Cam.zoomTween)) Cam.zoomTween = null; }
   const pz = +params.get('zoom') || 1;   // ?zoom=0.8 para alejar la cámara
   let k, vx, vy, zoom, target;
-  if (V.portrait) {
-    // celular vertical: se ven los dos personajes a la vez (cámara fija entre ambos)
-    k = W / 1280; vx = 0; vy = H * 0.44 - k * 360;
-    const dx = sd.characters?.dad?.position?.[0] ?? 335, bx = sd.characters?.bf?.position?.[0] ?? 990;
-    zoom = clamp(1280 / (Math.abs(bx - dx) + 560), 0.35, Cam.stageZoom * pz) * (Cam.zoom / (Cam.stageZoom || 1));
-    const a = pts.dad || [dx, 600], b = pts.bf || [bx, 600];
-    target = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    Cam.tween = null;
-  } else {
-    // igual que el juego: 1280x720 escalado para caber; lo que sobra a los lados muestra más escenario
-    k = V.s; vx = V.ox; vy = V.oy; zoom = Cam.zoom * pz;
-    target = Cam.follow || pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
-  }
+  // igual que el juego: 1280x720 escalado para caber; lo que sobra a los lados muestra más escenario
+  // (en celular horizontal la pantalla se ensancha como en V-Slice móvil)
+  k = V.s; vx = (W - 1280 * V.s) / 2; vy = (H - 720 * V.s) / 2; zoom = Cam.zoom * pz;
+  target = Cam.follow || pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
   if (Cam.tween) { const p = tweenValue(Cam.tween); Cam.x = p[0]; Cam.y = p[1]; if (tweenDone(Cam.tween)) Cam.tween = null; }
   else if (!Cam.init) { Cam.x = target[0]; Cam.y = target[1]; Cam.init = true; }
   else { const f = 1 - Math.pow(1 - FNF.CAMERA_FOLLOW_RATE, dt / (1000 / 60)); Cam.x = lerp(Cam.x, target[0], f); Cam.y = lerp(Cam.y, target[1], f); }
@@ -95,6 +86,7 @@ function worldMatrix(v, zoom, sfx, sfy) {
 }
 
 function drawProp(p, v, zoom) {
+  if (p.visible === false) return;
   const M = worldMatrix(v, zoom, p.scroll[0], p.scroll[1]);
   ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
   ctx.globalAlpha = p.alpha; ctx.imageSmoothingEnabled = !p.isPixel;
@@ -144,6 +136,9 @@ function renderWorld(dt, bump) {
       if (role === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
     } });
   }
+  // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)
+  for (const sp of ModRT.sprites) if (!sp.onHud) layers.push({ z: sp.zIndex ?? 5000, draw: () => { ctx.save(); sp.render({ v, zoom }); ctx.restore(); } });
+  Cam.lastView = { v, zoom };
   layers.sort((a, b) => a.z - b.z).forEach(l => l.draw());
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
@@ -151,10 +146,9 @@ function renderWorld(dt, bump) {
 /* ---------- Escenario improvisado (sin assets) ---------- */
 const L = {};   // medidas del escenario improvisado
 function improvLayout() {
-  const portrait = V.portrait;
-  L.floorY = portrait ? H * 0.64 : H * 0.8;
-  L.charH = portrait ? Math.min(H * 0.3, W * 0.58) : H * 0.5;
-  L.horizon = L.floorY - (portrait ? H * 0.2 : H * 0.26);
+  L.floorY = H * 0.8;
+  L.charH = H * 0.5;
+  L.horizon = L.floorY - H * 0.26;
   L.oppX = W * 0.25; L.plX = W * 0.75;
 }
 const rndS = mulberry32(99);

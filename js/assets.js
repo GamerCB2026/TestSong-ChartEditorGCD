@@ -29,11 +29,37 @@ const Loader = {
   finish() { this.active = false; try { if (this.started > 10) localStorage.setItem('testsong-gcd-carga', String(this.started)); } catch (e) {} },
 };
 
+/* Archivos que el usuario cargó (personajes, escenario, recursos de scripts .hxc).
+   Se buscan ANTES que la red con la misma ruta del juego (p. ej. shared/images/characters/bf/Animation.json). */
+const VFS = {
+  files: new Map(),
+  norm: p => String(p || '').replace(/\\/g, '/').replace(/^\.?\//, '').replace(/^assets\//i, '').replace(/^([a-z0-9_-]+):/i, '$1/').toLowerCase(),
+  put(path, blob, name) {
+    const k = this.norm(path), old = this.files.get(k);
+    if (old && old.url && old.blob !== blob) URL.revokeObjectURL(old.url);
+    this.files.set(k, { blob, name: name || String(path).split('/').pop(), url: old && old.blob === blob ? old.url : null, path: k });
+    return k;
+  },
+  get(path) { return this.files.get(this.norm(path)) || null; },
+  has(path) { return this.files.has(this.norm(path)); },
+  url(f) { return f.url || (f.url = URL.createObjectURL(f.blob)); },
+  byBase(name) { name = String(name).toLowerCase(); for (const [k, f] of this.files) if (k.split('/').pop() === name) return f; return null; },
+};
+
 async function fetchFirst(list, kind) {
   Loader.begin();
   try { return await fetchFirstRaw(list, kind); } finally { Loader.end(); }
 }
 async function fetchFirstRaw(list, kind) {
+  for (const p of uniq(list)) {
+    const f = VFS.get(p); if (!f) continue;
+    try {
+      if (kind === 'text') return { data: await f.blob.text(), path: p, user: true };
+      if (kind === 'blob') return { data: f.blob, path: p, user: true };
+      if (kind === 'buffer') return { data: await f.blob.arrayBuffer(), path: p, user: true };
+      return { data: JSON.parse(await f.blob.text()), path: p, user: true };
+    } catch (e) { console.warn('[VFS] archivo inválido', p, e); }
+  }
   for (const p of uniq(list)) {
     try {
       const r = await fetch(assetUrl(p), { cache: 'no-cache' });
@@ -48,6 +74,8 @@ async function fetchFirstRaw(list, kind) {
 }
 function loadImg(list) {
   list = uniq(list);
+  const user = list.find(p => VFS.has(p));
+  if (user) list = [user, ...list.filter(p => p !== user)];
   return Loader.track(new Promise(resolve => {
     let i = 0;
     const next = () => {
@@ -55,7 +83,8 @@ function loadImg(list) {
       const p = list[i++], img = new Image();
       img.onload = () => { img.assetPath = p; img.naturalWidth ? resolve(img) : next(); };
       img.onerror = next;
-      img.src = assetUrl(p);
+      const vf = VFS.get(p);
+      img.src = vf ? VFS.url(vf) : assetUrl(p);
     };
     next();
   }));

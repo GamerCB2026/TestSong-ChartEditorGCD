@@ -46,7 +46,7 @@ const Chart = {
       const ss = raw.scrollSpeed || {};
       const speed = +(ss[diff] ?? ss.default ?? ss.normal ?? 1.6) || 1.6;
       const bpm = meta?.timeChanges?.[0]?.bpm || raw.bpm || 100;
-      const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0), kind: n.k || '' }));
+      const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0), kind: n.k || '', params: Array.isArray(n.p) ? n.p : null, raw: n.d | 0 }));
       const pc = meta?.playData?.characters || {};
       const scene = { bf: pc.player, dad: pc.opponent, gf: pc.girlfriend, stage: meta?.playData?.stage };
       const events = (Array.isArray(raw.events) ? raw.events : []).map(e => ({ t: +e.t || 0, e: String(e.e || ''), v: e.v }));
@@ -158,23 +158,83 @@ const Zip = {
   },
 };
 
-/* Lee los archivos elegidos (.fnfc/.zip, .json, audio) → { raw, meta, inst, voices } */
+/* Lee los archivos elegidos (.fnfc/.zip, .json, audio) → { raw, meta, inst, voices, pack }
+   pack (V-Slice): variaciones de la canción (song-metadata.json → playData.songVariations;
+   song-chart-<var>.json / song-metadata-<var>.json) + audio por variación. */
 async function readChartFiles(files) {
-  let raw = null, meta = null, inst = null; const voices = [];
-  const classify = j => { if (j && (j.timeChanges || j.playData)) meta = j; else if (!raw) raw = j; };
+  const jsons = [], audio = new Map();     // audio: nombre en minúsculas → { blob, name }
   const audioType = n => n.endsWith('.mp3') ? 'audio/mpeg' : n.endsWith('.wav') ? 'audio/wav' : 'audio/ogg';
-  const addAudio = (name, blob) => { const b = name.split('/').pop(); if (/^inst/.test(b)) inst = inst || blob; else voices.push({ blob, name: b }); };
+  const addAudio = (name, blob) => { const b = name.split('/').pop(); audio.set(b.toLowerCase(), { blob, name: b }); };
   for (const f of files) {
     const n = f.name.toLowerCase();
     if (n.endsWith('.fnfc') || n.endsWith('.zip')) {
       for (const ent of await Zip.read(await f.arrayBuffer())) {
         const en = ent.name.toLowerCase();
-        if (en.endsWith('.json')) classify(JSON.parse(new TextDecoder().decode(await ent.data())));
-        else if (/\.(ogg|mp3|wav)$/.test(en)) addAudio(en, new Blob([await ent.data()], { type: audioType(en) }));
+        if (en.endsWith('.json')) { try { jsons.push({ name: en.split('/').pop(), data: JSON.parse(new TextDecoder().decode(await ent.data())) }); } catch (e) { console.warn('json inválido en el .fnfc', en, e); } }
+        else if (/\.(ogg|mp3|wav)$/.test(en)) addAudio(ent.name, new Blob([await ent.data()], { type: audioType(en) }));
       }
-    } else if (n.endsWith('.json')) classify(JSON.parse(await f.text()));
-    else if (/\.(ogg|mp3|wav)$/.test(n)) addAudio(n, f);
+    } else if (n.endsWith('.json')) jsons.push({ name: n, data: JSON.parse(await f.text()) });
+    else if (/\.(ogg|mp3|wav)$/.test(n)) addAudio(f.name, f);
   }
+  const isMeta = j => j && (j.timeChanges || j.playData);
+  const isVSChart = j => j && j.notes && !Array.isArray(j.notes) && typeof j.notes === 'object' && !j.song;
+  const charts = {}, metas = {}; let raw = null, meta = null;
+  for (const j of jsons) {
+    if (j.name === 'manifest.json' && j.data && j.data.songId && !isMeta(j.data)) continue;
+    const vm = /-(?:chart|metadata)-([a-z0-9_]+)\.json$/.exec(j.name), v = vm ? vm[1] : 'default';
+    if (isMeta(j.data)) { if (!(v in metas)) metas[v] = j.data; if (!meta) meta = j.data; }
+    else { if (isVSChart(j.data) && !(v in charts)) charts[v] = j.data; if (!raw) raw = j.data; }
+  }
+  if (charts.default) raw = charts.default;
+  if (metas.default) meta = metas.default;
   if (!raw) throw new Error('no encontré el chart (.json) dentro de lo que cargaste');
-  return { raw, meta, inst, voices };
+  const list = [...audio.values()];
+  const inst = (audio.get('inst.ogg') || audio.get('inst.mp3') || list.find(a => /^inst/i.test(a.name)) || {}).blob || null;
+  const voices = list.filter(a => !/^inst/i.test(a.name));
+  let pack = null;
+  if (isVSChart(raw)) pack = buildSongPack(charts.default ? charts : { default: raw }, metas, audio);
+  return { raw, meta, inst, voices, pack };
+}
+
+/* variaciones disponibles: [{ id, chart, meta }] + entradas del menú de dificultad */
+function buildSongPack(charts, metas, audio) {
+  const m0 = metas.default || Object.values(metas)[0] || null;
+  const listed = (m0 && m0.playData && Array.isArray(m0.playData.songVariations)) ? m0.playData.songVariations.map(String) : [];
+  const vars = [], missing = [];
+  for (const v of uniq(['default', ...listed, ...Object.keys(charts)])) {
+    if (!charts[v]) { if (v !== 'default') missing.push(`variación "${v}": falta ${v === 'default' ? '' : '…-chart-' + v + '.json'}`); continue; }
+    const meta = metas[v] || (v === 'default' ? m0 : null);
+    if (!meta && v !== 'default') missing.push(`variación "${v}": falta …-metadata-${v}.json (uso la metadata por defecto)`);
+    vars.push({ id: v, chart: charts[v], meta: meta || m0 });
+  }
+  const entries = [];
+  for (const va of vars) {
+    const inChart = Object.keys(va.chart.notes || {}).filter(k => Array.isArray(va.chart.notes[k]));
+    const listedD = va.meta && va.meta.playData && Array.isArray(va.meta.playData.difficulties) ? va.meta.playData.difficulties.map(String) : [];
+    const ds = listedD.length ? uniq([...listedD.filter(d => inChart.includes(d)), ...inChart.filter(d => !listedD.includes(d))]) : inChart;
+    for (const d of ds) entries.push({ v: va.id, d, label: va.id === 'default' ? d : `${d} (${va.id})` });
+  }
+  return { vars, entries, audio, missing };
+}
+
+/* audio de una variación (V-Slice): Inst[-<instrumental o variación>].ogg y Voices-<personaje>[-<variación>].ogg.
+   Solo se devuelven las pistas de ESA variación (nunca todas a la vez). */
+function packAudio(pack, vid) {
+  const va = pack.vars.find(x => x.id === vid) || pack.vars[0];
+  const pd = (va.meta && va.meta.playData) || {}, ch = pd.characters || {};
+  const A = pack.audio, get = base => A.get(base.toLowerCase() + '.ogg') || A.get(base.toLowerCase() + '.mp3') || A.get(base.toLowerCase() + '.wav') || null;
+  const suf = vid && vid !== 'default' ? '-' + vid : '';
+  const out = [], notes = [];
+  const instId = ch.instrumental || '';
+  const inst = (instId && get('Inst-' + instId)) || (suf && get('Inst' + suf)) || get('Inst');
+  if (inst) out.push({ blob: inst.blob, role: 'inst', name: inst.name }); else notes.push(`falta Inst${instId ? '-' + instId : suf}.ogg`);
+  const voice = (role, id, list) => {
+    const names = uniq([...(Array.isArray(list) && list.length ? list : []), id].filter(Boolean).map(String));
+    for (const nm of names) { const f = (suf && get(`Voices-${nm}${suf}`)) || get(`Voices-${nm}`); if (f) { out.push({ blob: f.blob, role, name: f.name }); return; } }
+    if (names.length) notes.push(`sin voces de ${role === 'player' ? 'jugador' : 'rival'} (Voices-${names[0]}${suf}.ogg)`);
+  };
+  voice('player', ch.player, ch.playerVocals);
+  voice('opponent', ch.opponent, ch.opponentVocals);
+  if (!out.some(t => t.role !== 'inst')) { const v = (suf && get('Voices' + suf)) || get('Voices'); if (v) out.push({ blob: v.blob, role: 'voices', name: v.name }); }
+  return { list: out, notes };
 }

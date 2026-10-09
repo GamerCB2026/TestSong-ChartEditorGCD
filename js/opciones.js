@@ -9,23 +9,26 @@
 const OPTS_KEY = 'testsong-gcd-opciones';
 const Opts = {
   middlescroll: false,
-  downscroll: null,          // null = automático (celular vertical: abajo; PC: arriba)
+  downscroll: null,          // null = automático (arriba; con Controles V-Slice "Flechas" en táctil: abajo, como el juego)
+  vslice: 'off',             // Controles V-Slice (táctil): off = 4 zonas grandes · arrows = receptores (Flechas) · hitbox = 4 carriles invisibles
   keys: DEFAULT_KEYS.slice(),
   load() {
     try {
       const d = JSON.parse(localStorage.getItem(OPTS_KEY) || '{}');
       if (typeof d.middlescroll === 'boolean') this.middlescroll = d.middlescroll;
       if (typeof d.downscroll === 'boolean') this.downscroll = d.downscroll;
+      if (['off', 'arrows', 'hitbox'].includes(d.vslice)) this.vslice = d.vslice;
       if (Array.isArray(d.keys) && d.keys.length === 4 && d.keys.every(k => typeof k === 'string' && k)) this.keys = d.keys.slice();
     } catch (e) { /* almacenamiento bloqueado o JSON roto: valores por defecto */ }
     // la URL manda (no se guarda): ?downscroll=1 / ?middlescroll=1
     if (params.has('downscroll')) this.downscroll = params.get('downscroll') !== '0';
     if (params.has('middlescroll')) this.middlescroll = params.get('middlescroll') !== '0';
+    if (['off', 'arrows', 'hitbox'].includes(params.get('vslice'))) this.vslice = params.get('vslice');
   },
   save() {
-    try { localStorage.setItem(OPTS_KEY, JSON.stringify({ middlescroll: this.middlescroll, downscroll: this.downscroll, keys: this.keys })); } catch (e) {}
+    try { localStorage.setItem(OPTS_KEY, JSON.stringify({ middlescroll: this.middlescroll, downscroll: this.downscroll, keys: this.keys, vslice: this.vslice })); } catch (e) {}
   },
-  isDown() { return this.downscroll ?? !!V.portrait; },
+  isDown() { if (typeof G !== 'undefined' && G.mode === 'mobile' && this.vslice === 'arrows') return true; return this.downscroll ?? false; },
   /* carril de una tecla: asignación del usuario o flechas */
   laneOf(key) {
     if (key in ARROW_KEYS) return ARROW_KEYS[key];

@@ -142,7 +142,10 @@ const Events = {
         else G.speedTween = makeTween(G.speed, target, getNum(v.duration, 4) * step, Ease.get(ease, v.easeDir));
         break;
       }
-      default: break;   // eventos sin efecto en esta página (p. ej. de mods)
+      default:
+        // eventos de mods: si se cargó su .hxc, se ejecuta handleEvent (imitación); al buscar no se reproducen
+        if (!instant) { try { Mods.fireEvent(ev); } catch (e) { console.warn('[hxc] evento', ev.e, e); HX.note(`${ev.e}: error al ejecutar (${e.message})`); } }
+        break;
     }
   },
   iconKey(ch, v) { return JSON.stringify([ch, v.id, v.scale, v.flipX, v.isPixel, v.offsetX, v.offsetY]); },
@@ -162,6 +165,6 @@ const Events = {
   },
   summary() {
     const c = {}; for (const e of this.list) c[e.e] = (c[e.e] || 0) + 1;
-    return Object.entries(c).map(([k, n]) => `${k}×${n}`).join(', ') || 'ninguno';
+    return Object.entries(c).map(([k, n]) => `${k}×${n}${Mods.BUILTIN_EVENTS.includes(k) ? '' : Mods.events.has(k) ? ' (.hxc)' : ' (sin .hxc)'}`).join(', ') || 'ninguno';
   },
 };

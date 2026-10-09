@@ -29,8 +29,11 @@ function menuItems(menu) {
       ['middlescroll', 'Middlescroll: ' + onOff(Opts.middlescroll)],
       ['downscroll', Opts.isDown() ? 'Downscroll' : 'Upscroll'],
       ['keybinds', 'Asignar Teclas'],
+      ['vslice', 'Controles V-Slice: ' + ({ off: 'Off', arrows: 'Flechas', hitbox: 'Hitbox' }[Opts.vslice] || 'Off')],
     ];
     case 'difficulty': {
+      // canción con variaciones (.fnfc): "normal", "erect (erect)", "normal (pico)"…
+      if (G.pack) return [['back', 'Back'], ...G.pack.entries.map(en => ['diff:' + en.v + '|' + en.d, (en.v === G.variation && en.d === G.chart.difficulty ? '> ' : '') + en.label])];
       const ds = (G.chart && G.chart.difficulties && G.chart.difficulties.length) ? G.chart.difficulties : [G.chart && G.chart.difficulty || 'normal'];
       return [['back', 'Back'], ...ds.map(d => ['diff:' + d, (d === (G.chart.difficulty || ds[0]) ? '> ' : '') + d])];
     }
@@ -60,7 +63,7 @@ function buildMenu(menu, keepSel) {
   UI.sel = -1; select(sel, true);
   $('optHint').textContent = menu === 'keybinds' ? (UI.waitKey !== null ? `Presiona una tecla para ${LANE_ES[UI.waitKey]} (Esc cancela)` : 'Enter: cambiar tecla · Las flechas ← ↓ ↑ → siempre funcionan · Esc: volver')
     : menu === 'options' ? 'Enter / clic: cambiar · Esc: volver · Se guarda en este navegador'
-    : menu === 'difficulty' ? 'Elige una dificultad: la canción se reinicia con esas notas' : '';
+    : menu === 'difficulty' ? (G.pack && G.pack.vars.length > 1 ? 'Dificultad (variación): cambiar de variación recarga chart, audio, personajes y escenario' : 'Elige una dificultad: la canción se reinicia con esas notas') : '';
   $('optHint').hidden = !(menu in PARENT);
   syncTimeBar();
   overlay.classList.toggle('opciones', menu in PARENT);
@@ -92,27 +95,49 @@ function activate(id) {
   else if (id === 'keybinds') buildMenu('keybinds');
   else if (id === 'middlescroll') { Opts.middlescroll = !Opts.middlescroll; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4); }
   else if (id === 'downscroll') { Opts.downscroll = !Opts.isDown(); Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4); }
+  else if (id === 'vslice') {
+    const order = ['off', 'arrows', 'hitbox']; Opts.vslice = order[(order.indexOf(Opts.vslice) + 1) % order.length]; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4);
+    toast({ off: 'Controles V-Slice: Off → 4 zonas grandes de toque (las de siempre)', arrows: 'Controles V-Slice: Flechas → tocas los receptores (zonas invisibles más pequeñas, como el juego en móvil)', hitbox: 'Controles V-Slice: Hitbox → 4 carriles invisibles que se iluminan al tocar' }[Opts.vslice], 4200);
+    if (Opts.vslice !== 'off' && G.mode !== 'mobile') toast('Controles V-Slice: se usan en modo Táctil (toca la pantalla o elige "Táctil" en Chart y modo)', 4200);
+  }
   else if (id === 'reset') { Opts.resetKeys(); buildMenu('keybinds', true); toast('Teclas por defecto: A S W D (+ flechas)'); }
   else if (id.startsWith('key:')) { UI.waitKey = +id.slice(4); buildMenu('keybinds', true); }
   else if (id.startsWith('diff:')) changeDifficulty(id.slice(5));
 }
 function changeDifficulty(d) {
+  if (G.pack && d.includes('|')) {
+    const [v, diff] = [d.slice(0, d.indexOf('|')), d.slice(d.indexOf('|') + 1)];
+    if (v !== G.variation) { loadVariation(G.pack, v, diff).catch(err => { console.error(err); toast('Error: ' + err.message); }); return; }
+    d = diff;
+  }
   if (!G.raw) { toast('Este chart solo tiene una dificultad'); return; }
   try {
     const chart = Chart.parse(G.raw, G.meta, d);
     chart.scene = G.chart.scene;
     G.chart = chart; G.speed = chart.speed;
     Events.preload(chart);
-    $('diffSel').value = d;
+    $('diffSel').value = G.pack ? G.variation + '|' + d : d;
     toast('Dificultad: ' + d.toUpperCase() + ` (${chart.notes.length} notas)`);
     restart();            // se reinicia la canción con las notas nuevas (y se cierra el menú)
+    ModUI.check(chart);
   } catch (err) { toast('Error: ' + err.message); }
+}
+/* cambia de variación: pantalla de carga → chart + audio (solo el de esa variación) + personajes/escenario de su metadata */
+async function loadVariation(pack, vid, diff) {
+  const va = pack.vars.find(x => x.id === vid); if (!va) throw new Error('no existe la variación ' + vid);
+  const chart = Chart.parse(va.chart, va.meta, diff);
+  G.raw = va.chart; G.meta = va.meta; G.pack = pack; G.variation = vid;
+  const au = packAudio(pack, vid);
+  SongLoad.missing = [...pack.missing, ...au.notes.map(n => `audio (${vid}): ${n}`)];
+  await loadChart(chart, au.list, { label: vid === 'default' ? 'Cargando…' : `Cargando variación ${vid}…`, minMs: 450 });
+  toast(`${chart.title} · ${vid === 'default' ? chart.difficulty : chart.difficulty + ' (' + vid + ')'} · audio: ${au.list.map(t => t.name).join(', ') || 'ninguno'}`, 3500);
 }
 function togglePanel(id) {
   UI.panel = UI.panel === id ? null : id;
   $('panelOpts').hidden = UI.panel !== 'chart'; $('panelAssets').hidden = UI.panel !== 'assets';
   $('pausePanel').classList.toggle('show', !!UI.panel);
-  if (UI.panel === 'assets') renderAssetList();
+  document.body.classList.toggle('panel-abierto', !!UI.panel);   // el botón de pantalla completa no tapa el panel
+  if (UI.panel === 'assets') { renderAssetList(); UserAssets.render(); }
   syncTimeBar();
 }
 function syncTimeBar() { $('timeBar').hidden = !(UI.kind === 'pause' && UI.menu === 'pause' && !UI.panel); }
@@ -138,7 +163,7 @@ function uiTick() {
   if (UI.kind === 'pause' && !TB.drag) updateTimeBar();
 }
 
-function hideOverlay() { overlay.classList.remove('show'); Sfx.stopLoop(); UI.kind = G.overlayKind = null; UI.waitKey = null; }
+function hideOverlay() { overlay.classList.remove('show'); document.body.classList.remove('panel-abierto'); Sfx.stopLoop(); UI.kind = G.overlayKind = null; UI.waitKey = null; }
 function openOverlay(kind, menu) {
   if (Loader.active) return;
   G.paused = true; UI.kind = G.overlayKind = kind; UI.openedAt = performance.now();
@@ -154,7 +179,7 @@ function openOverlay(kind, menu) {
   fillDiffSel();
   UI.waitKey = null;
   buildMenu(menu || kind);
-  UI.panel = null; $('pausePanel').classList.remove('show'); $('panelOpts').hidden = $('panelAssets').hidden = true;
+  UI.panel = null; document.body.classList.remove('panel-abierto'); $('pausePanel').classList.remove('show'); $('panelOpts').hidden = $('panelAssets').hidden = true;
   syncTimeBar();
   overlay.classList.add('show');
   if (kind === 'pause' && Sfx.has('pauseMusic')) Sfx.playLoop('pauseMusic', 0.5, 8);
@@ -182,10 +207,13 @@ function clearPercentHtml(kind) {
   const c = Fonts.toCanvas('freeplay-clear', pct, 40);
   return c ? `<div class="clear"><img alt="${pct}%" src="${c.toDataURL()}"><b>%</b></div>` : '';
 }
-function setMode(m) { G.mode = m; $('modeSel').value = m; }
+function setMode(m) { const ch = G.mode !== m; G.mode = m; $('modeSel').value = m; if (ch && typeof resize === 'function' && G.chart) resize(); }
 function fillDiffSel() {
   const ds = G.chart && G.chart.difficulties;
-  if (ds && ds.length > 1) {
+  if (G.pack && G.pack.entries.length > 1) {
+    $('diffSel').innerHTML = G.pack.entries.map(en => `<option value="${escHtml(en.v + '|' + en.d)}">${escHtml(en.label)}</option>`).join('');
+    $('diffSel').value = G.variation + '|' + G.chart.difficulty; $('diffRow').style.display = '';
+  } else if (ds && ds.length > 1) {
     $('diffSel').innerHTML = ds.map(d => `<option value="${d.replace(/"/g, '')}">${d.replace(/</g, '')}</option>`).join('');
     $('diffSel').value = G.chart.difficulty; $('diffRow').style.display = '';
   } else $('diffRow').style.display = 'none';
@@ -219,6 +247,7 @@ $('modeSel').addEventListener('change', e => { setMode(e.target.value); toast('M
 $('btnLoad').addEventListener('click', () => $('fileInput').click());
 $('btnDemo').addEventListener('click', async () => {
   const song = await loadSongById(ASSET_CFG.defaultSongId).catch(() => null);
+  G.pack = null; G.variation = 'default';
   if (song) { if (G.mode === 'demo') setMode('keyboard'); await loadChart(song.chart, song.audio); toast('Canción "test" cargada'); }
   else { G.raw = G.meta = null; setMode('demo'); await loadChart(Chart.makeDemo(), []); toast('Canción demo cargada'); }
 });
@@ -230,10 +259,18 @@ $('fileInput').addEventListener('change', async e => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && !G.overlayKind && !Loader.active) openOverlay('pause'); });
 
 async function handleFiles(files) {
-  const { raw, meta, inst, voices } = await readChartFiles(files);
+  const { raw, meta, inst, voices, pack } = await readChartFiles(files);
+  if (G.mode === 'demo') setMode('keyboard');
+  if (pack) {
+    // V-Slice: empieza en la variación por defecto (o la primera) con "normal" si existe
+    const first = pack.entries.find(e => e.v === 'default' && e.d === 'normal') || pack.entries.find(e => e.v === 'default') || pack.entries[0];
+    if (!first) throw new Error('el chart no tiene notas');
+    await loadVariation(pack, first.v, first.d);
+    return;
+  }
+  G.pack = null; G.variation = 'default';
   const chart = Chart.parse(raw, meta);
   G.raw = raw; G.meta = meta;
-  if (G.mode === 'demo') setMode('keyboard');
   const sc = chart.scene || {}, lc = x => String(x || '').toLowerCase();
   const audio = [];
   if (inst) audio.push({ blob: inst, role: 'inst', name: 'Inst' });
@@ -248,9 +285,11 @@ async function handleFiles(files) {
 
 /* ---------- teclado ---------- */
 window.addEventListener('keydown', e => {
-  if (Loader.active) return;
+  if (Loader.active || ModUI.open || Movil.portrait) return;
   if (G.overlayKind) {
-    if (e.target && /SELECT|INPUT/.test(e.target.tagName)) return;
+    if (e.target && /SELECT|INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    // botones del panel (Assets cargados / Chart y modo): Enter/Espacio los activa el navegador, no el menú
+    if (e.target && e.target.tagName === 'BUTTON' && e.target.closest('#pausePanel') && (e.key === 'Enter' || e.key === ' ')) return;
     // Asignar Teclas: esperando una tecla
     if (UI.waitKey !== null) {
       e.preventDefault();
@@ -284,13 +323,4 @@ window.addEventListener('keyup', e => {
   if (lane !== undefined) release(lane);
 });
 
-/* ---------- táctil: 4 columnas de la pantalla ---------- */
-const pointers = new Map();
-cv.addEventListener('pointerdown', e => {
-  if (Loader.active) return;
-  if (G.mode !== 'mobile') { if (e.pointerType === 'touch' && (G.mode === 'demo' || G.mode === 'keyboard')) { setMode('mobile'); toast('Modo Táctil activado 📱'); } else return; }
-  const lane = clamp(Math.floor(e.clientX / (W / 4)), 0, 3);
-  pointers.set(e.pointerId, lane); press(lane); e.preventDefault();
-});
-const endPointer = e => { if (pointers.has(e.pointerId)) { release(pointers.get(e.pointerId)); pointers.delete(e.pointerId); } };
-cv.addEventListener('pointerup', endPointer); cv.addEventListener('pointercancel', endPointer); cv.addEventListener('pointerleave', endPointer);
+/* táctil: ver js/movil.js (zonas de toque, controles V-Slice, orientación y pantalla completa) */
