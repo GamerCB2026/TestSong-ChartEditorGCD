@@ -5,8 +5,8 @@
      · receptores: shared/images/noteStrumline.xml/png (V-Slice: staticLeft0/pressLeft0/confirmLeft0)
                    o NOTE_assets.xml (legacy: arrowLEFT / left press / left confirm)
                    o NoteAssets/"<color> static0000.png" / "<color> press0000.png" / "<color> confirm0000.png"
-                   (si no hay: receptor gris generado a partir de la nota)
-     · splashes:   shared/images/noteSplashes.xml/png ("note impact 1 purple0"...) — si no: destello improvisado
+                   (v3.7.0: si no hay, no se dibuja receptor; nada se genera ni se improvisa)
+     · splashes:   shared/images/noteSplashes.xml/png ("note impact 1 purple0"...) — si no: sin splash
    Posiciones como Strumline.hx (STRUMLINE_SIZE 104, NOTE_SPACING 112, escala 0.7).
    ===================================================================== */
 'use strict';
@@ -50,12 +50,8 @@ async function loadNoteSkin() {
     skin.strum[i] = fromSheet(sheetV, 'static' + v.Dir + '0') || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR) || fromSheet(sheetL, 'arrow static instance ' + [1, 2, 4, 3][i] + '0');
     skin.press[i] = fromSheet(sheetV, 'press' + v.Dir + '0') || (pr && [frameFromImg(pr)]) || fromSheet(sheetL, v.dir + ' press');
     skin.confirm[i] = fromSheet(sheetV, 'confirm' + v.Dir + '0') || (cf && [frameFromImg(cf)]) || fromSheet(sheetL, v.dir + ' confirm');
-    if (skin.head[i]) {
-      const h0 = skin.head[i][0], hImg = h0.img === head ? head : null;
-      const base = hImg || (() => { const c = document.createElement('canvas'); c.width = h0.fw; c.height = h0.fh; drawSparrowFrame(c.getContext('2d'), h0, 0, 0); return c; })();
-      if (!skin.strum[i]) { skin.strum[i] = [frameFromImg(tintCanvas(base, [18, 22, 30], [135, 163, 173]))]; skin.placeholder[i] = true; }
-      if (!skin.press[i]) { const c = hexRgb(LANE_DARK[i]); skin.press[i] = [frameFromImg(tintCanvas(base, [10, 6, 18], c.map(x => Math.min(255, x * 1.6 + 30))))]; }
-    }
+    // v3.7.0: sin receptor real no se genera uno gris a partir de la nota
+    skin.placeholder[i] = !skin.strum[i];
     // splashes (2 variantes por color)
     const col = v.color;
     skin.splash[i] = [fromSheet(sheetS, 'note impact 1 ' + col), fromSheet(sheetS, 'note impact 2 ' + col), fromSheet(sheetS, 'note impact 1  ' + col)].filter(Boolean);
@@ -97,18 +93,7 @@ function drawTinted(frames, cx, cy, sc, tint) {
   ctx.drawImage(c, cx - fr.fw * sc / 2, cy - fr.fh * sc / 2, fr.fw * sc, fr.fh * sc);
 }
 /* --- Flecha vectorial (si no hay NoteAssets) --- */
-const ARROW = [[-0.46, 0], [-0.02, -0.42], [-0.02, -0.16], [0.42, -0.16], [0.42, 0.16], [-0.02, 0.16], [-0.02, 0.42]];
-const ROT = [0, -Math.PI / 2, Math.PI / 2, Math.PI];
-function drawArrow(x, y, size, lane, fill, edge = '#fff', glow = 0, alpha = 1) {
-  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(ROT[lane]); ctx.scale(size, size);
-  ctx.beginPath(); ARROW.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath();
-  ctx.lineJoin = 'round';
-  if (glow) { ctx.shadowColor = LANE_COLORS[lane]; ctx.shadowBlur = size * 0.5 * glow; }
-  ctx.lineWidth = 0.2; ctx.strokeStyle = '#000'; ctx.stroke(); ctx.shadowBlur = 0;
-  ctx.fillStyle = fill; ctx.fill();
-  ctx.lineWidth = 0.055; ctx.strokeStyle = edge; ctx.stroke();
-  ctx.restore();
-}
+/* v3.7.0: se quitaron las flechas dibujadas (vector) de respaldo */
 
 /* --- cola de sustain: de yA (cabeza/receptor) a yB (final) --- */
 function drawSustain(side, lane, x, yA, yB, alpha) {
@@ -121,11 +106,7 @@ function drawSustain(side, lane, x, yA, yB, alpha) {
     ctx.translate(x, yA); if (down) ctx.scale(1, -1);     // en downscroll la cola va hacia arriba
     if (piece) drawSparrowFrame(ctx, piece, -pw / 2, 0, pw / piece.fw, (len - eh + 1) / piece.fh);
     if (end) drawSparrowFrame(ctx, end, -pw / 2, len - eh, pw / end.fw, eh / end.fh);
-  } else {
-    const w = NOTE_W * k * 0.3, top = Math.min(yA, yB);
-    ctx.fillStyle = LANE_COLORS[lane]; ctx.globalAlpha *= 0.8;
-    rr(x - w / 2, top, w, len, w / 2); ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.stroke();
-  }
+  }   // sin pieza/final reales: sin cola
   ctx.restore();
 }
 
@@ -146,15 +127,7 @@ function drawSplashes() {
       const fr = s.frames[fi], sc = k;   // noteSplashes del juego ya vienen a su tamaño (escala 1)
       ctx.save(); ctx.globalAlpha = FNF.SPLASH_ALPHA;
       drawSparrowFrame(ctx, fr, x - fr.fw * sc / 2, y - fr.fh * sc / 2, sc); ctx.restore();
-    } else {
-      // improvisado: destello del color del carril
-      if (t > 320) { Splashes.splice(i, 1); continue; }
-      const p = t / 320, r = NOTE_W * k * (0.45 + 0.55 * p);
-      ctx.save(); ctx.globalAlpha = FNF.SPLASH_ALPHA * (1 - p); ctx.strokeStyle = LANE_COLORS[s.lane]; ctx.lineCap = 'round';
-      ctx.lineWidth = 9 * k * (1 - p) + 2;
-      for (let a = 0; a < 8; a++) { const ang = a * Math.PI / 4 + 0.3; ctx.beginPath(); ctx.moveTo(x + Math.cos(ang) * r * 0.55, y + Math.sin(ang) * r * 0.55); ctx.lineTo(x + Math.cos(ang) * r, y + Math.sin(ang) * r); ctx.stroke(); }
-      ctx.restore();
-    }
+    } else { Splashes.splice(i, 1); continue; }   // sin noteSplashes reales: sin splash
   }
 }
 
@@ -173,25 +146,23 @@ function drawStrumsAndNotes() {
   for (const side of ['opponent', 'player']) {
     const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0, lane: [] };   // alpha/visible/x/y que tocan los scripts .hxc
     if (!ss.visible) continue;
-    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side), base = (LAYOUT[side].strumAlpha ?? LAYOUT[side].alpha ?? 1) * ss.alpha;
+    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y0 = strumCY(side), base = (LAYOUT[side].strumAlpha ?? LAYOUT[side].alpha ?? 1) * ss.alpha;
     ctx.save(); ctx.translate(ss.x, ss.y);
     for (let i = 0; i < 4; i++) {
       const ln = ss.lane[i] || { alpha: 1, visible: true }; if (!ln.visible) continue;
       ctx.globalAlpha = clamp(base * ln.alpha, 0, 1);
-      const x = laneX(side, i), [anim, t] = strumAnim(side, i);
-      if (hasImg && sk.head[i]) {
-        if (anim === 'confirm') {
-          if (sk.confirm[i]) drawFrameCentered(sk.confirm[i], t, x, y, sc);
-          else drawFrameCentered(sk.head[i], 0, x, y, sc * (1 + 0.08 * Math.max(0, 1 - t / 140)), 1, false, LANE_COLORS[i]);
-        } else if (anim === 'press') drawFrameCentered(sk.press[i], t, x, y, sc * (sk.placeholder[i] ? 0.92 : 1));
+      const x = laneX(side, i) + (ln.dx || 0), [anim, t] = strumAnim(side, i);
+      const y = y0 + (ln.dy || 0);
+      if (ln.angle) { ctx.save(); ctx.translate(x, y); ctx.rotate(ln.angle * Math.PI / 180); ctx.translate(-x, -y); }
+      try {
+      // v3.7.0: solo frames reales (press/confirm que falten usan el receptor estático real; sin receptor real: nada)
+      if (sk && sk.strum[i]) {
+        if (anim === 'confirm' && sk.confirm[i]) drawFrameCentered(sk.confirm[i], t, x, y, sc);
+        else if (anim === 'press' && sk.press[i]) drawFrameCentered(sk.press[i], t, x, y, sc);
         else if (LAYOUT[side].tintIdle) drawTinted(sk.strum[i], x, y, sc, LAYOUT[side].tintIdle);   // Toque (celular): receptor morado/gris semitransparente
         else drawFrameCentered(sk.strum[i], 0, x, y, sc, 1);
-        continue;
       }
-      const sz = NOTE_W * k * 0.95;
-      if (anim === 'confirm') drawArrow(x, y, sz * (1 + 0.08 * Math.max(0, 1 - t / 140)), i, LANE_COLORS[i], '#fff', 1.2);
-      else if (anim === 'press') drawArrow(x, y, sz * 0.92, i, LANE_DARK[i], '#ddd');
-      else drawArrow(x, y, sz, i, '#87a3ad', '#c7d6e0', 0, 0.9);
+      } finally { if (ln.angle) ctx.restore(); }
     }
     ctx.restore();
   }
@@ -207,14 +178,17 @@ function drawStrumsAndNotes() {
   drawSplashes();
 }
 function drawNotesOf(only) {
-  const sk = Scene.notes, hasImg = sk && sk.ok;
+  const sk = Scene.notes, hasImg = sk && sk.ok, lanes = (StrumState[only] && StrumState[only].lane) || [], ga = ctx.globalAlpha;
   for (const n of G.chart.notes) {
     if (n.side !== only || n.skipped) continue;
     if (n.time - G.songPos > 4000) break;
-    const side = n.side, k = LAYOUT[side].k, y = noteY(side, n.time), x = laneX(side, n.lane), down = LAYOUT[side].down;
+    const ln = lanes[n.lane], dx = ln ? ln.dx || 0 : 0, dy = ln ? ln.dy || 0 : 0;   // v3.7.0: noteTween*/setPropertyFromGroup mueven el carril entero
+    if (ln && !ln.visible) continue;
+    ctx.globalAlpha = clamp(ga * (ln ? ln.alpha : 1) * (n.alpha ?? 1), 0, 1);
+    const side = n.side, k = LAYOUT[side].k, y = noteY(side, n.time) + dy, x = laneX(side, n.lane) + dx, down = LAYOUT[side].down;
     const off = (yy) => down ? yy < -NOTE_W || yy > V.h + NOTE_W * 4 : yy > V.h + NOTE_W || yy < -NOTE_W * 4;
     if (n.sustain > 0 && !n.dropped && !(n.hit && !n.holding)) {
-      const yEnd = noteY(side, n.time + n.sustain), yStart = n.hit ? strumCY(side) : y;
+      const yEnd = noteY(side, n.time + n.sustain) + dy, yStart = n.hit ? strumCY(side) + dy : y;
       if (!(off(yStart) && off(yEnd))) drawSustain(side, n.lane, x, yStart, yEnd, n.missed ? 0.3 : 1);
     }
     if (n.hit || n.passed) continue;
@@ -223,12 +197,7 @@ function drawNotesOf(only) {
     // note kind con estilo propio (noteStyleId del .hxc + data/notestyles/<id>.json)
     const st = n.kind ? NoteStyles.headFor(n.kind) : null;
     if (st && st.head && st.head[n.lane]) drawFrameCentered(st.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k * (st.scale || 1), a);
-    else if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, a);
-    else drawArrow(x, y, NOTE_W * k * 0.95, n.lane, LANE_COLORS[n.lane], '#fff', 0, a);
-    // note kind "hurt" sin estilo cargado: marca roja para distinguirla
-    if (!st && n.kind && NoteKinds.isHurt(n.kind)) {
-      ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = '#ff2a2a'; ctx.lineWidth = 7 * k; const r = NOTE_W * k * 0.28;
-      ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke(); ctx.restore();
-    }
+    else if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, a);   // sin nota real: nada
   }
+  ctx.globalAlpha = ga;
 }

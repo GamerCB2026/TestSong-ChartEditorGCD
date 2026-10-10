@@ -1,6 +1,6 @@
 /* =====================================================================
    personajes.js — personajes V-Slice (Animate Atlas / Sparrow), iconos de
-   vida (HealthIcon) y dibujos improvisados de respaldo.
+   vida (HealthIcon). v3.7.0: sin dibujos improvisados.
 
    Volteo (igual que Stage.addCharacter en FunkinCrew/Funkin):
      bf  (jugador)  → flipX = !json.flipX   (bf.json trae flipX:true → se dibuja SIN voltear, mirando a la izquierda)
@@ -282,14 +282,14 @@ async function loadCharacter(role, id) {
    ===================================================================== */
 const ICON_ANIMS = ['idle', 'winning', 'losing', 'toWinning', 'toLosing', 'fromWinning', 'fromLosing'];
 class HealthIcon {
-  constructor(playerId) { this.playerId = playerId; this.anims = new Map(); this.kind = 'improvisado'; this.reset(); }
+  constructor(playerId) { this.playerId = playerId; this.anims = new Map(); this.kind = 'sin icono'; this.reset(); }
   reset() { this.cur = 'idle'; this.t0 = 0; this.bopAt = -1e9; }
   async load(charId, hi) {
     hi = hi || {};
     this.id = hi.id || charId || 'face';
     this.size = +hi.scale || 1; this.isPixel = !!hi.isPixel; this.offsets = Array.isArray(hi.offsets) ? hi.offsets : [0, 0];
     this.flipX = !!hi.flipX; if (this.playerId === 0) this.flipX = !this.flipX;   // initHealthIcon: "BF is looking the other way"
-    this.anims = new Map(); this.kind = 'improvisado'; this.where = null; this.wanted = this.id; this.fallbackFace = false;
+    this.anims = new Map(); this.kind = 'sin icono'; this.where = null; this.wanted = this.id; this.fallbackFace = false;
     this.shouldBop = hi.shouldBop !== false;
     // sin icono propio → icon-face (Constants.DEFAULT_HEALTH_ICON), como el juego
     for (const id of uniq([this.id, 'face'])) {
@@ -358,133 +358,9 @@ class HealthIcon {
     ctx.save();
     ctx.translate(x + this.offsets[0] + (this.flipX ? w : 0), y + this.offsets[1]);
     if (this.flipX) ctx.scale(-1, 1);
-    if (fr) { ctx.imageSmoothingEnabled = !this.isPixel; drawSparrowFrame(ctx, fr, 0, 0, w / fr.fw, h / fr.fh); }
-    else drawImprovIcon(this.playerId === 0 ? 'player' : 'opponent', w / 2, h / 2, w * 0.69, losing, this.flipX);
+    if (fr) { ctx.imageSmoothingEnabled = !this.isPixel; drawSparrowFrame(ctx, fr, 0, 0, w / fr.fw, h / fr.fh); }   // sin icono (ni icon-face): nada
     ctx.restore();
   }
 }
 
-/* --- Icono improvisado (vector) --- */
-function drawImprovIcon(side, cx, cy, size, losing, flipped) {
-  ctx.save(); ctx.translate(cx, cy); ctx.scale(size / 100, size / 100);
-  if (side === 'player' && flipped) ctx.scale(-1, 1);   // el dibujo ya mira a la izquierda
-  const O = '#0b0b18';
-  if (side === 'player') {
-    poly([[-18, -22], [-46, -16], [-30, -4], [-48, 10], [-24, 10], [-38, 26], [-10, 18]], '#2ec7e6', O, 5);
-    ell(0, 4, 34, 34, '#ffe1c4', O, 6);
-    ctx.beginPath(); ctx.moveTo(-33, -6); ctx.quadraticCurveTo(-28, -44, 2, -42); ctx.quadraticCurveTo(32, -40, 34, -10); ctx.closePath();
-    ctx.fillStyle = '#e3312f'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = O; ctx.stroke();
-    poly([[-34, -10], [-58, -4], [-56, 3], [-30, -2]], '#2f5fd0', O, 4);   // visera hacia el rival (izquierda)
-    ell(-12, 6, 5, 9, '#111'); ell(4, 6, 4.5, 9, '#111');
-    if (losing) { ctx.beginPath(); ctx.arc(-4, 30, 9, Math.PI + 0.3, -0.3); ctx.lineWidth = 4; ctx.stroke(); ell(24, -6, 5, 8, '#7fd8ff', O, 2); }
-    else { ctx.beginPath(); ctx.arc(-4, 18, 10, 0.2, Math.PI - 0.2); ctx.lineWidth = 4; ctx.stroke(); }
-  } else {
-    ctx.beginPath(); ctx.moveTo(-36, -18); ctx.quadraticCurveTo(-44, 20, -34, 46); ctx.lineTo(34, 46); ctx.quadraticCurveTo(44, 20, 36, -18); ctx.closePath();
-    ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = O; ctx.stroke();
-    ell(0, 6, 30, 36, '#f3d6b8', O, 6);
-    ctx.beginPath(); ctx.moveTo(-34, -10); ctx.quadraticCurveTo(-10, -56, 34, -14); ctx.quadraticCurveTo(14, -24, 0, -16); ctx.quadraticCurveTo(-16, -24, -34, -10); ctx.closePath();
-    ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.stroke();
-    ell(-11, 4, 6, losing ? 3 : 7, '#fff', O, 2.5); ell(11, 4, 6, losing ? 3 : 7, '#fff', O, 2.5);
-    ell(-10, 5, 3, losing ? 2 : 3.5, '#d10f2f'); ell(12, 5, 3, losing ? 2 : 3.5, '#d10f2f');
-    ctx.lineWidth = 4; ctx.strokeStyle = O; ctx.beginPath();
-    if (losing) { ctx.moveTo(-20, -10); ctx.lineTo(-4, -4); ctx.moveTo(20, -10); ctx.lineTo(4, -4); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 32, 9, Math.PI + 0.3, -0.3); ctx.stroke(); }
-    else { ctx.moveTo(-20, -6); ctx.lineTo(-4, -10); ctx.moveTo(20, -6); ctx.lineTo(4, -10); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-12, 24); ctx.quadraticCurveTo(2, 34, 14, 20); ctx.stroke(); }
-  }
-  ctx.restore();
-}
-
-/* --- Personajes improvisados (coordenadas locales: pies en y=0, mirando a +x) --- */
-function armTarget(pose, base) {
-  const t = { idle: base.idle, left: base.fwd, right: base.fwd, up: base.up, down: base.down }[pose] || base.idle;
-  return t;
-}
-function drawRival(ch) {
-  const O = '#120818', SK = '#f3d6b8', J = '#7b3fb8';
-  const singing = ch.pose !== 'idle';
-  // brazo trasero
-  limb([[-20, -142], [-30, -112], [-30, -84]], '#5a2d8c', 13, O);
-  // piernas
-  ctx.lineWidth = 3; ctx.strokeStyle = O;
-  rr(-20, -78, 15, 74, 4); ctx.fillStyle = '#2b1d44'; ctx.fill(); ctx.stroke();
-  rr(5, -78, 15, 74, 4); ctx.fill(); ctx.stroke();
-  ell(-10, -4, 15, 6, '#111', O, 2); ell(16, -4, 15, 6, '#111', O, 2);
-  // torso
-  rr(-31, -154, 62, 86, 12); ctx.fillStyle = J; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = O; ctx.stroke();
-  poly([[-11, -153], [11, -153], [0, -116]], '#fff');
-  poly([[-3, -148], [3, -148], [5, -122], [0, -114], [-5, -122]], '#d81b3a');
-  ctx.fillStyle = '#1d1030'; ctx.fillRect(-30, -78, 60, 8);
-  // cabeza
-  ctx.fillStyle = SK; ctx.fillRect(-7, -164, 14, 14);
-  ctx.beginPath(); ctx.moveTo(-4, -206); ctx.quadraticCurveTo(-40, -200, -36, -146); ctx.lineTo(-14, -148); ctx.quadraticCurveTo(-22, -176, -4, -184); ctx.closePath();
-  ctx.fillStyle = '#0d0710'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = O; ctx.stroke();
-  ell(3, -181, 22, 26, SK, O, 4);
-  ctx.beginPath(); ctx.moveTo(-21, -186); ctx.quadraticCurveTo(-6, -216, 24, -197); ctx.quadraticCurveTo(12, -194, 6, -189); ctx.quadraticCurveTo(-6, -195, -21, -186); ctx.closePath();
-  ctx.fillStyle = '#0d0710'; ctx.fill();
-  // ojos
-  ell(10, -182, 4.5, 5.5, '#fff', O, 1.5); ell(20, -182, 3.5, 5.5, '#fff', O, 1.5);
-  ell(12, -181, 2.2, 2.6, '#d10f2f'); ell(21.5, -181, 1.8, 2.6, '#d10f2f');
-  limb([[5, -190], [14, -187]], O, 1.5, O); limb([[18, -187], [25, -190]], O, 1.5, O);
-  // boca
-  if (singing) ell(15, -167, 5, ch.pose === 'up' ? 6.5 : ch.pose === 'down' ? 3 : 4.5, '#5a0a18', O, 2);
-  else limb([[8, -167], [19, -169]], O, 1.5, O);
-  // brazo con micrófono
-  const h = armTarget(ch.pose, { idle: [38, -110], fwd: [52, -132], up: [38, -176], down: [40, -92] });
-  limb([[22, -144], [(22 + h[0]) / 2 + 6, (-144 + h[1]) / 2 + 12], h], J, 13, O);
-  ell(h[0], h[1], 7, 7, SK, O, 2.5);
-  ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(-0.6); ctx.fillStyle = '#222'; ctx.fillRect(-2, -18, 5, 16); ell(0.5, -20, 6, 6, '#bbb', O, 2); ctx.restore();
-}
-
-function drawBoy(ch) {
-  const O = '#0b0b18', SK = '#ffe1c4';
-  const singing = ch.pose !== 'idle';
-  limb([[-14, -90], [-24, -70], [-22, -54]], SK, 10, O);
-  ctx.lineWidth = 3; ctx.strokeStyle = O; ctx.fillStyle = '#2f5fd0';
-  rr(-16, -50, 13, 46, 4); ctx.fill(); ctx.stroke(); rr(3, -50, 13, 46, 4); ctx.fill(); ctx.stroke();
-  ell(-8, -5, 13, 6, '#e3312f', O, 2.5); ell(13, -5, 13, 6, '#e3312f', O, 2.5);
-  rr(-22, -98, 44, 54, 10); ctx.fillStyle = '#f4f4f4'; ctx.fill(); ctx.lineWidth = 4; ctx.stroke();
-  ctx.fillStyle = '#e3312f'; ctx.fillRect(-20, -76, 40, 7);
-  // pelo (detrás)
-  poly([[-14, -132], [-42, -128], [-26, -118], [-44, -106], [-22, -104], [-34, -90], [-10, -98]], '#2ec7e6', O, 3);
-  ell(2, -120, 25, 25, SK, O, 4);
-  // gorra
-  ctx.beginPath(); ctx.moveTo(-24, -126); ctx.quadraticCurveTo(-20, -152, 6, -150); ctx.quadraticCurveTo(26, -148, 27, -128); ctx.closePath();
-  ctx.fillStyle = '#e3312f'; ctx.fill(); ctx.lineWidth = 3.5; ctx.strokeStyle = O; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(6, -149); ctx.quadraticCurveTo(25, -147, 27, -128); ctx.lineTo(8, -129); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
-  poly([[20, -130], [44, -126], [42, -120], [18, -123]], '#2f5fd0', O, 3);
-  // ojos
-  ell(11, -117, 3.6, 6.5, '#111'); ell(20, -117, 3.2, 6.5, '#111');
-  ell(12, -120, 1.3, 1.6, '#fff'); ell(21, -120, 1.2, 1.6, '#fff');
-  // boca
-  if (ch.miss) ell(16, -102, 4, 3, '#5a0a18', O, 2);
-  else if (singing) ell(16, -103, 5.5, ch.pose === 'up' ? 6 : ch.pose === 'down' ? 2.6 : 4.2, '#5a0a18', O, 2);
-  else { ctx.beginPath(); ctx.arc(15, -107, 6, 0.2, Math.PI - 0.2); ctx.lineWidth = 2.2; ctx.strokeStyle = O; ctx.stroke(); }
-  // brazo con mic
-  const h = armTarget(ch.pose, { idle: [30, -72], fwd: [44, -98], up: [30, -132], down: [32, -60] });
-  limb([[16, -90], h], '#f4f4f4', 11, O); limb([[(16 + h[0]) / 2, (-90 + h[1]) / 2], h], SK, 9, O);
-  ell(h[0], h[1], 6, 6, SK, O, 2.5);
-  ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(-0.5); ctx.fillStyle = '#222'; ctx.fillRect(-2, -16, 5, 14); ell(0.5, -18, 5.5, 5.5, '#bbb', O, 2); ctx.restore();
-}
-
-function drawCharacter(ch, drawFn, x, footY, s, facing) {
-  if (ch.pose !== 'idle' && G.gameTime > ch.poseUntil) { ch.pose = 'idle'; ch.miss = false; }
-  let sx = 1, sy = 1, dx = 0, skew = 0;
-  if (ch.pose === 'idle') { const b = bob(); sy = 1 - 0.045 * b; sx = 1 + 0.025 * b; }
-  else {
-    const k = Math.exp(-(G.gameTime - ch.poseAt) / 110);
-    switch (ch.pose) {
-      case 'left': dx = -10; skew = 0.09; break;
-      case 'right': dx = 10; skew = -0.09; break;
-      case 'up': sy = 1.07; sx = 0.96; break;
-      case 'down': sy = 0.9; sx = 1.06; break;
-    }
-    sx += 0.04 * k; sy -= 0.03 * k;
-  }
-  ell(x, footY, s * 46, s * 9, 'rgba(0,0,0,.4)');
-  ctx.save();
-  ctx.translate(x + dx * s, footY);
-  ctx.transform(1, 0, skew, 1, 0, 0);
-  ctx.scale(sx * s * facing, sy * s);
-  if (ch.miss && 'filter' in ctx) ctx.filter = 'grayscale(.5) sepia(.6) hue-rotate(220deg) saturate(2.2) brightness(.75)';
-  drawFn(ch);
-  ctx.restore();
-}
+/* v3.7.0: se quitaron el icono improvisado (vector) y los personajes improvisados: sin asset real no se dibuja nada */

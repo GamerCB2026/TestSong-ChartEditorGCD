@@ -21,6 +21,7 @@ const OPTIM_DEF = {
   aa: true,              // antialiasing (suavizado de imágenes)
   fps: 0,                // límite de FPS: 30 | 60 | 120 | 0 = sin límite (lo que dé la pantalla)
   contador: false,       // contador de FPS
+  consola: false,        // v3.7.0: consola de scripts (errores y debugPrint de .lua / .hx / .hxc)
   renderer: 'auto',      // auto | webgl | canvas
   auto: true,            // modo bajo rendimiento automático
   tirones: true,         // protección contra tirones (las notas que pasaron durante un tirón no cuentan como fallo)
@@ -45,6 +46,7 @@ const Optim = {
     if (['auto', 'webgl', 'canvas'].includes(params.get('render'))) this.s.renderer = params.get('render');
     if (params.has('fps')) this.s.fps = +params.get('fps') || 0;
     if (params.has('contador')) this.s.contador = params.get('contador') !== '0';
+    if (params.has('consola')) this.s.consola = params.get('consola') !== '0';   // v3.7.0
     if (params.has('auto')) this.s.auto = params.get('auto') !== '0';
     if (params.has('texres')) this.s.tex = [100, 75, 50].includes(+params.get('texres')) ? +params.get('texres') : 100;
   },

@@ -38,10 +38,10 @@ async function loadScene(ids) {
       Scene.chars[role] = c; Scene.errors[role] = null;
       placeChar(c, role, stage);
       st.push(`✔ ${role}: ${c.id} — ${c.kind === 'atlas' ? 'Animate Atlas' : 'Sparrow'} (${c.where}) · ${c.anims.size} anims · ${c.flipX ? 'volteado' : 'sin voltear'}${role === 'bf' ? ' (jugador: !flipX del JSON)' : ''}${c.missing.length ? ' · faltan: ' + c.missing.join(', ') : ''}${c.fallbackFrom ? ` · (el chart pedía "${c.fallbackFrom}")` : ''}`);
-    } else { Scene.chars[role] = null; Scene.errors[role] = c.error; st.push(`✘ ${role}: ${ids[role]} — ${c.error} → dibujo improvisado`); }
+    } else { Scene.chars[role] = null; Scene.errors[role] = c.error; st.push(`✘ ${role}: ${ids[role]} — ${c.error} → no se dibuja (falta el asset real)`); }
   }
   Scene.baseChars = Object.assign({}, Scene.chars);
-  // parlantes de GF (parlantes.js): del escenario, del sprite de GF, asignados, por defecto o improvisados
+  // parlantes de GF (parlantes.js): del escenario, del sprite de GF, asignados o por defecto (sin asset: ninguno)
   await Speaker.setup(stage, Scene.chars.gf, ids.gf).catch(e => { console.warn('[parlante]', e); Speaker.cur = null; Speaker.info = 'error: ' + e.message; });
   if (token !== Scene.token) return;
   // iconos de vida (healthIcon del JSON o id del personaje; sin icono → icon-face)
@@ -58,14 +58,14 @@ async function loadScene(ids) {
   const loadedProps = stage ? stage.props.filter(p => p.img || p.color || p.frames) : [];
   if (stage) st.push(`${loadedProps.length ? '✔' : '✘'} escenario: ${stage.data.name || stage.id} (${stage.from}) · props ${loadedProps.length}/${stage.props.length} · zoom ${stage.data.cameraZoom ?? 1}` +
     (stage.props.filter(p => !p.img && !p.color && !p.frames).length ? ' · faltan: ' + stage.props.filter(p => !p.img && !p.color && !p.frames).map(p => p.tried).join(', ') + ' → fondo improvisado' : ''));
-  else st.push(`✘ escenario: ${ids.stage} — sin JSON → fondo improvisado`);
+  else st.push(`✘ escenario: ${ids.stage} — sin JSON → fondo negro`);
   if (stage && ids.stage !== stage.id) st.push(`✔ escenario del chart "${ids.stage}" → ${stage.id}`);
   st.push(`${notes.ok ? '✔' : '✘'} notas: ${notes.head.filter(Boolean).length}/4 cabezas (${notes.src.headFrom || '—'}), colas: ${notes.src.holdFrom || (notes.piece.filter(Boolean).length + '/4')}`);
-  st.push(notes.placeholder.some(Boolean) ? '✘ receptores (strums): no hay noteStrumline.xml / NOTE_assets.xml / "<color> static0000.png" → receptor gris generado'
+  st.push(notes.placeholder.some(Boolean) ? '✘ receptores (strums): no hay noteStrumline.xml / NOTE_assets.xml / "<color> static0000.png" → sin receptores (no se generan)'
     : `✔ receptores: ${notes.src.strumSheet || notes.src.legacySheet || 'NoteAssets/*static*'}`);
-  st.push(notes.hasSplash ? `✔ splashes: ${notes.src.splashSheet}.xml` : '✘ splashes: falta shared/images/noteSplashes.xml/.png → destello improvisado (solo en SICK)');
-  for (const [k, ic] of [['jugador', iP1], ['rival', iP2]]) st.push(ic.ok ? `✔ icono ${k}: ${ic.where} — ${ic.kind}${ic.fallbackFace ? ` (no hay icon-${ic.wanted}: se usa icon-face)` : ''}` : `✘ icono ${k}: falta images/icons/icon-${ic.id}.png (y icon-face.png) → cara improvisada`);
-  st.push(`${Speaker.cur && !Speaker.cur.improv ? '✔' : Speaker.need ? '✘' : '✔'} parlantes GF: ${Speaker.info}`);
+  st.push(notes.hasSplash ? `✔ splashes: ${notes.src.splashSheet}.xml` : '✘ splashes: falta shared/images/noteSplashes.xml/.png → sin splashes');
+  for (const [k, ic] of [['jugador', iP1], ['rival', iP2]]) st.push(ic.ok ? `✔ icono ${k}: ${ic.where} — ${ic.kind}${ic.fallbackFace ? ` (no hay icon-${ic.wanted}: se usa icon-face)` : ''}` : `✘ icono ${k}: falta images/icons/icon-${ic.id}.png (y icon-face.png) → sin icono`);
+  st.push(`${Speaker.cur ? '✔' : Speaker.need ? '✘' : '·'} parlantes GF: ${Speaker.info}`);   // v3.7.0: sin asset real no se dibuja ningún parlante
   Scene.status = st;
   Scene.world = !!(stage && (loadedProps.length || bf instanceof RealChar || dad instanceof RealChar));
   // v3.3.0: se liberan las hojas enormes ya recortadas y se suben/calientan todas las texturas
@@ -77,8 +77,10 @@ async function loadScene(ids) {
   Cam.init = false; Scene.loading = false;
   const any = Scene.world || notes.ok || iP1.ok || iP2.ok;
   if (isFile && !(bf instanceof RealChar && dad instanceof RealChar)) toast('Abierto como archivo (file://): el navegador bloquea los assets. Usa GitHub Pages o un servidor local (python -m http.server).', 7000);
-  else if (!any) toast('No encontré assets reales (data/, shared/images/…): uso los dibujos improvisados', 4000);
+  else if (!any) toast('No encontré assets reales (data/, shared/images/…): la pantalla queda en negro (mira Asignar assets o la consola)', 5000);
   console.info('[TestSong] assets\n' + statusLines().join('\n'));
+  // v3.7.0: lo que falta (ya no hay dibujos improvisados) también va a la consola de scripts
+  if (typeof ScriptLog !== 'undefined') for (const l of statusLines()) if (l.startsWith('✘')) ScriptLog.info('asset', l.slice(2));
 }
 
 /* coloca un personaje en su sitio del escenario (Stage.addCharacter) */
@@ -140,7 +142,7 @@ const G = {
 const isBot = () => G.mode === 'demo' || G.mode === 'botplay';
 
 /* Carga un chart: pantalla negra "Cargando…" hasta tener escenario, personajes, iconos, audio y
-   eventos listos; después se dibuja todo de una vez (sin personajes improvisados intermedios). */
+   eventos listos; después se dibuja todo de una vez (sin pasos intermedios). */
 let loadToken = 0;
 async function loadChart(chart, audio = [], opts = {}) {
   const tok = ++loadToken;
@@ -269,6 +271,7 @@ function hitNote(n, diff) {
   const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime;
   if (isP) { s.confirmHeld[n.lane] = true; Music.setVolume('player', 1); Music.setVolume('voices', 1); }
   noteAnim(n, kind, false);
+  if (ScriptHub.on) ScriptHub.noteHit(n, isP);   // v3.7.0: goodNoteHit / opponentNoteHit (.lua) · onPlayerHit / onDadHit (.hx)
   if (!isP) {
     if (G.mode === 'demo' && G.health > 0.35) changeHealth(-CONFIG.demoOppDrain);
     return;
@@ -298,6 +301,7 @@ function missNote(n) {
   if (G.combo >= 10) displayCombo(0);
   G.misses++; G.judged++; G.score -= 100; breakCombo();
   noteAnim(n, kind, true);
+  if (ScriptHub.on) ScriptHub.noteMiss(n);
   Music.setVolume('player', 0); Music.setVolume('voices', 0);     // V-Slice: se silencia la voz del jugador
   if (!ev || ev.playSound !== false) playMissSound();
   changeHealth(ev ? +ev.healthChange || 0 : FNF.HEALTH_MISS);
@@ -315,8 +319,9 @@ function onBeat(beat) {
   for (const c of Object.values(Scene.chars)) if (c) c.onBeat(beat);
   for (const ic of Object.values(Scene.icons)) if (ic && ic.shouldBop !== false) ic.bop();   // HealthIcon.onStepHit (cada 4 steps)
   propsBeat(beat); Speaker.beat(beat);
-  if (beat >= -4 && beat <= -1) Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME);   // introTHREE/TWO/ONE/GO
+  if (beat >= -4 && beat <= -1) { Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME); ScriptHub.countdown(beat + 4); }   // introTHREE/TWO/ONE/GO
   if (Mods.hasHooks) Mods.hook('onBeatHit', { beat, __host: 'SongTimeScriptEvent' });
+  if (beat >= 0 && ScriptHub.on) ScriptHub.beat(beat);   // v3.7.0: onBeatHit de .lua / beatHit de .hx
 }
 /* PlayState.stepHit: bop de cámara cada "rate" beats (decimal) con "offset" (SetCameraBop), si el HUD está por debajo de 135 % */
 function onStep(step) {
@@ -326,6 +331,7 @@ function onStep(step) {
     if (Math.abs(m) < 1e-6 || Math.abs(Math.abs(m) - rate * spb) < 1e-6) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }
   }
   if (Mods.hasHooks) Mods.hook('onStepHit', { step, __host: 'SongTimeScriptEvent' });
+  if (step >= 0 && ScriptHub.on) ScriptHub.step(step);
 }
 
 function update(dt) {
@@ -505,11 +511,7 @@ function render(dt = 16) {
   } else {
     Render.showGL(false);
     ctx.save();
-    const z = Cam.bop; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
-    drawStage();
-    const s = L.charH / 215;
-    drawCharacter(G.dad, drawRival, L.oppX, L.floorY, s, 1);
-    drawCharacter(G.bf, drawBoy, L.plX, L.floorY, s * 1.05, -1);      // bf mira hacia el rival (izquierda)
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);   // v3.7.0: sin escenario ni personajes reales → negro
     ctx.restore();
   }
   CamFX.applyGame();            // camGame: ángulo, desplazamiento, alpha, shake

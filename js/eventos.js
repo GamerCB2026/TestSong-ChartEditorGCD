@@ -74,7 +74,7 @@ function changeCharInfo(ev) {
 
 const Events = {
   idx: 0, fired: 0, log: [], iconCache: new Map(), charCache: new Map(), soundCache: new Map(), lastStep: null,
-  INTERNAL: ['ChangeCharacter', '_AddCameraZoom', '_SetGFSpeed', '_AltAnim', '_ScreenShake', '_PlaySound'],
+  INTERNAL: ['ChangeCharacter', '_AddCameraZoom', '_SetGFSpeed', '_AltAnim', '_ScreenShake', '_PlaySound', '_SetProperty', '_CamFlash', '_ScriptEvent'],
   get list() { return (G.chart && G.chart.events) || []; },
   stepMs() { return Cond.stepMs(G.songPos); },
   isBuiltin(name) { return Mods.BUILTIN_EVENTS.includes(name) || this.INTERNAL.includes(name); },
@@ -122,6 +122,9 @@ const Events = {
     const v = this.vals(ev);
     this.fired++; this.log.push(ev.e + '@' + Math.round(ev.t)); if (this.log.length > 20) this.log.shift();
     if (!instant) StageRT.songEvent(ev);            // v3.5.0: onSongEvent del script del escenario (p. ej. "blackIn")
+    // v3.7.0: onEvent de los scripts .lua (Psych) / .hx (Codename) y onSongEvent de los módulos .hxc
+    let scripted = false;
+    if (!instant && typeof ScriptHub !== 'undefined') scripted = ScriptHub.event(ev);
     const step = this.stepMs();
     switch (ev.e) {
       case 'FocusCamera': {
@@ -215,6 +218,15 @@ const Events = {
         for (const w of ['game', 'hud']) { const o = v[w]; if (o && o.dur > 0 && o.i > 0) CamFX[w].shake = { i: o.i, t0: G.gameTime, dur: o.dur * 1000, axes: 0x11 }; }
         break;
       }
+      case '_ScriptEvent': break;                    // solo para onEvent de los scripts
+      case '_SetProperty': { if (!instant && typeof PsychRT !== 'undefined') PsychRT.setProp(String(v.path || ''), PsychRT.coerce(v.value)); break; }
+      case '_CamFlash': {
+        if (instant) return;
+        const cam = /hud|other/i.test(v.cam) ? HOST.camHUD : HOST.camGame, dur = getNum(v.steps, 4) * step / 1000;
+        let col = v.color; if (Array.isArray(col)) col = (0xFF000000 | ((col[0] & 255) << 16) | ((col[1] & 255) << 8) | (col[2] & 255)) >>> 0; else if (typeof col === 'string') col = HOST.global('FlxColor').fromString(col) ?? 0xFFFFFFFF;
+        if (v.reversed) cam.fade(col >>> 0, dur, false, () => cam.stopFade(), true); else cam.flash(col >>> 0, dur, null, true);
+        break;
+      }
       case '_PlaySound': {
         if (instant) return;
         const buf = this.soundCache.get(String(v.sound)); const c = Sfx.ensureCtx && Sfx.ensureCtx();
@@ -229,7 +241,7 @@ const Events = {
         let done = false;
         if (!instant) { try { done = Mods.fireEvent(ev); } catch (e) { console.warn('[hxc] evento', ev.e, e); HX.note(`${ev.e}: error al ejecutar (${e.message})`); done = true; } }
         // v3.5.0: evento sin .hxc que nombra un video / gif / sonido / imagen → se muestra o suena (imitación)
-        if (!done && !instant) this.playMedia(ev);
+        if (!done && !instant && !scripted) this.playMedia(ev);
         break;
       }
     }

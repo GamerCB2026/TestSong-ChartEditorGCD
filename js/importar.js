@@ -73,7 +73,8 @@ const SongImport = {
       // V-Slice busca las imágenes y sonidos también en la librería shared/
       if (/^(images|sounds|music)\//i.test(rel)) m.keys.push(VFS.put('shared/' + rel, e.blob, e.name));
       if (/^images\/.*\.(png|astc|ktx2?|jpe?g|webp)$/i.test(rel)) m.images++;
-      if (TEXT_EXT.test(e.name)) ModText.put(rel, await e.blob.text());
+      // v3.7.0: también json/xml pequeños → Assets.getText / File.getContent síncronos desde los scripts
+      if (TEXT_EXT.test(e.name) || (/\.(json|xml|ini|csv)$/i.test(e.name) && e.blob.size < 512 * 1024)) ModText.put(rel, await e.blob.text());
     }
     // scripts del motor
     const scriptRx = engine === 'vslice' ? /\.hxc$/i : engine === 'codename' ? /\.(hx|hxs)$/i : /\.lua$/i;

@@ -207,7 +207,7 @@ const Chart = {
     const evs = [...(Array.isArray(raw.events) ? raw.events : []), ...(extra && Array.isArray(extra.events) ? extra.events : [])].sort((a, b) => (+a.time || 0) - (+b.time || 0));
     const events = [];
     for (const ev of evs) {
-      const t = +ev.time || 0, p = Array.isArray(ev.params) ? ev.params : [], name = String(ev.name || '');
+      const t = +ev.time || 0, p = Array.isArray(ev.params) ? ev.params : [], name = String(ev.name || ''), n0 = events.length;
       switch (name) {
         case 'BPM Change': case 'Continuous BPM Change': if (+p[0] > 0) tcs.push({ t, bpm: +p[0] }); break;
         case 'Camera Movement': { const s = sl[+p[0] | 0]; events.push({ t, e: 'FocusCamera', v: { char: roleChar[roleOf(s, +p[0] | 0)] }, auto: true }); break; }
@@ -220,8 +220,12 @@ const Chart = {
         case 'Alt Animation Toggle': { const s = sl[+p[2] | 0]; events.push({ t, e: '_AltAnim', v: { role: roleOf(s, +p[2] | 0), sing: !!p[0], idle: !!p[1] } }); break; }
         case 'Change Character': events.push({ t, e: 'ChangeCharacter', v: { target: roleOf(sl[+p[0] | 0], +p[0] | 0), char: String(p[1] || '') } }); break;
         case 'Time Signature Change': break;
+        case 'Camera Flash': events.push({ t, e: '_CamFlash', v: { reversed: !!p[0], color: p[1] ?? 0xFFFFFFFF, steps: +p[2] || 4, cam: String(p[3] || 'camHUD') } }); break;
         default: events.push({ t, e: name, v: p });
       }
+      // v3.7.0: nombre y parámetros originales → onEvent(event) de los scripts .hx de Codename
+      const ce = { name, params: p };
+      if (events.length > n0) events[n0].ce = ce; else events.push({ t, e: '_ScriptEvent', v: {}, ce });
     }
     const chars = {}; sl.forEach((s, i) => { const r = roleOf(s, i); if (!chars[r] && s && Array.isArray(s.characters) && s.characters[0]) chars[r] = String(s.characters[0]); });
     const diffs = Array.isArray(meta.difficulties) && meta.difficulties.length ? meta.difficulties.map(String) : null;
@@ -231,7 +235,13 @@ const Chart = {
   },
 
   /* Eventos de Psych → eventos de V-Slice equivalentes (o internos "_…" que esta página imita) */
+  /* v3.7.0: cada evento de Psych lleva su nombre y valores originales (pe) → onEvent de los scripts .lua */
   psychEvent(t, name, v1, v2, bpm) {
+    const out = this.psychEvent0(t, name, v1, v2, bpm), pe = { name: String(name || ''), v1: v1 ?? '', v2: v2 ?? '' };
+    if (out.length) out[0].pe = pe; else out.push({ t, e: '_ScriptEvent', v: {}, pe });
+    return out;
+  },
+  psychEvent0(t, name, v1, v2, bpm) {
     const who = x => { x = String(x ?? '').toLowerCase().trim(); return /^(1|dad|opponent)$/.test(x) ? 'dad' : /^(2|gf|girlfriend)$/.test(x) ? 'gf' : 'bf'; };
     const s1 = String(v1 ?? '').trim(), s2 = String(v2 ?? '').trim();
     switch (String(name || '')) {
@@ -251,6 +261,7 @@ const Chart = {
         return [{ t, e: '_ScreenShake', v: { game: pr(s1), hud: pr(s2) } }];
       }
       case 'Play Sound': return s1 ? [{ t, e: '_PlaySound', v: { sound: s1, volume: s2 === '' ? 1 : +v2 || 0 } }] : [];
+      case 'Set Property': return s1 ? [{ t, e: '_SetProperty', v: { path: s1, value: v2 ?? '' } }] : [];
       default: return [{ t, e: String(name || ''), v: { value1: v1 ?? '', value2: v2 ?? '' }, psych: true }];
     }
   },

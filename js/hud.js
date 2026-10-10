@@ -1,5 +1,5 @@
 /* =====================================================================
-   hud.js — barra de vida (healthBar.png o barra negra), iconos, texto de
+   hud.js — barra de vida (healthBar.png; sin ella, solo el relleno), iconos, texto de
    puntuación, popups de calificación (sick/good/bad/shit + num0-9),
    cuenta regresiva (ready/set/go) y textos varios.
    Posiciones de PlayState.hx / PopUpStuff.hx / Countdown.hx a 1280x720.
@@ -18,7 +18,7 @@ async function loadHudAssets() {
   ]);
   HudImg.bar = bar; names.forEach((n, i) => { HudImg.popup[n] = popImgs[i]; }); HudImg.countdown = cd;
   const pf = names.filter(n => HudImg.popup[n]), pm = names.filter(n => !HudImg.popup[n]);
-  AssetLog.set('healthBar', !!bar, bar ? `barra de vida: ${bar.assetPath}` : `barra de vida: falta ${ASSET_CFG.healthBar[0]} → barra negra del mismo tamaño (601x19)`);
+  AssetLog.set('healthBar', !!bar, bar ? `barra de vida: ${bar.assetPath}` : `barra de vida: falta ${ASSET_CFG.healthBar[0]} → sin fondo de barra`);
   AssetLog.set('popup', pf.length > 0, `calificaciones: ${pf.length}/${names.length} (${ASSET_CFG.popupDirs[0]})${pm.length ? ' · faltan: ' + pm.join(', ') : ''}${HudImg.popup.combo ? ' · combo.png no se usa en V-Slice (?combo=1 para verlo)' : ''}`);
   const cf = ['ready', 'set', 'go'].filter((n, i) => cd[i + 1]);
   AssetLog.set('countdown', cf.length > 0, `cuenta regresiva: ${cf.length}/3 imágenes${cf.length < 3 ? ' · faltan: ' + ['ready', 'set', 'go'].filter((n, i) => !cd[i + 1]).map(n => ASSET_CFG.countdownDirs[0] + n + '.png').join(', ') : ''}`);
@@ -28,7 +28,7 @@ async function loadHudAssets() {
 function drawHealthBar() {
   const b = LAYOUT.bar, bw = FNF.HEALTH_BAR_W, bh = FNF.HEALTH_BAR_H;
   if (HudImg.bar) blitAll(ctx, HudImg.bar, b.x, b.y);
-  else { ctx.fillStyle = '#000'; ctx.fillRect(b.x, b.y, bw, bh); }
+  // v3.7.0: sin healthBar.png no se dibuja un fondo improvisado (el relleno de colores es el FlxBar del juego)
   const ix = b.x + 4, iy = b.y + 4, iw = bw - 8, ih = bh - 8;
   const hv = clamp(G.healthLerp, 0, FNF.HEALTH_MAX), split = iw * (1 - hv / FNF.HEALTH_MAX);   // FlxBar RIGHT_TO_LEFT
   ctx.fillStyle = COLORS.opp; ctx.fillRect(ix, iy, split, ih);
@@ -87,8 +87,7 @@ function drawPopups() {
   for (const p of Popups) {
     const a = p.t < p.delay ? 1 : clamp(1 - (p.t - p.delay) / 200, 0, 1);
     ctx.save(); ctx.globalAlpha = a;
-    if (p.img) blitAll(ctx, p.img, p.x, p.y, p.w, p.h);
-    else text(p.txt, p.x + p.w / 2, p.y + p.h / 2, p.h * 0.8, p.color);
+    if (p.img) blitAll(ctx, p.img, p.x, p.y, p.w, p.h);   // v3.7.0: sin imagen real no hay texto improvisado
     ctx.restore();
   }
 }
@@ -102,13 +101,16 @@ function drawCountdown() {
   const anyImg = HudImg.countdown.some(Boolean), img = HudImg.countdown[step];
   ctx.save(); ctx.globalAlpha = alpha;
   if (img) blitAll(ctx, img, (V.w - img.naturalWidth) / 2, (V.h - img.naturalHeight) / 2);
-  else if (!anyImg) text(['3', '2', '1', '¡YA!'][step], V.w / 2, V.h / 2, 110, step === 3 ? '#ffe27a' : '#fff');
+  void anyImg;   // v3.7.0: sin ready/set/go reales no se dibujan números improvisados
   ctx.restore();
 }
 
+/* v3.7.0: alpha/visible de partes del HUD que tocan los scripts (healthBar/iconP1/iconP2 → barra de vida, scoreTxt → puntuación) */
+const HudState = { healthBar: { alpha: 1, visible: true }, scoreTxt: { alpha: 1, visible: true }, reset() { for (const k of ['healthBar', 'scoreTxt']) this[k] = { alpha: 1, visible: true }; } };
+function hudPart(k, f) { const s = HudState[k]; if (!s.visible || s.alpha <= 0) return; if (s.alpha >= 1) return f(); ctx.save(); ctx.globalAlpha *= s.alpha; try { f(); } finally { ctx.restore(); } }
 function drawHUD() {
-  drawHealthBar();
-  drawScoreText();
+  hudPart('healthBar', drawHealthBar);
+  hudPart('scoreTxt', drawScoreText);
   drawPopups();
   drawCountdown();
   if (Scene.loading) text('Cargando assets…', 14, V.h - 20, 14, 'rgba(255,255,255,' + (0.5 + 0.4 * Math.sin(G.gameTime / 200)) + ')', 'left', '700');

@@ -13,8 +13,11 @@ const ModUI = {
   unknown(chart) {
     const ev = new Map(), nk = new Map();
     if (!chart) return { ev, nk };
-    for (const e of chart.events || []) if (e.e && !Events.isBuiltin(e.e) && !Mods.events.has(e.e) && !changeCharInfo(e)) ev.set(e.e, (ev.get(e.e) || 0) + 1);
-    for (const n of chart.notes || []) if (n.kind && !NoteKinds.known(n.kind)) nk.set(n.kind, (nk.get(n.kind) || 0) + 1);
+    // v3.7.0: los eventos de Psych/Codename (pe/ce) los ejecutan sus scripts (.lua / .hx) o no hacen nada, como en el motor: no se piden .hxc
+    const txt = k => typeof ModText !== 'undefined' && ModText.map.has(k);
+    const scripted = n => { const l = String(n).toLowerCase(); return txt(`custom_notetypes/${l}.lua`) || txt(`data/notes/${l}.hx`); };
+    for (const e of chart.events || []) if (e.e && !e.pe && !e.ce && !Events.isBuiltin(e.e) && !Mods.events.has(e.e) && !changeCharInfo(e)) ev.set(e.e, (ev.get(e.e) || 0) + 1);
+    for (const n of chart.notes || []) if (n.kind && !NoteKinds.known(n.kind) && !scripted(n.kind)) nk.set(n.kind, (nk.get(n.kind) || 0) + 1);
     return { ev, nk };
   },
   used(chart) {

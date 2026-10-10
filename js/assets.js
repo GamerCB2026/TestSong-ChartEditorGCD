@@ -1,6 +1,6 @@
 /* =====================================================================
    assets.js — carga de archivos (fetch, imágenes, Sparrow XML) y JSON por defecto.
-   Si un archivo no existe se devuelve null y el juego usa el dibujo improvisado.
+   Si un archivo no existe se devuelve null y el juego no dibuja nada en su lugar (v3.7.0).
    Con file:// el navegador bloquea fetch(): usa GitHub Pages o un servidor local.
    ===================================================================== */
 'use strict';
@@ -43,6 +43,9 @@ const VFS = {
   get(path) { return this.files.get(this.norm(path)) || null; },
   has(path) { return this.files.has(this.norm(path)); },
   url(f) { return f.url || (f.url = URL.createObjectURL(f.blob)); },
+  /* v3.7.0: "carpeta imaginaria" → hijos directos de una carpeta del mod (FileSystem.readDirectory) */
+  list(dir) { const d = this.norm(dir).replace(/\/+$/, ''), pre = d ? d + '/' : '', out = new Set(); for (const k of [...this.files.keys(), ...(typeof ModText !== 'undefined' ? ModText.map.keys() : [])]) if (k.startsWith(pre)) out.add(k.slice(pre.length).split('/')[0]); return [...out]; },
+  isDir(dir) { const d = this.norm(dir).replace(/\/+$/, '') + '/'; for (const k of this.files.keys()) if (k.startsWith(d)) return true; return false; },
   byBase(name) { name = String(name).toLowerCase(); for (const [k, f] of this.files) if (k.split('/').pop() === name) return f; return null; },
 };
 

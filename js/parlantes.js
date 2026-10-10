@@ -9,7 +9,7 @@
      3. el JSON de la GF trae "speaker" (ruta de imagen o { assetPath, offsets, scale })
      4. la GF lleva parlantes en su sprite (gf*, o "speaker": false) → nada
      5. parlante por defecto: images/speakers(.xml/.png) o abot/abotSystem (Animate)
-     6. si no hay ninguno: parlantes improvisados (dibujo vectorial)
+     6. si no hay ninguno: NO se dibuja parlante (v3.7.0: se quitó el dibujo improvisado)
    ===================================================================== */
 'use strict';
 
@@ -51,8 +51,9 @@ const Speaker = {
         if (img) { this.cur = this.base({ img }, t.cfg); this.info = `parlante ${t.src} (imagen)`; return; }
       }
     }
-    this.cur = this.base({ img: this.improvCanvas(), improv: true }, {});
-    this.info = det.need ? `${det.why} → parlantes improvisados (puedes "Asignar parlante")` : 'parlantes improvisados';
+    // v3.7.0: sin asset real (prop del escenario, JSON de la GF, speakers del mod o abot) → no se dibuja ningún parlante
+    this.cur = null;
+    this.info = `${det.why} → sin parlante (no hay un asset real: speakers.png/.xml o abot)`;
   },
   base(o, cfg) {
     return Object.assign({ name: 'parlante GF', scale: [+(cfg.scale || 1), +(cfg.scale || 1)], scroll: [1, 1], alpha: 1, flipX: false, flipY: false, isPixel: !!cfg.isPixel,
@@ -77,23 +78,6 @@ const Speaker = {
       return p;
     }
     return null;
-  },
-  /* parlantes improvisados (mismo dibujo del escenario improvisado) en un lienzo → textura normal (WebGL o 2D) */
-  improvCanvas() {
-    if (this._cv) return this._cv;
-    const c = document.createElement('canvas'); c.width = 520; c.height = 420;
-    const x = c.getContext('2d'), size = 600, w = size * 0.5, h = size * 0.6;
-    x.translate(c.width / 2, c.height - 6);
-    const rr2 = (X, Y, Wd, Hd, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + Wd, Y, X + Wd, Y + Hd, r); x.arcTo(X + Wd, Y + Hd, X, Y + Hd, r); x.arcTo(X, Y + Hd, X, Y, r); x.arcTo(X, Y, X + Wd, Y, r); x.closePath(); };
-    const circ = (cx, cy, r, fill) => { x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fillStyle = fill; x.fill(); x.lineWidth = 5; x.strokeStyle = '#000'; x.stroke(); };
-    rr2(-w * 1.02, -h * 0.18, w * 2.04, h * 0.18, 10); x.fillStyle = '#2b2036'; x.fill(); x.lineWidth = 5; x.strokeStyle = '#000'; x.stroke();
-    for (const dx of [-w * 0.98, w * 0.02]) {
-      rr2(dx, -h, w * 0.96, h * 0.84, 16); x.fillStyle = '#22182e'; x.fill(); x.lineWidth = 6; x.strokeStyle = '#000'; x.stroke();
-      circ(dx + w * 0.48, -h * 0.72, w * 0.22, '#3a2c4c'); circ(dx + w * 0.48, -h * 0.72, w * 0.09, '#110a18');
-      circ(dx + w * 0.48, -h * 0.38, w * 0.3, '#3a2c4c'); circ(dx + w * 0.48, -h * 0.38, w * 0.13, '#110a18');
-    }
-    c.naturalWidth = c.width; c.naturalHeight = c.height;
-    this._cv = c; return c;
   },
   /* posición: centrado bajo los pies de la GF, detrás de ella */
   place() {
@@ -127,15 +111,6 @@ const Speaker = {
       const n = a.frames.length, i = clamp(animFrame(G.gameTime - (p.atlasT0 || 0), a.fps), 0, n - 1);
       mmul(M, M, mset(_spL, p.scale[0], 0, 0, p.scale[1], p.pos[0] - b.minX * p.scale[0], p.pos[1] - b.minY * p.scale[1]));
       atlasDibujarR(R, a.model, a.timeline, a.frames[i], M, p.alpha, !p.isPixel && Optim.s.aa, false);
-      return;
-    }
-    if (p.improv) {
-      // bop del dibujo improvisado (como el escenario improvisado)
-      const k = clamp((G.gameTime - (p.bopAt || -1e9)) / 220, 0, 1), s = 1 + 0.04 * (1 - k) * (1 - k);
-      const [w, h] = this.size({ img: p.img, scale: [1, 1] });
-      const save = p.scale; p.scale = [save[0] * s, save[1] * (2 - s)];
-      const pos = p.pos; p.pos = [pos[0] - w * (s - 1) / 2, pos[1] + h * (s - 1)];
-      drawProp(p, v, zoom, R); p.scale = save; p.pos = pos;
       return;
     }
     drawProp(p, v, zoom, R);

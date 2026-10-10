@@ -1,7 +1,7 @@
 /* =====================================================================
    stages.js — escenario V-Slice (data/stages/<id>.json: props, zIndex, scroll,
    cameraZoom, posiciones de bf/dad/gf), cámara del mundo con parallax y
-   escenario improvisado de respaldo.
+   (v3.7.0: sin escenario improvisado; sin assets, fondo negro).
    ===================================================================== */
 'use strict';
 
@@ -181,8 +181,6 @@ function drawPropInner(p, v, zoom, R) {
 /* ¿el mundo de este frame necesita el lienzo 2D directo? (cosas que solo sabe dibujar el 2D) */
 function worldNeedsDirect() {
   const st = Scene.stage;
-  if (!st || !st.props.some(p => p.img || p.color || p.frames)) return true;   // escenario improvisado
-  if (!Scene.chars.bf || !Scene.chars.dad) return true;                         // personaje improvisado
   if (CamFX.active('game')) return true;                                        // efectos de cámara de scripts
   for (const sp of ModRT.sprites) if (!sp.onHud && !sp.glOk) return true;      // sprites de scripts que solo sabe dibujar el 2D (texto, rotados, blend add)
   return false;
@@ -197,16 +195,7 @@ function renderWorld(dt, bump, R) {
   R.clear();
   const M1 = worldMatrix(v, zoom, 1, 1);
   const toScreen = (wx, wy) => [(M1[0] * wx + M1[4]) / DPR, (M1[3] * wy + M1[5]) / DPR];
-  const hasProps = !!st && st.props.some(p => p.img || p.color || p.frames);
-  if (!hasProps && direct) {
-    // escenario improvisado alineado con los pies de los personajes
-    const feetY = sd.characters?.bf?.position?.[1] ?? 885;
-    const save = { floorY: L.floorY, horizon: L.horizon, charH: L.charH };
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    L.floorY = toScreen(0, feetY)[1]; L.charH = M1[3] / DPR * 400; L.horizon = L.floorY - L.charH * 0.55;
-    ctx.save(); drawStage(!Scene.chars.gf); ctx.restore();
-    Object.assign(L, save);
-  }
+  // v3.7.0: sin props reales el fondo queda negro (ya no hay escenario improvisado)
   // capas ordenadas por zIndex (sin crear funciones por frame)
   const layers = _layers; layers.length = 0;
   if (st) for (const p of st.props) if (p.img || p.color || p.frames) layers.push({ z: p.z, k: 0, o: p });
@@ -214,7 +203,6 @@ function renderWorld(dt, bump, R) {
     const c = Scene.chars[role], sc = sd.characters?.[role];
     if (role === 'gf' && !Optim.s.gf) continue;                                 // Optimización → GF oculta
     if (c) layers.push({ z: c.z, k: 1, o: c });
-    else if (role !== 'gf' && sc && direct) layers.push({ z: sc.zIndex ?? 0, k: 2, o: role, sc });
   }
   // parlantes de GF (parlantes.js), detrás de ella
   if (Speaker.cur && Optim.s.gf && Speaker.place()) layers.push({ z: Speaker.cur.z, k: 4, o: Speaker });
@@ -226,13 +214,7 @@ function renderWorld(dt, bump, R) {
     try {
       if (l.k === 0) drawProp(l.o, v, zoom, R);
       else if (l.k === 1) { const c = l.o; c.update(); c.draw(worldMatrix(v, zoom, c.scroll[0], c.scroll[1], _cM), R); }
-      else if (l.k === 2) {
-        // personaje improvisado en la posición del escenario (bf mira a la izquierda, dad a la derecha)
-        const [x, y] = toScreen(l.sc.position[0], l.sc.position[1]);
-        ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.globalAlpha = 1;
-        const s = M1[3] / DPR * 400 / 215;
-        if (l.o === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
-      } else if (l.k === 4) Speaker.draw(v, zoom, R);
+      else if (l.k === 4) Speaker.draw(v, zoom, R);
       else if (l.o.glOk) l.o.renderR({ v, zoom }, R);                          // v3.5.0: también con WebGL (FlxBackdrop, coches…)
       else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
     } catch (e) { reportOnce('capa ' + (l.o && (l.o.name || l.o.id) || l.k), e); }   // una capa rota no deja sin HUD al juego
@@ -242,73 +224,7 @@ const _cM = [1, 0, 0, 1, 0, 0];
 const _reported = new Set();
 function reportOnce(key, e) { if (_reported.has(key)) return; _reported.add(key); console.error('[TestSong] error dibujando ' + key + ' (se omite):', e); }
 
-/* ---------- Escenario improvisado (sin assets) ---------- */
-const L = {};   // medidas del escenario improvisado
-function improvLayout() {
-  L.floorY = H * 0.8;
-  L.charH = H * 0.5;
-  L.horizon = L.floorY - H * 0.26;
-  L.oppX = W * 0.25; L.plX = W * 0.75;
-}
-const rndS = mulberry32(99);
-const STARS = Array.from({ length: 90 }, () => ({ x: rndS(), y: rndS(), r: 0.6 + rndS() * 1.6, p: rndS() * 6 }));
-const BUILDINGS = []; { let x = -0.02; while (x < 1.02) { const w = 0.04 + rndS() * 0.06; BUILDINGS.push({ x, w, h: 0.25 + rndS() * 0.75, win: Array.from({ length: 24 }, () => rndS() < 0.35) }); x += w + 0.004; } }
-function drawStage(speakers = true) {
-  const b = bob();
-  // cielo
-  const sky = ctx.createLinearGradient(0, 0, 0, L.floorY);
-  sky.addColorStop(0, '#07021a'); sky.addColorStop(0.55, '#2a0f4a'); sky.addColorStop(1, '#6a2275');
-  ctx.fillStyle = sky; ctx.fillRect(-W, -H, W * 3, H * 3);
-  // estrellas
-  for (const s of STARS) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(G.gameTime / 900 + s.p)); ell(s.x * W, s.y * L.horizon * 0.9, s.r, s.r, '#fff'); }
-  ctx.globalAlpha = 1;
-  // luna
-  ell(W * 0.14, L.horizon * 0.28, Math.min(W, H) * 0.07, Math.min(W, H) * 0.07, '#ffe9c4');
-  ell(W * 0.14 + Math.min(W, H) * 0.025, L.horizon * 0.28 - Math.min(W, H) * 0.02, Math.min(W, H) * 0.06, Math.min(W, H) * 0.06, '#1b0936');
-  // ciudad
-  const cityH = (L.horizon) * 0.55;
-  for (const bd of BUILDINGS) {
-    const x = bd.x * W, w = bd.w * W, h = bd.h * cityH, y = L.horizon + 4 - h;
-    ctx.fillStyle = '#1a0a30'; ctx.fillRect(x, y, w, h + H);
-    ctx.fillStyle = '#ffd86b';
-    const cols = 3, rows = 8, ww = w / (cols * 2 + 1), wh = h / (rows * 2 + 1);
-    for (let i = 0; i < cols * rows; i++) if (bd.win[i % 24]) { const cx = i % cols, cy = Math.floor(i / cols); ctx.globalAlpha = 0.55 + 0.35 * b * (i % 2); ctx.fillRect(x + ww * (cx * 2 + 1), y + wh * (cy * 2 + 1), ww, wh); }
-    ctx.globalAlpha = 1;
-  }
-  // pared / fondo del escenario
-  const wall = ctx.createLinearGradient(0, L.horizon, 0, L.floorY);
-  wall.addColorStop(0, '#2b123f'); wall.addColorStop(1, '#170827');
-  ctx.fillStyle = wall; ctx.fillRect(-W, L.horizon, W * 3, L.floorY);
-  // piso (madera con perspectiva)
-  const topY = L.floorY - L.charH * 0.1;
-  const fl = ctx.createLinearGradient(0, topY, 0, H);
-  fl.addColorStop(0, '#7a4425'); fl.addColorStop(1, '#2e140a');
-  poly([[-W * 0.2, topY], [W * 1.2, topY], [W * 1.6, H * 1.5], [-W * 0.6, H * 1.5]], fl);
-  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2;
-  for (let i = -6; i <= 16; i++) { const x0 = W * (i / 10); ctx.beginPath(); ctx.moveTo(x0, topY); ctx.lineTo(W / 2 + (x0 - W / 2) * 2.4, H * 1.5); ctx.stroke(); }
-  ctx.fillStyle = '#a8653a'; ctx.fillRect(-W, topY - 3, W * 3, 5);
-  // focos
-  ctx.save(); ctx.globalCompositeOperation = 'lighter';
-  for (const [sx, tx, col] of [[W * 0.05, W * 0.28, '255,80,200'], [W * 0.95, W * 0.72, '80,200,255']]) {
-    const g = ctx.createLinearGradient(sx, 0, tx, L.floorY);
-    g.addColorStop(0, `rgba(${col},${0.32 + 0.25 * b})`); g.addColorStop(1, `rgba(${col},0)`);
-    poly([[sx - 12, -10], [sx + 12, -10], [tx + L.charH * 0.45, L.floorY + 10], [tx - L.charH * 0.45, L.floorY + 10]], g);
-  }
-  ctx.restore();
-  if (speakers) drawSpeakers(W / 2, topY + L.charH * 0.04, L.charH * (V.portrait ? 0.34 : 0.42), b);
-}
+/* v3.7.0: se quitó el escenario improvisado (cielo, ciudad, piso, focos). Quedan solo las medidas de pantalla */
+const L = {};
+function improvLayout() { L.floorY = H * 0.8; L.charH = H * 0.5; L.horizon = L.floorY - H * 0.26; L.oppX = W * 0.25; L.plX = W * 0.75; }
 
-function drawSpeakers(cx, baseY, size, b) {
-  const s = 1 + 0.05 * b;
-  ctx.save(); ctx.translate(cx, baseY); ctx.scale(s, 2 - s);
-  const w = size * 0.5, h = size * 0.75;
-  for (const dx of [-w * 1.02, w * 0.02]) {
-    rr(dx, -h, w, h, size * 0.05); ctx.fillStyle = '#22182e'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = '#000'; ctx.stroke();
-    ell(dx + w / 2, -h * 0.68, w * 0.26, w * 0.26, '#3a2c4c', '#000', 3); ell(dx + w / 2, -h * 0.68, w * 0.12 * (1 + 0.3 * b), w * 0.12 * (1 + 0.3 * b), '#110a18');
-    ell(dx + w / 2, -h * 0.27, w * 0.36, w * 0.36, '#3a2c4c', '#000', 3); ell(dx + w / 2, -h * 0.27, w * 0.18 * (1 + 0.3 * b), w * 0.18 * (1 + 0.3 * b), '#110a18');
-  }
-  // logo GCD
-  rr(-w * 0.62, -h - size * 0.17, w * 1.24, size * 0.15, 6); ctx.fillStyle = '#c24b99'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
-  ctx.font = `900 ${size * 0.1}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.fillText('GCD', 0, -h - size * 0.095);
-  ctx.restore();
-}

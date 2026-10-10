@@ -316,7 +316,7 @@ const UserAssets = {
         <div class="ua-btns"><button class="btn mini" type="button" data-ua="files:${role}">📎 Elegir archivos</button><button class="btn mini alt" type="button" data-ua="dir:${role}">📁 Seleccionar carpeta</button></div></div>`);
     }
     // iconos (Player / Enemigo)
-    const icoTxt = role => { const ic = Scene.icons[role === 'bf' ? 'player' : 'opponent']; return ic ? (ic.ok ? `${ic.where ? ic.where.split('/').pop() : ''} (${ic.kind}${ic.fallbackFace ? ', sin icon-' + escHtml(ic.wanted) + ' → icon-face' : ''})` : 'cara improvisada') : '—'; };
+    const icoTxt = role => { const ic = Scene.icons[role === 'bf' ? 'player' : 'opponent']; return ic ? (ic.ok ? `${ic.where ? ic.where.split('/').pop() : ''} (${ic.kind}${ic.fallbackFace ? ', sin icon-' + escHtml(ic.wanted) + ' → icon-face' : ''})` : 'sin icono (falta, no se dibuja)') : '—'; };
     h.push(`<h4>Iconos</h4><div class="ua-roles">${['bf', 'dad'].map(r => `<button class="btn mini" type="button" data-ua="icon:${r}">🙂 Asignar icono ${this.ROLE_ES[r]}</button>`).join('')}</div>
       <div class="ua-info">${['bf', 'dad'].map(r => `<div class="ok">${this.ROLE_ES[r]} (healthIcon "${escHtml(this.iconIdFor(r))}"): ${escHtml(icoTxt(r))}</div>`).join('')}</div>`);
     // parlante de GF

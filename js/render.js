@@ -8,7 +8,7 @@
      navegador tiene WEBGL_compressed_texture_astc, las texturas ASTC se suben
      COMPRIMIDAS (sin decodificar en la CPU).
    Si en un frame hay algo que solo sabe dibujar el lienzo 2D (personaje o
-   escenario improvisado, sprites de scripts .hxc en el mundo, efectos de
+   sprites de scripts .hxc en el mundo, efectos de
    cámara de los scripts) ese frame se dibuja con el lienzo directo.
    ===================================================================== */
 'use strict';

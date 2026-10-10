@@ -233,7 +233,7 @@ class HxSprite {
   loadTexture(key) { return this.loadGraphic(String(key).includes('/') ? key : 'images/' + key + '.png'); }
   /* v3.5.0: velocity de Flixel (coches, nubes, nieblas de FlxBackdrop) */
   tick() { const t = G.gameTime; if (this._lt !== null && this.active !== false) { const dt = Math.min(0.1, (t - this._lt) / 1000); this.x += this.velocity.x * dt; this.y += this.velocity.y * dt; } this._lt = t; }
-  get glOk() { return !(this instanceof HxText) && this.blend !== 'add' && !(this.flipX || this.flipY || this.angle); }
+  get glOk() { return !(this instanceof HxText) && this.blend !== 'add'; }   // v3.7.0: giro y volteo también con WebGL
   /* dibujo con el destino del render (WebGL o Canvas): imagen / frame Sparrow / color sólido, repetido si es FlxBackdrop */
   renderR(view, R) {
     this.tick();
@@ -244,6 +244,12 @@ class HxSprite {
     const a = clamp(this.alpha, 0, 1), smooth = !!this.antialiasing && Optim.s.aa;
     const one = (x, y) => {
       mmul(_hxL2, M, mset(_hxL, 1, 0, 0, 1, x - this.offset.x, y - this.offset.y));
+      if (this.angle || this.flipX || this.flipY) {
+        const r = (this.angle || 0) * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r), fx = this.flipX ? -1 : 1, fy = this.flipY ? -1 : 1;
+        mmul(_hxL2, _hxL2, mset(_hxL, 1, 0, 0, 1, w / 2, h / 2));
+        mmul(_hxL2, _hxL2, mset(_hxL, c * fx, sn * fx, -sn * fy, c * fy, 0, 0));
+        mmul(_hxL2, _hxL2, mset(_hxL, 1, 0, 0, 1, -w / 2, -h / 2));
+      }
       if (fr) { mmul(_hxL2, _hxL2, mset(_hxL, this.scale.x, 0, 0, this.scale.y, fr.offX || 0, fr.offY || 0)); if (fr.rot) mmul(_hxL2, _hxL2, mset(_hxL, 0, -1, 1, 0, 0, fr.dh)); R.img(fr.img, fr.x, fr.y, fr.w, fr.h, _hxL2, a, smooth, false, rgb); }
       else if (this.img) { const nw = this.img.naturalWidth || this.img.width, nh = this.img.naturalHeight || this.img.height; mmul(_hxL2, _hxL2, mset(_hxL, w / nw, 0, 0, h / nh, 0, 0)); R.img(this.img, 0, 0, nw, nh, _hxL2, a, smooth, false, rgb); }
       else if (this.solid !== null) R.rect(cssColor(this.solid), _hxL2, w, h, a);
@@ -418,15 +424,22 @@ const CharW = {
       get shader() { const c = real(); return c ? c.shader || null : null; }, set shader(v) { const c = real(); if (c) c.shader = v || null; },
       get frame() { const c = real(); return c ? { angle: 0, __host: 'FlxFrame' } : null; },
       get color() { const c = real(); return c && c.rgbInt != null ? c.rgbInt : 0xFFFFFFFF; }, set color(v) { const c = real(); if (c) { c.rgbInt = v >>> 0; c.rgb = rgbOf(v); } },
+      // v3.7.0: escala / volteo / scroll / tamaño (scripts .lua de Psych y .hx de Codename)
+      scale: { __host: 'FlxPoint', get x() { const c = real(); return c ? c.ts : 1; }, set x(v) { const c = real(); if (c && isFinite(+v) && +v > 0) c.ts = +v; }, get y() { return this.x; }, set y(v) { this.x = v; }, set(x = 1, y = x) { this.x = x; } },
+      scrollFactor: { __host: 'FlxPoint', get x() { const c = real(); return c ? c.scroll[0] : 1; }, set x(v) { const c = real(); if (c) c.scroll = [+v, c.scroll[1]]; }, get y() { const c = real(); return c ? c.scroll[1] : 1; }, set y(v) { const c = real(); if (c) c.scroll = [c.scroll[0], +v]; }, set(x = 1, y = x) { const c = real(); if (c) c.scroll = [+x, +y]; } },
+      get flipX() { const c = real(); return c ? (role === 'bf' ? !c.flipX : !!c.flipX) : false; }, set flipX(v) { const c = real(); if (c) c.flipX = role === 'bf' ? !v : !!v; },
+      get width() { const c = real(); return c && c.ref ? c.ref.w * c.ts : 0; }, get height() { const c = real(); return c && c.ref ? c.ref.h * c.ts : 0; },
+      get zIndex() { const c = real(); return c ? c.z : 0; }, set zIndex(v) { const c = real(); if (c) c.z = +v || 0; },
+      angle: 0, setPosition(x = 0, y = 0) { w.x = x; w.y = y; }, getMidpoint() { return new HxPoint(w.x + w.width / 2, w.y + w.height / 2); },
     };
     return (this.cache[role] = w);
   },
 };
-const StrumState = { player: null, opponent: null, reset() { for (const s of ['player', 'opponent']) this[s] = { alpha: 1, visible: true, x: 0, y: 0, lane: [1, 1, 1, 1].map(a => ({ alpha: a, visible: true })) }; } };
+const StrumState = { player: null, opponent: null, reset() { for (const s of ['player', 'opponent']) this[s] = { alpha: 1, visible: true, x: 0, y: 0, lane: [1, 1, 1, 1].map(a => ({ alpha: a, visible: true, dx: 0, dy: 0, angle: 0 })) }; } };
 StrumState.reset();
 function strumlineW(side) {
   const st = () => StrumState[side];
-  const members = [0, 1, 2, 3].map(i => ({ __host: 'StrumlineNote', __open: true, get alpha() { return st().lane[i].alpha; }, set alpha(v) { st().lane[i].alpha = +v; }, get visible() { return st().lane[i].visible; }, set visible(v) { st().lane[i].visible = !!v; }, get x() { return laneX(side, i); }, set x(v) {}, get y() { return strumCY(side); }, set y(v) {} }));
+  const members = [0, 1, 2, 3].map(i => ({ __host: 'StrumlineNote', __open: true, get alpha() { return st().lane[i].alpha; }, set alpha(v) { st().lane[i].alpha = +v; }, get visible() { return st().lane[i].visible; }, set visible(v) { st().lane[i].visible = !!v; }, get x() { return laneX(side, i) + st().lane[i].dx; }, set x(v) { st().lane[i].dx = +v - laneX(side, i); }, get y() { return strumCY(side) + st().lane[i].dy; }, set y(v) { st().lane[i].dy = +v - strumCY(side); }, get angle() { return st().lane[i].angle; }, set angle(v) { st().lane[i].angle = +v; } }));
   return {
     __host: 'Strumline', __open: true,
     get alpha() { return st().alpha; }, set alpha(v) { st().alpha = +v; },
@@ -459,6 +472,8 @@ function camObj(which) {
     stopFlash() { s().flash = null; }, stopFade() { s().fade = null; }, stopShake() { s().shake = null; }, stopFX() { s().flash = s().fade = s().shake = null; },
     setFilters(f) { o._filters = f || []; CamFilters.set('hxc:' + which, o._filters); }, set filters(f) { o.setFilters(f); }, get filters() { return o._filters || []; },
     follow() {}, focusOn() {}, snapToTarget() {},
+    // v3.7.0: Codename camGame.addShader(new CustomShader("x"))
+    addShader(sh) { if (sh) o.setFilters([...(o._filters || []), { shader: sh }]); return sh; }, removeShader(sh) { o.setFilters((o._filters || []).filter(f => f.shader !== sh)); return true; },
   };
   return o;
 }
@@ -478,6 +493,13 @@ function propW(p) {
     get shader() { return p.shader || null; }, set shader(v) { p.shader = v || null; },
     get frame() { return { angle: 0 }; }, get name() { return p.name; },
     playAnimation(n, force) { anim.play(n, force); }, setPosition(x = 0, y = 0) { p.pos = [+x, +y]; },
+  });
+}
+/* v3.7.0: shader cuyas propiedades desconocidas son uniforms (Codename CustomShader / Psych createRuntimeShader) */
+function uniformProxy(sh) {
+  return new Proxy(sh, {
+    get(t, k) { if (k in t || typeof k === 'symbol') return t[k]; if (k in t.vals) return t.vals[k]; return undefined; },
+    set(t, k, v) { if (typeof k === 'symbol' || k in t || String(k).startsWith('_')) t[k] = v; else t.vals[k] = Array.isArray(v) ? v.map(Number) : typeof v === 'boolean' ? v : +v; return true; },
   });
 }
 const HOST = (() => {
@@ -618,6 +640,19 @@ const HOST = (() => {
     Constants: { __host: 'Constants', DEFAULT_CHARACTER: 'bf', DEFAULT_STAGE: 'mainStage', COLOR_HEALTH_BAR_RED: 0xFFFF0000, COLOR_HEALTH_BAR_GREEN: 0xFF66FF33, STRUMLINE_X_OFFSET: 48, STRUMLINE_Y_OFFSET: 24 },
     HealthIcon: HX.stub('HealthIcon'), VideoCutscene: { __host: 'VideoCutscene', play: p => { Mods.playVideo(p); }, isPlaying: () => false, finishVideo: () => {} },
   };
+  // v3.7.0: "carpeta imaginaria" (VFS): Assets / FileSystem / sys.io.File leen los archivos del mod en memoria
+  const vfsText = p => { const k = ModText.key(p); if (ModText.map.has(k)) return ModText.map.get(k); return null; };
+  const vfsHas = p => { const k = VFS.norm(p); return VFS.files.has(k) || ModText.map.has(ModText.key(p)) || VFS.isDir(p); };
+  Object.assign(G_.Assets, {
+    exists: p => { if (vfsHas(p)) return true; const r = ModRes.parsePath(p); return ModRes.status(r.kind, r.key, r.lib) === 'ok' || !!ModRes.findUser(r.kind, r.key, r.lib); },
+    getText: p => { const t = vfsText(p); return t !== null ? t : ModText.get(p); },
+    getBytes: p => { const t = vfsText(p); return t === null ? null : { __host: 'Bytes', toString: () => t, length: t.length, getString: (a = 0, b = t.length) => t.substr(a, b) }; },
+    list: (type) => [...VFS.files.keys(), ...ModText.map.keys()],
+    getBitmapData: p => { const r = ModRes.parsePath(p); return ModRes.get(r.kind, r.key, r.lib); },
+  });
+  G_.FileSystem = { __host: 'FileSystem', exists: p => vfsHas(p), isDirectory: p => VFS.isDir(p), readDirectory: p => VFS.list(p), createDirectory() {}, deleteFile() {}, absolutePath: p => String(p), fullPath: p => String(p) };
+  G_.File = { __host: 'sys.io.File', getContent: p => { const t = vfsText(p); if (t === null) { HX.note(`File.getContent("${p}"): no está en el mod`); return ''; } return t; }, getBytes: p => G_.Assets.getBytes(p), saveContent: (p, t) => { ModText.put(p, String(t)); }, append() { return { writeString() {}, close() {} }; } };
+  G_.sys = { __host: 'sys', io: { File: G_.File }, FileSystem: G_.FileSystem };
   G_.OpenFlAssets = G_.Assets;
   G_.CharacterType = { __host: 'CharacterType', BF: 'BF', DAD: 'DAD', GF: 'GF', OTHER: 'OTHER' };
   G_.HapticUtil = { __host: 'HapticUtil', vibrate() {}, increasingVibrate() {}, hapticsAvailable: false };
@@ -632,6 +667,9 @@ const HOST = (() => {
     FlxBackdrop: a => { const s = new HxSprite(); const g = a[0]; if (g) s.loadGraphic(typeof g === 'string' ? g : (g.__path || '')); const ax = a[1] ?? 0x11; s.repeatX = !!(ax & 0x01); s.repeatY = !!(ax & 0x10); s.spacing.set(+a[2] || 0, +a[3] || 0); s.__host = 'FlxBackdrop'; return s; },
     Sequence: a => new HxSequence(a[0]),
     ShaderFilter: a => ({ __host: 'ShaderFilter', __open: true, shader: a[0] || null }),
+    // v3.7.0: Codename "new CustomShader('x')": shaders/x.frag; los uniforms se asignan como propiedades (shader.time = 1)
+    CustomShader: a => uniformProxy(new SprShader(null, 'CustomShader').fromKey(String(a[0] || '').replace(/\.frag$/, ''))),
+    FunkinShader: a => uniformProxy(new SprShader(null, 'FunkinShader').fromKey(String(a[0] || '').replace(/\.frag$/, ''))),
   };
   for (const [cls, key] of Object.entries(SPR_CLASS_FRAG)) CTORS[cls] = () => new SprShader(null, cls).fromKey(key);
   return {
@@ -692,7 +730,7 @@ const NoteKinds = {
 const Mods = {
   scripts: new Map(), events: new Map(), kinds: new Map(), modules: new Map(), stages: new Map(), classes: new Map(), elapsed: 0, pendingDeath: false, fxLog: [], db: null, ready: null,
   BUILTIN_EVENTS: ['FocusCamera', 'ZoomCamera', 'SetCameraBop', 'PlayAnimation', 'SetHealthIcon', 'ScrollSpeed'],
-  safe(f) { try { return f(); } catch (e) { console.warn('[hxc] callback', e); HX.note('error en callback: ' + e.message); } },
+  safe(f) { try { return f(); } catch (e) { console.warn('[hxc] callback', e); HX.note('error en callback: ' + e.message); if (typeof ScriptLog !== 'undefined') ScriptLog.err(HX.R.cur || 'callback', e.message); } },
   fx(kind, which) { this.fxLog.push(`${kind}:${which}@${Math.round(G.songPos)}`); if (this.fxLog.length > 40) this.fxLog.shift(); },
   group() { const members = []; return { __host: 'FlxGroup', __open: true, members, add: o => { members.push(o); HOST.ps.add(o); return o; }, remove: o => { const i = members.indexOf(o); if (i >= 0) members.splice(i, 1); HOST.ps.remove(o); return o; }, forEach: f => members.forEach(f), forEachAlive: f => members.filter(m => m.alive !== false).forEach(f), get length() { return members.length; }, clear: () => { members.forEach(m => HOST.ps.remove(m)); members.length = 0; }, kill() {}, destroy() {} }; },
   /* carga un .hxc: clases → eventos / note kinds / módulos */
@@ -780,13 +818,14 @@ const Mods = {
     ModRT.timers = ModRT.timers.filter(t => !t.update());
     StageRT.tick(); VideoSync.tick();
     if (this.hasHooks) this.hook('onUpdate', { elapsed: this.elapsed, __host: 'UpdateScriptEvent' });
+    ScriptHub.update(dt);   // v3.7.0: onUpdate de .lua / update de .hx (y onSongStart al cruzar 0)
     if (this.pendingDeath) { this.pendingDeath = false; if (G.health <= 0 && !isBot()) openOverlay('over'); }
   },
   /* reiniciar / buscar: se borra todo lo que crearon los scripts */
   resetRuntime(retry) {
     ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
-    CamFX.reset(); StrumState.reset(); CharW.cache = {};
+    CamFX.reset(); StrumState.reset(); CharW.cache = {}; HOST.camGame._filters = []; HOST.camHUD._filters = [];
     for (const c of Object.values(Scene.chars)) if (c) { c.visible = true; }
     if (retry) this.hook('onSongRetry', {});
   },
@@ -939,7 +978,10 @@ const StageRT = {
     if (st) for (const p of st.props) { if (!p.__orig) p.__orig = { alpha: p.alpha, pos: p.pos.slice(), scale: p.scale.slice(), visible: p.visible, z: p.z, ap: p.path }; else Object.assign(p, { alpha: p.__orig.alpha, pos: p.__orig.pos.slice(), scale: p.__orig.scale.slice(), visible: p.__orig.visible, z: p.__orig.z }); p.shader = null; p.rgb = null; p.rgbInt = null; }
     for (const o of this.sprites) { const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); }
     this.cur = null; this.chars = {}; this.seqs = []; this.sprites = []; this.mismatch = null;
-    try { EngineFX.apply(st); } catch (e) { console.warn('[EngineFX]', e); }
+    // v3.7.0: scripts reales (.lua de Psych/Kade, .hx de Codename). Si no hay, queda la lectura estática de shaders (EngineFX) como respaldo
+    let real = false;
+    try { real = ScriptHub.start(); } catch (e) { console.warn('[scripts]', e); ScriptLog.err('scripts', e.message); }
+    if (!real || (typeof Optim !== 'undefined' && Optim.s.scriptsReales === false)) { try { EngineFX.apply(st); } catch (e) { console.warn('[EngineFX]', e); } }
     if (!st || !Mods.stages.size) return;
     const rec = Mods.stages.get(st.id) || [...Mods.stages.values()].find(r => r.id.toLowerCase() === String(st.id).toLowerCase());
     if (!rec) {

@@ -35,6 +35,7 @@ const OPT_ITEMS = {
   aa:       { name: 'Antialiasing', vals: [true, false], lab: onOff, hint: 'Suavizado de las imágenes al escalarlas (Off = más rápido, bordes pixelados)' },
   fps:      { name: 'Límite FPS', vals: [30, 60, 120, 0], lab: v => v ? String(v) : 'Sin límite', hint: 'Máximo de cuadros por segundo. 60 o 30 ahorran batería y dan un ritmo más estable en equipos lentos' },
   contador: { name: 'Contador FPS', vals: [false, true], lab: onOff, hint: 'Muestra FPS, tiempo por cuadro, el peor cuadro y el renderizador arriba a la izquierda' },
+  consola:  { name: 'Consola De Scripts', vals: [false, true], lab: onOff, hint: 'Muestra los scripts del mod que se están ejecutando (.lua, .hx, .hxc), sus errores y sus debugPrint. Un error de script nunca detiene el juego. También con ?consola=1 en la dirección' },
   renderer: { name: 'Render', vals: ['auto', 'webgl', 'canvas'], lab: v => ({ auto: 'Auto', webgl: 'WebGL', canvas: 'Canvas' }[v]),
               hint: 'Auto: WebGL si hay tarjeta gráfica (sube las texturas ASTC comprimidas a la GPU), si no Canvas' },
   auto:     { name: 'Bajo Rendimiento Auto', vals: [true, false], lab: onOff, hint: 'Si el juego va por debajo de ~40 FPS unos segundos, baja la calidad sola (te avisa)' },
@@ -264,8 +265,11 @@ function uiTick() {
 function hideOverlay() { overlay.classList.remove('show'); document.body.classList.remove('panel-abierto'); Sfx.stopLoop(); UI.kind = G.overlayKind = null; UI.waitKey = null; }
 function openOverlay(kind, menu) {
   if (Loader.active) return;
+  const prevKind = G.overlayKind;
   G.paused = true; UI.kind = G.overlayKind = kind; UI.openedAt = performance.now();
   if (kind === 'over') StageRT.call('onGameOver', { __host: 'ScriptEvent' });
+  // v3.7.0: onPause / onEndSong de los scripts (.lua, .hx, .hxc)
+  if (kind === 'pause' && !prevKind) ScriptHub.pause(); else if (kind === 'end' && prevKind !== 'end') ScriptHub.songEnd();
   VideoSync.pauseAll();
   Music.pause();                                   // guarda la posición exacta y detiene las fuentes (síncrono)
   G.songPos = Music.position();
@@ -286,7 +290,9 @@ function openOverlay(kind, menu) {
   uiTick();
 }
 function closeOverlay() {
+  const wasPause = G.overlayKind === 'pause';
   hideOverlay();
+  if (wasPause) ScriptHub.resume();
   G.paused = false; lastFrame = performance.now();
   if (G.songPos >= songLength()) return;
   Music.play(G.songPos);                           // reanuda EXACTAMENTE donde se pausó (mismo reloj para notas y audio)

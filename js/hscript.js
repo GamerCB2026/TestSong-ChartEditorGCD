@@ -126,7 +126,7 @@ const HX = (() => {
     }
     /* archivo: imports + clases */
     file() {
-      const out = { imports: [], classes: [], errors: [] };
+      const out = { imports: [], classes: [], errors: [], top: [] };
       while (this.peek().t !== 'eof') {
         if (this.eat('package')) { while (!this.isOp(';') && this.peek().t !== 'eof') this.i++; this.eat(';'); continue; }
         if (this.is('import') || this.is('using')) {
@@ -138,7 +138,11 @@ const HX = (() => {
         while (this.peek().t === 'id' && MODS.has(this.peek().v)) this.i++;
         if (this.eat('class')) { try { out.classes.push(this.classDecl()); } catch (e) { out.errors.push(e.message); this.recoverTop(); } continue; }
         if (this.is('typedef') || this.is('enum') || this.is('interface') || this.is('abstract')) { while (!this.isOp('{') && !this.isOp(';') && this.peek().t !== 'eof') this.i++; if (this.isOp('{')) this.skipBalanced(); else this.i++; continue; }
-        this.i++;
+        // v3.7.0: código suelto (scripts de Codename .hx, runHaxeCode de Psych): funciones y sentencias de nivel superior
+        if (this.isOp(';')) { this.i++; continue; }
+        const s0 = this.i;
+        try { out.top.push(this.stmt()); } catch (e) { out.errors.push(e.message); if (this.i === s0) this.i++; }
+        if (this.i === s0) this.i++;
       }
       return out;
     }
@@ -488,7 +492,7 @@ const HX = (() => {
     constructor(name, src, host) {
       this.name = name; this.src = src; this.host = host; this.classes = new Map(); this.imports = []; this.errors = [];
       const parsed = new Parser(tokenize(src), src).file();
-      this.imports = parsed.imports; this.errors = parsed.errors.slice();
+      this.imports = parsed.imports; this.errors = parsed.errors.slice(); this.top = parsed.top; this.topScope = null;
       for (const c of parsed.classes) { c.script = this; this.classes.set(c.name, c); this.errors.push(...c.errors.map(e => `${c.name}: ${e}`)); }
       this.alias = new Map(this.imports.map(im => [im.alias, im.path]));
       for (const c of this.classes.values()) this.initStatics(c);
@@ -500,10 +504,29 @@ const HX = (() => {
         if (e instanceof Ret) return e.v;
         const msg = (e && e.message) || String(e);
         note(`error en ${fnLabel}: ${msg}`);
+        if (typeof ScriptLog !== 'undefined') ScriptLog.err(this.name, `${fnLabel}: ${msg}`);   // v3.7.0: consola de scripts
         console.warn('[hxc]', this.name, fnLabel, e);
         return null;
       } finally { R.cur = prev; }
     }
+    /* v3.7.0: ejecuta el código de nivel superior (Codename / runHaxeCode) con variables propias */
+    runTop(vars) {
+      const sc = this.topScope = new Scope(null, null, null);
+      if (vars) for (const [k, v] of Object.entries(vars)) sc.v.set(k, v);
+      let r = null;
+      const prev = R.cur; R.cur = this.name;
+      try { for (const st of this.top) r = this.exec(st, sc); }
+      catch (e) { if (e instanceof Ret) return e.v; throw e; }
+      finally { R.cur = prev; }
+      return r;
+    }
+    hasTop(n) { return !!(this.topScope && typeof this.topScope.v.get(n) === 'function'); }
+    callTop(n, args) {
+      const f = this.topScope && this.topScope.v.get(n); if (typeof f !== 'function') return undefined;
+      const prev = R.cur; R.cur = this.name;
+      try { return f(...(args || [])); } finally { R.cur = prev; }
+    }
+    setTop(n, v) { if (this.topScope) this.topScope.v.set(n, v); }
     findClass(name) { return this.classes.get(name) || this.host.findClass(name); }
     parentOf(cls) { if (!cls.parent) return null; const base = cls.parent.split('.').pop(); const pc = this.findClass(base); return pc && pc !== cls ? pc : null; }
     nativeBase(cls) { let c = cls, d = 0; while (c && d++ < 12) { const p = this.parentOf(c); if (!p) return (c.parent || '').split('.').pop(); c = p; } return ''; }
