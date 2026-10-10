@@ -99,7 +99,7 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
 #pauseItems.largo .pitem span { font-size: 26px; }
 @media (max-height: 500px) { #pauseItems.largo { gap: 2px; } #pauseItems.largo .pitem span { font-size: 20px; } }
 /* v3.4.0: Chart y modo → Asignar Chart / Metadata / Song y otros motores; Assets → iconos, parlante, shaders */
-#impBox h4, #uaBox h4 { margin: 12px 0 4px; font-size: 13px; color: #ffd86b; letter-spacing: .5px; }
+#impBox h4, #hxcBox h4 { margin: 12px 0 4px; font-size: 13px; color: #ffd86b; letter-spacing: .5px; }
 .imp-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .imp-row .btn { flex: 1 1 40%; width: auto; margin: 4px 0; }
 .imp-st { font-size: 12px; color: #c9bbef; line-height: 1.4; margin: 4px 0 6px; word-break: break-word; }
@@ -108,6 +108,15 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
 .imp-var.sel { border-color: #ffd86b; background: rgba(80, 50, 140, .6); }
 .imp-var.falta { opacity: .55; cursor: default; }
 .imp-var small { color: #c9bbef; font-size: 11px; }
+/* v3.6.0: cargador de motor */
+.imp-eng { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0; }
+.imp-eng .btn { width: auto; margin: 0; padding-left: 4px; padding-right: 4px; }
+.btn.sel { background: #ffd86b; color: #2a1650; border-color: #fff3c4; }
+.imp-songs { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.btn.imp-song { display: flex; flex-direction: column; align-items: flex-start; text-align: left; width: 100%; margin: 0; padding: 8px 12px; }
+.btn.imp-song small { font-size: 11px; opacity: .8; font-weight: normal; }
+.hxc-list { margin: 4px 0 8px; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
+.hxc-list small { color: #c9bbef; }
 .btn[disabled] { opacity: .45; pointer-events: none; }
 .ua-off { font-size: 12px; margin-top: 4px; }
 .ua-off input { width: 64px; background: #1d1036; color: #fff; border: 2px solid #8e6bd6; border-radius: 6px; padding: 2px 4px; font: inherit; }

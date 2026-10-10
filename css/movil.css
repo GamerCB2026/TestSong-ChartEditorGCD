@@ -55,7 +55,7 @@ body.movil #pauseMeta { right: max(136px, calc(env(safe-area-inset-right) + 124p
 .btn.warnb { background: #ff8a8a; }
 
 /* ---------- panel "Assets cargados": personajes y escenario propios ---------- */
-#uaBox { margin: 6px 0 10px; }
+#hxcBox { margin: 6px 0 10px; }
 .ua-sec { display: flex; flex-direction: column; gap: 2px; }
 .ua-sec .btn.mini, .ua-roles .btn.mini { width: 100%; margin: 3px 0; }
 .ua-roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 6px 0; }
@@ -75,3 +75,32 @@ body.movil #pauseMeta { right: max(136px, calc(env(safe-area-inset-right) + 124p
   #modModal header h2 { font-size: 20px; }
   #modBody { font-size: 13px; }
 }
+
+/* ---------- v3.6.0: menú de pausa y submenús en celular (filas grandes, deslizar, botón Atrás, horizontal) ---------- */
+#backBtn { display: none; }
+body.movil #backBtn { display: block; position: absolute; z-index: 3; left: max(12px, env(safe-area-inset-left)); top: max(10px, env(safe-area-inset-top));
+  min-width: 112px; min-height: 48px; padding: 8px 16px; font: 900 20px/1 "VCR", "Trebuchet MS", sans-serif; color: #000; background: #ffd86b;
+  border: 3px solid #000; border-radius: 12px; box-shadow: 0 4px 0 #000; cursor: pointer; }
+body.movil #backBtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #000; }
+body.movil #ovTitle { top: max(66px, calc(env(safe-area-inset-top) + 60px)); left: max(16px, env(safe-area-inset-left)); }
+body.movil #ovTitle span { font-size: 32px; }
+body.movil #pauseItems, body.movil #pauseItems.largo { top: max(70px, calc(env(safe-area-inset-top) + 64px)); bottom: max(10px, env(safe-area-inset-bottom)); transform: none !important;
+  width: min(52vw, 520px); padding: 6px 12px 24px max(14px, env(safe-area-inset-left)); gap: 8px; overflow-y: auto; overflow-x: hidden;
+  touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; justify-content: flex-start; scrollbar-width: thin; }
+body.movil .pitem { flex: 0 0 auto; min-height: 50px; width: 100%; padding: 6px 12px; border-radius: 12px; background: rgba(255,255,255,.06);
+  border: 2px solid rgba(255,255,255,.12); display: flex; align-items: center; transform: none !important; opacity: .8 !important; }
+body.movil .pitem.sel { opacity: 1 !important; background: rgba(194,75,153,.35); border-color: #ffd86b; }
+body.movil .pitem span, body.movil #pauseItems.submenu .pitem span, body.movil #pauseItems.largo .pitem span { font-size: 24px; }
+body.movil .pitem canvas { max-height: 38px; max-width: 100%; width: auto; }
+body.movil #optHint { left: auto; right: max(12px, env(safe-area-inset-right)); bottom: max(10px, env(safe-area-inset-bottom)); max-width: 42vw; font-size: 13px; text-align: right; }
+body.movil #pausePanel { top: max(10px, env(safe-area-inset-top)); bottom: max(10px, env(safe-area-inset-bottom)); right: max(10px, env(safe-area-inset-right));
+  width: min(46vw, 520px); max-height: none; touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+body.movil.panel-abierto #pauseMeta, body.movil.panel-abierto #timeBar { display: none; }
+body.movil #pausePanel .row { min-height: 48px; font-size: 16px; }
+body.movil #pausePanel .row select { min-height: 46px; font-size: 16px; }
+body.movil #pausePanel .btn { min-height: 48px; font-size: 16px; }
+body.movil #pausePanel .btn.mini { min-height: 46px; padding: 10px 12px; font-size: 15px; }
+body.movil .imp-eng { grid-template-columns: repeat(2, 1fr); }
+body.movil .btn.imp-song { min-height: 56px; }
+body.movil #timeBar { left: auto; right: max(14px, env(safe-area-inset-right)); width: 42vw; }
+@media (max-height: 420px) { body.movil .pitem { min-height: 46px; } body.movil .pitem span { font-size: 21px !important; } body.movil #ovTitle { display: none; } }
