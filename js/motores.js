@@ -130,6 +130,7 @@ const EngineData = {
       healthbar_colors: col ? col.replace(/^(#|0x)/i, '').slice(-6) : undefined,
       offsets: [this.num(A(r, 'x', 0)), this.num(A(r, 'y', 0))], cameraOffsets: [this.num(A(r, 'camx', 0)), this.num(A(r, 'camy', 0))],
       animations: [...r.getElementsByTagName('anim')].map(a => ({ name: A(a, 'name', ''), prefix: A(a, 'anim', ''), frameRate: this.num(A(a, 'fps', 24), 24), looped: A(a, 'loop', 'false') === 'true', frameIndices: this.indices(A(a, 'indices', '')), offsets: [this.num(A(a, 'x', 0)), this.num(A(a, 'y', 0))] })),
+      cnePlayer: A(r, 'isPlayer', 'false') === 'true',
       convertedFrom: 'Codename',
     };
   },
@@ -190,4 +191,87 @@ const EngineData = {
     }
     return n;
   },
+};
+
+/* =====================================================================
+   v3.6.0 — EngineFX: shaders de los scripts de Psych (.lua) y Codename (.hx)
+   (lectura estática de los scripts del escenario y de la canción):
+     · Psych: initLuaShader("x"), setSpriteShader(tag, "x"), setShaderFloat/Int/Bool/
+       FloatArray(tag, "u", v), runHaxeCode con ShaderFilter (filtro de cámara)
+     · Codename: new CustomShader("x"), <obj>.shader = …, shader.u = v,
+       camGame.addShader(…) / FlxG.camera.addShader(…)
+   El .frag sale de shaders/ del mod (o del sitio). Las animaciones de uniforms
+   en onUpdate no se ejecutan (iTime/uTime se actualizan solos).
+   ===================================================================== */
+const EngineFX = {
+  info: [],
+  texts(prefixes, ext) {
+    const out = [];
+    for (const [k, v] of ModText.map) if (k.endsWith(ext) && prefixes.some(p => (p.endsWith('/') ? k.startsWith(p) && !k.slice(p.length).includes('/') : k === p))) out.push([k, v]);
+    return out;
+  },
+  scripts(engine, stageId, songId) {
+    const st = String(stageId || '').toLowerCase(), sg = String(songId || '').toLowerCase();
+    if (engine === 'psych' || engine === 'kade') return this.texts([`stages/${st}.lua`, `data/${sg}/`, `songs/${sg}/`, 'scripts/'], '.lua');
+    if (engine === 'codename') return this.texts([`data/stages/${st}.hx`, `songs/${sg}/scripts/`, 'data/scripts/'], '.hx');
+    return [];
+  },
+  mk(name) { const sh = new SprShader(null, name); sh.fromKey(name); return sh; },
+  setU(sh, u, v) { if (!sh) return; sh.vals[u] = Array.isArray(v) ? v.map(Number) : typeof v === 'boolean' ? v : +v; },
+  parseLua(text, out) {
+    const named = new Map(), byTag = new Map();
+    for (const c of EngineData.calls(text, ['initLuaShader', 'setSpriteShader', 'setShaderFloat', 'setShaderInt', 'setShaderBool', 'setShaderFloatArray', 'runHaxeCode'])) {
+      const a = c.a;
+      if (c.fn === 'initLuaShader') named.set(a[0], true);
+      else if (c.fn === 'setSpriteShader') { const sh = this.mk(String(a[1])); byTag.set(String(a[0]), sh); out.sprites.push({ tag: String(a[0]), shader: sh }); }
+      else if (c.fn === 'runHaxeCode') continue;
+      else { const sh = byTag.get(String(a[0])); this.setU(sh, String(a[1]), a[2]); }
+    }
+    // runHaxeCode([[ ... ]]) con corchetes largos de Lua
+    for (const m of text.matchAll(/runHaxeCode\s*\(\s*(?:\[(=*)\[([\s\S]*?)\]\1\]|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g)) this.parseHaxeFilters(m[2] ?? m[3] ?? m[4] ?? '', byTag, out);
+  },
+  parseHaxeFilters(code, byTag, out) {
+    for (const m of code.matchAll(/(camGame|camHUD|camOther|FlxG\.camera)[\w.]*\.(?:setFilters|filters)\s*(?:=|\()\s*\[([^\]]*)\]/g)) {
+      if (m[1] !== 'camGame' && m[1] !== 'FlxG.camera') { out.notes.push(`filtro en ${m[1]} (solo se imita la cámara del juego)`); }
+      for (const f of m[2].matchAll(/ShaderFilter\s*\(([^)]*\)?)\)/g)) {
+        const t = /getLuaObject\(\s*['"]([^'"]+)['"]\s*\)/.exec(f[1]), r = /createRuntimeShader\(\s*['"]([^'"]+)['"]\s*\)/.exec(f[1]);
+        const sh = t ? byTag.get(t[1]) : r ? this.mk(r[1]) : null;
+        if (sh) out.cam.push(sh);
+      }
+    }
+  },
+  parseHx(text, out) {
+    const vars = new Map();
+    for (const m of text.matchAll(/(?:var|final)\s+(\w+)(?::\w+)?\s*=\s*new\s+CustomShader\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) vars.set(m[1], this.mk(m[2]));
+    for (const m of text.matchAll(/([\w.]+)\.shader\s*=\s*(?:new\s+CustomShader\s*\(\s*['"]([^'"]+)['"]\s*\)|(\w+))/g)) {
+      const sh = m[2] ? this.mk(m[2]) : vars.get(m[3]); if (sh) out.sprites.push({ tag: m[1].split('.').pop(), shader: sh });
+    }
+    for (const m of text.matchAll(/(\w+)\.(\w+)\s*=\s*(-?[\d.]+|true|false|\[[^\]]*\])\s*;/g)) { const sh = vars.get(m[1]); if (sh && m[2] !== 'shader') this.setU(sh, m[2], m[3] === 'true' ? true : m[3] === 'false' ? false : m[3].startsWith('[') ? m[3].replace(/[[\]\s]/g, '').split(',') : m[3]); }
+    for (const m of text.matchAll(/(\w+)\.data\.(\w+)\.value\s*=\s*\[([^\]]*)\]/g)) { const sh = vars.get(m[1]); if (sh) this.setU(sh, m[2], m[3].split(',').map(Number)); }
+    for (const m of text.matchAll(/(camGame|camHUD|FlxG\.camera)\.addShader\s*\(\s*(?:new\s+CustomShader\s*\(\s*['"]([^'"]+)['"]\s*\)|(\w+))\s*\)/g)) {
+      if (m[1] === 'camHUD') { out.notes.push('camHUD.addShader (solo se imita la cámara del juego)'); continue; }
+      const sh = m[2] ? this.mk(m[2]) : vars.get(m[3]); if (sh) out.cam.push(sh);
+    }
+  },
+  /* se llama al (re)arrancar el escenario: aplica los shaders a personajes / props / cámara */
+  apply(st) {
+    CamFilters.clear('eng'); this.info = [];
+    const engine = SongImport.engine, songId = G.set && G.set.id;
+    if (!engine || engine === 'vslice' || !st) return;
+    const out = { sprites: [], cam: [], notes: [] };
+    for (const [path, text] of this.scripts(engine, st.id, songId)) {
+      try { if (path.endsWith('.lua')) this.parseLua(text, out); else this.parseHx(text, out); }
+      catch (e) { console.warn('[EngineFX]', path, e); out.notes.push(`${path}: ${e.message}`); }
+    }
+    const roleOf = t => ({ boyfriend: 'bf', bf: 'bf', player: 'bf', dad: 'dad', opponent: 'dad', gf: 'gf', girlfriend: 'gf' })[String(t).toLowerCase()];
+    for (const { tag, shader } of out.sprites) {
+      const r = roleOf(tag);
+      if (r) { if (Scene.chars[r]) { Scene.chars[r].shader = shader; this.info.push(`${r}: ${shader.name === 'FlxRuntimeShader' ? shader.fragKey : shader.fragKey || shader.name}`); } continue; }
+      const p = st.props.find(x => String(x.name).toLowerCase() === String(tag).toLowerCase());
+      if (p) { p.shader = shader; this.info.push(`${p.name}: ${shader.fragKey}`); } else out.notes.push(`shader para "${tag}": no existe ese sprite`);
+    }
+    if (out.cam.length) { CamFilters.set('eng', out.cam); this.info.push('cámara: ' + out.cam.map(s => s.fragKey).join(', ')); }
+    this.notes = out.notes;
+  },
+  status() { return this.info.length ? [`✔ shaders del mod (${SongImport.engine}): ${this.info.join(' · ')}${this.notes && this.notes.length ? ' · ' + this.notes.join(' · ') : ''}`] : []; },
 };

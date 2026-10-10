@@ -117,6 +117,8 @@ function statusLines() {
   out.push(...Events.statusLines());
   out.push(...Shaders.statusLines());
   out.push(...UserAssets.statusLines());
+  if (typeof EngineFX !== 'undefined') out.push(...EngineFX.status());
+  if (SongImport.mod) out.push(`✔ mod: ${SongImport.mod.name} (${ENGINE_LAYOUT[SongImport.mod.engine].name}) · ${SongImport.mod.files} archivos · ${SongImport.counts().txt}`);
   for (const m of SongLoad.missing) out.push('✘ ' + m);
   if (!Sfx.unlocked) out.push('… el sonido se activa al primer toque/tecla (regla del navegador)');
   return out;

@@ -59,9 +59,17 @@ class RealChar {
   /* Stage.addCharacter: posición = pies (position) - origen (ancho/2, alto) + offsets globales */
   place(sc) {
     this.ts = this.scale * (+sc.scale || 1);
-    if (sc.topLeft && this.data && (this.data.convertedFrom === 'Psych' || this.data.convertedFrom === 'Codename')) {
-      // v3.5.0: escenarios de Psych/Codename con personajes de su motor: esquina superior izquierda + position del personaje
-      this.bx = sc.position[0] + this.offsets[0]; this.by = sc.position[1] + this.offsets[1];
+    const eng = this.data && this.data.convertedFrom;            // 'Psych' | 'Codename' | undefined (V-Slice)
+    this.engine = eng || 'V-Slice';
+    // Codename: el XML dice para qué lado se hizo (isPlayer); si se usa en el otro, los offsets se reflejan (isFlippedOffsets)
+    this.mirrorOff = eng === 'Codename' && ((this.role === 'bf') !== !!this.data.cnePlayer);
+    if (eng === 'Psych' || eng === 'Codename') {
+      // v3.6.0: posición del escenario (esquina superior izquierda en Psych/Codename; en un escenario V-Slice se traduce desde los pies)
+      let x = sc.position[0], y = sc.position[1];
+      if (!sc.topLeft) { const d = TOPLEFT_TO_FEET[this.role] || TOPLEFT_TO_FEET.dad; x -= d[0]; y -= d[1]; }
+      this.engX = x; this.engY = y;
+      // Psych: x = escenario + position del JSON · Codename: offset = (volteado ? x : -x, -y) → se dibuja en x ∓ x
+      this.bx = x + (this.mirrorOff ? -this.offsets[0] : this.offsets[0]); this.by = y + this.offsets[1];
     } else if (sc.topLeft) {
       // personaje V-Slice en escenario de Psych/Codename: se traslada (las posiciones por defecto coinciden con las de V-Slice)
       const d = TOPLEFT_TO_FEET[this.role] || TOPLEFT_TO_FEET.dad, x = sc.position[0] + d[0], y = sc.position[1] + d[1];
@@ -73,8 +81,22 @@ class RealChar {
     this.z = sc.zIndex ?? 0; this.stageCam = sc.cameraOffsets || [0, 0]; this.scroll = sc.scroll || [1, 1];
     this.alpha = sc.alpha ?? 1;
   }
-  camPoint() {   // resetCameraFocusPoint: centro + cameraOffsets del personaje + cameraOffsets del escenario
-    return [this.bx + this.ref.w * this.ts / 2 + this.camOff[0] + this.stageCam[0], this.by + this.ref.h * this.ts / 2 + this.camOff[1] + this.stageCam[1]];
+  camPoint() {
+    const w = this.ref.w * this.ts, h = this.ref.h * this.ts, sc = this.stageCam, co = this.camOff;
+    if (this.engine === 'Psych') {
+      // Psych PlayState.moveCamera: getMidpoint() ± 100/150 + camera_position (bf: x restado) + camera_<rol> del escenario
+      const mx = this.bx + w / 2, my = this.by + h / 2;
+      if (this.role === 'bf') return [mx - 100 - co[0] + sc[0], my - 100 + co[1] + sc[1]];
+      if (this.role === 'gf') return [mx + co[0] + sc[0], my + co[1] + sc[1]];
+      return [mx + 150 + co[0] + sc[0], my - 100 + co[1] + sc[1]];
+    }
+    if (this.engine === 'Codename') {
+      // Codename Character.getCameraPosition: midpoint + (isPlayer ? -100 : 150) + globalOffset + camx/camy (+ camxoffset del escenario)
+      const mx = this.engX + w / 2, my = this.engY + h / 2;
+      return [mx + (this.role === 'bf' ? -100 : 150) + this.offsets[0] + co[0] + sc[0], my - 100 + this.offsets[1] + co[1] + sc[1]];
+    }
+    // V-Slice resetCameraFocusPoint: centro + cameraOffsets del personaje + cameraOffsets del escenario
+    return [this.bx + w / 2 + co[0] + sc[0], this.by + h / 2 + co[1] + sc[1]];
   }
   /* Bopper.playAnimation(name, restart, ignoreOther): con ignoreOther la animación bloquea a todas las demás
      (canto y baile incluidos) hasta que termina; solo se puede reiniciar la misma. */
@@ -170,7 +192,7 @@ class RealChar {
   /* M = matriz mundo -> píxeles del canvas; R = destino (render.js: Canvas o WebGL) */
   draw(M, R) {
     const a = this.cur; if (!a || this.visible === false) return;
-    const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off = a.off || [0, 0];
+    const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off0 = a.off || [0, 0], off = this.mirrorOff ? [-off0[0], off0[1]] : off0;
     const alpha = this.alpha ?? 1, smooth = !this.isPixel && Optim.s.aa, tint = !!this.missTint, m = _charM;
     // v3.5.0: shader del personaje puesto por el script del escenario (AdjustColor / DropShadow…)
     const sh = this.shader || null; R.setShader(sh);

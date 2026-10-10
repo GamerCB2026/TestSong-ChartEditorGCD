@@ -71,6 +71,14 @@ const CamFX = {
 CamFX.reset();
 
 /* ---------- tweens / timers (tiempo de juego: se congelan en la pausa) ---------- */
+/* v3.6.0: textos del mod (.frag/.vert/.txt/.json) leídos al cargarlo → Assets.getText(Paths.frag("x")) síncrono */
+const ModText = {
+  map: new Map(),
+  key(p) { return VFS.norm(String(p || '')).replace(/^(shared|preload|week\d+)\//, ''); },
+  put(path, text) { this.map.set(this.key(path), text); },
+  keyOf(text) { for (const [k, v] of this.map) if (v === text) return k.split('/').pop().replace(/\.\w+$/, ''); return null; },
+  get(p) { const k = this.key(p); if (this.map.has(k)) return this.map.get(k); const b = k.split('/').pop(); for (const [kk, v] of this.map) if (kk.split('/').pop() === b) return v; HX.note(`Assets.getText("${p}"): no está en el mod`); return ''; },
+};
 const ModRT = { tweens: [], timers: [], sprites: [], sounds: [] };
 function getPath(o, p) { const ks = p.split('.'); for (let i = 0; i < ks.length - 1; i++) o = o?.[ks[i]]; return [o, ks[ks.length - 1]]; }
 class HxTween {
@@ -449,7 +457,7 @@ function camObj(which) {
     fade(color = 0xFF000000, duration = 1, fadeIn = false, onComplete = null, force = false) { if (!force && s().fade && !s().fade.ended) return; s().fade = { color, t0: G.gameTime, dur: (+duration || 0) * 1000, fadeIn: !!fadeIn, done: onComplete }; Mods.fx('fade', which); },
     shake(intensity = 0.05, duration = 0.5, onComplete = null, force = true, axes = 0x11) { if (!force && s().shake) return; s().shake = { i: +intensity || 0, t0: G.gameTime, dur: (+duration || 0) * 1000, done: onComplete, axes: axes ?? 0x11 }; Mods.fx('shake', which); },
     stopFlash() { s().flash = null; }, stopFade() { s().fade = null; }, stopShake() { s().shake = null; }, stopFX() { s().flash = s().fade = s().shake = null; },
-    setFilters(f) { HX.note(`${o.__host}.setFilters (shaders) no se imita`); }, set filters(f) { if (f && f.length) HX.note(`${o.__host}.filters (shaders) no se imita`); }, get filters() { return []; },
+    setFilters(f) { o._filters = f || []; CamFilters.set('hxc:' + which, o._filters); }, set filters(f) { o.setFilters(f); }, get filters() { return o._filters || []; },
     follow() {}, focusOn() {}, snapToTarget() {},
   };
   return o;
@@ -602,7 +610,7 @@ const HOST = (() => {
     FunkinSound: funkinSound, Paths: paths, ModuleHandler: moduleHandler, Save: { __host: 'Save', get instance() { return save; } }, Preferences: prefs,
     PolymodErrorHandler: alert, Reflect: reflect, ReflectUtil: reflectUtil, Std: std, Math: hxMath, FlxMath: flxMath, StringTools: strTools, Lambda: lambda, SongEvent: songEvent,
     FunkinSprite: { __host: 'FunkinSprite', create: (x = 0, y = 0, key = null) => { const s = new HxSprite(x, y); if (key) s.loadGraphic(String(key).includes('/') ? key : paths.image(key)); return s; }, createSparrow: (x, y, key) => new HxSprite(x, y).loadSparrow(key), createTextureAtlas: (x, y, key) => { HX.note('FunkinSprite.createTextureAtlas (Animate Atlas en scripts) no se imita'); return new HxSprite(x, y); } },
-    FunkinMemory: HX.stub('FunkinMemory', true), Highscore: HX.stub('Highscore', true), Assets: { __host: 'Assets', exists: p => { const r = ModRes.parsePath(p); return ModRes.status(r.kind, r.key, r.lib) === 'ok' || !!ModRes.findUser(r.kind, r.key, r.lib); }, getText: () => '' }, OpenFlAssets: null,
+    FunkinMemory: HX.stub('FunkinMemory', true), Highscore: HX.stub('Highscore', true), Assets: { __host: 'Assets', exists: p => { const r = ModRes.parsePath(p); return ModRes.status(r.kind, r.key, r.lib) === 'ok' || !!ModRes.findUser(r.kind, r.key, r.lib); }, getText: p => ModText.get(p) }, OpenFlAssets: null,
     trace: (...a) => console.debug('[hxc trace]', ...a),
     Json: { __host: 'Json', parse: s => JSON.parse(s), stringify: (o, r, sp) => JSON.stringify(o, null, sp) },
     Type: { __host: 'Type', getClassName: c => c?.name || '', resolveClass: n => null, typeof: v => typeof v },
@@ -620,9 +628,10 @@ const HOST = (() => {
     Date: () => new Date(), FlxObject: a => new HxSprite(...a),
     // v3.5.0: escenarios
     AdjustColorShader: () => new AdjustColorShaderJS(), DropShadowShader: () => new DropShadowShaderJS(),
-    FlxRuntimeShader: a => { const sh = new SprShader(null, 'FlxRuntimeShader'); const src = String(a[0] ?? ''); if (/void\s+main/.test(src)) sh.src = src; else if (src) sh.fromKey(src.split('/').pop().replace(/\.frag$/, '')); else sh.error = 'sin código'; return sh; },
+    FlxRuntimeShader: a => { const sh = new SprShader(null, 'FlxRuntimeShader'); const src = String(a[0] ?? ''); if (/void\s+main/.test(src)) { sh.src = src; sh.fragKey = ModText.keyOf(src); } else if (src) sh.fromKey(src.split('/').pop().replace(/\.frag$/, '')); else sh.error = 'sin código (Assets.getText no encontró el .frag)'; return sh; },
     FlxBackdrop: a => { const s = new HxSprite(); const g = a[0]; if (g) s.loadGraphic(typeof g === 'string' ? g : (g.__path || '')); const ax = a[1] ?? 0x11; s.repeatX = !!(ax & 0x01); s.repeatY = !!(ax & 0x10); s.spacing.set(+a[2] || 0, +a[3] || 0); s.__host = 'FlxBackdrop'; return s; },
     Sequence: a => new HxSequence(a[0]),
+    ShaderFilter: a => ({ __host: 'ShaderFilter', __open: true, shader: a[0] || null }),
   };
   for (const [cls, key] of Object.entries(SPR_CLASS_FRAG)) CTORS[cls] = () => new SprShader(null, cls).fromKey(key);
   return {
@@ -775,7 +784,7 @@ const Mods = {
   },
   /* reiniciar / buscar: se borra todo lo que crearon los scripts */
   resetRuntime(retry) {
-    ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear();
+    ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
     CamFX.reset(); StrumState.reset(); CharW.cache = {};
     for (const c of Object.values(Scene.chars)) if (c) { c.visible = true; }
@@ -917,7 +926,7 @@ const StageRT = {
   /* cada frame: (re)arranca el script cuando cambia el escenario o se reinicia, y sigue a los cambios de personaje */
   tick() {
     const st = Scene.stage;
-    const key = st ? st.id + '|' + Scene.token + '|' + Mods.stages.size : null;
+    const key = st ? st.id + '|' + Scene.token + '|' + Mods.stages.size + '|' + (SongImport.gen || 0) : null;
     if (key !== this.key) { this.key = key; this.start(); }
     if (!this.cur) return;
     for (const r of ['bf', 'dad', 'gf']) if (Scene.chars[r] && this.chars[r] !== Scene.chars[r]) this.addChar(r);
@@ -930,6 +939,7 @@ const StageRT = {
     if (st) for (const p of st.props) { if (!p.__orig) p.__orig = { alpha: p.alpha, pos: p.pos.slice(), scale: p.scale.slice(), visible: p.visible, z: p.z, ap: p.path }; else Object.assign(p, { alpha: p.__orig.alpha, pos: p.__orig.pos.slice(), scale: p.__orig.scale.slice(), visible: p.__orig.visible, z: p.__orig.z }); p.shader = null; p.rgb = null; p.rgbInt = null; }
     for (const o of this.sprites) { const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); }
     this.cur = null; this.chars = {}; this.seqs = []; this.sprites = []; this.mismatch = null;
+    try { EngineFX.apply(st); } catch (e) { console.warn('[EngineFX]', e); }
     if (!st || !Mods.stages.size) return;
     const rec = Mods.stages.get(st.id) || [...Mods.stages.values()].find(r => r.id.toLowerCase() === String(st.id).toLowerCase());
     if (!rec) {

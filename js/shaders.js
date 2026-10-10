@@ -300,7 +300,7 @@ class SprShader {
   get data() { return this; }
   cssFilter() { return 'none'; }
   /* frag de shaders/ (asíncrono) */
-  fromKey(key) { this.fragKey = key; loadSprFrag(key).then(t => { if (t) this.src = t; else this.error = `falta shaders/${key}.frag`; }); return this; }
+  fromKey(key) { this.fragKey = key; this.ready = loadSprFrag(key).then(t => { if (t) this.src = t; else this.error = `falta shaders/${key}.frag`; return this; }); return this; }
 }
 class AdjustColorShaderJS extends SprShader {
   constructor() {
@@ -339,3 +339,24 @@ class DropShadowShaderJS extends SprShader {
 }
 // adjustColor.frag del sitio (shaders/) si está
 loadSprFrag('adjustColor').then(t => { if (t && /hueMatrix/.test(t)) SPR_FRAG.siteAdjust = t; }).catch(() => {});
+
+/* =====================================================================
+   v3.6.0 — CamFilters: filtros de cámara de los scripts (camGame.filters =
+   [new ShaderFilter(shader)] en .hxc, ShaderFilter de runHaxeCode en Psych,
+   camGame.addShader(CustomShader) en Codename). Se aplican con el post-proceso
+   de Shaders (cámara del juego); los uniforms se leen en vivo del shader.
+   ===================================================================== */
+const CamFilters = {
+  set(tag, list) {
+    Shaders.list = Shaders.list.filter(x => x.camTag !== tag);
+    for (const sp of (list || [])) {
+      const sh = sp && (sp.shader || sp);
+      if (!sh || !(sh instanceof SprShader)) continue;
+      const ent = { id: sh.fragKey || sh.name, name: `${sh.fragKey || sh.name} (filtro de cámara · ${tag})`, frag: sh.src, vert: null, fragKey: null, vertKey: null, uniforms: sh.vals, timeU: [], on: true, error: '', camTag: tag, spr: sh };
+      Shaders.list.push(ent);
+      const build = () => { ent.frag = sh.src; if (!ent.frag) ent.error = sh.error || 'falta el .frag'; Shaders.rebuild(ent); };
+      if (sh.src) build(); else if (sh.ready) sh.ready.then(build); else build();
+    }
+  },
+  clear(prefix) { Shaders.list = Shaders.list.filter(x => !(x.camTag && (!prefix || String(x.camTag).startsWith(prefix)))); },
+};

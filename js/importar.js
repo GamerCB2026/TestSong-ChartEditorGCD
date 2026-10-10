@@ -1,121 +1,139 @@
 /* =====================================================================
-   importar.js — Pausa → "Chart y modo" (v3.4.0):
-   · V-Slice: "Asignar Chart" (song-chart[-var].json / .fnfc) + "Asignar Metadata"
-     (song-metadata[-var].json): se listan TODAS las variaciones que declara la
-     metadata (playData.songVariations) y se elige cuál jugar.
-   · "Asignar Song": carpeta con el audio → Inst[-var].ogg, Voices-<personaje>[-var].ogg,
-     Voices-Player/Opponent.ogg, Voices.ogg (para la canción normal y cada variación).
-   · Otros motores (Psych 0.6/0.7/1.0, Codename, Kade): carpeta de la canción o del mod
-     con su estructura propia; se detecta el formato y se convierte al interno.
+   importar.js — Pausa → "Chart y modo" (v3.6.0): CARGADOR DE MOTOR.
+   Se elige el motor (V-Slice, Psych, Codename, Kade) y la carpeta o el .zip
+   del mod. Se registra TODO el mod (imágenes, personajes, escenarios, audio,
+   scripts, shaders, videos) y se listan sus canciones; al elegir una se carga
+   sola con lo que necesita (chart, metadata, audio, personajes, escenario,
+   iconos, scripts de eventos / note kinds / escenario, shaders, videos).
+   · V-Slice: .hxc (scripts de escenario, eventos, note kinds, módulos);
+     data/songs/<id>/<id>-metadata[-var].json + <id>-chart[-var].json; songs/<id>/Inst… Voices…
+   · Psych / Kade: .lua; data/<canción>/<canción>-<dif>.json · songs/<canción>/Inst.ogg…
+   · Codename: .hx; songs/<canción>/charts/<dif>.json · songs/<canción>/song/Inst.ogg…
    ===================================================================== */
 'use strict';
 
 const ENGINE_LAYOUT = {
-  psych: { name: 'Psych Engine', hint: 'data/<canción>/<canción>-<dif>.json (+ events.json) · songs/<canción>/Inst.ogg, Voices.ogg o Voices-Player.ogg / Voices-Opponent.ogg' },
-  codename: { name: 'Codename Engine', hint: 'songs/<canción>/charts/<dif>.json (+ events.json) · songs/<canción>/song/Inst.ogg, Voices.ogg · songs/<canción>/meta.json' },
-  kade: { name: 'Kade Engine', hint: 'data/<canción>/<canción>-<dif>.json · songs/<canción>/Inst.ogg, Voices.ogg' },
+  vslice: { name: 'V-Slice', hint: 'data/songs/<id>/<id>-chart.json + -metadata.json (y -<variación>) · songs/<id>/Inst.ogg, Voices-<personaje>.ogg · scripts/**/*.hxc · data/characters · data/stages · images/ · shaders/' },
+  psych: { name: 'Psych Engine', hint: 'data/<canción>/<canción>-<dif>.json · songs/<canción>/Inst.ogg, Voices.ogg · characters/*.json · stages/*.json + .lua · images/ · shaders/' },
+  codename: { name: 'Codename Engine', hint: 'songs/<canción>/charts/<dif>.json + meta.json · songs/<canción>/song/Inst.ogg · data/characters/*.xml · data/stages/*.xml + .hx · images/ · shaders/' },
+  kade: { name: 'Kade Engine', hint: 'data/<canción>/<canción>-<dif>.json · songs/<canción>/Inst.ogg, Voices.ogg · characters · images/' },
 };
 const DIFF_ORDER = ['easy', 'normal', 'hard', 'erect', 'nightmare'];
 const sortDiffs = ds => ds.slice().sort((a, b) => { const ia = DIFF_ORDER.indexOf(a), ib = DIFF_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
+/* carpetas de primer nivel de un mod (lo de antes es la carpeta raíz del mod / del zip) */
+const MOD_TOP = /^(characters|stages|images|data|shared|preload|videos|sounds|music|shaders|fonts|week\d+|weekend\d+|songs|scripts|custom_events|custom_notetypes|weeks|notetypes|events)$/i;
+const TEXT_EXT = /\.(frag|vert|glsl|lua|hx|hxs|hxc|txt)$/i;
 
 const SongImport = {
-  vs: { charts: {}, metas: {}, chartNames: [], metaNames: [], audio: new Map(), audioFrom: '', sel: null },
-  eng: { engine: 'psych', songs: null, song: null, audioFrom: '' },
+  sel: 'vslice', engine: null, mod: null, cur: null, gen: 0, busy: false,
   relOf: f => (f.webkitRelativePath || f._rel || f.name).replace(/\\/g, '/'),
   isAudio: n => /\.(ogg|mp3|wav)$/i.test(n),
-  audioType: n => /\.mp3$/i.test(n) ? 'audio/mpeg' : /\.wav$/i.test(n) ? 'audio/wav' : 'audio/ogg',
+  mime(n) { return /\.mp3$/i.test(n) ? 'audio/mpeg' : /\.wav$/i.test(n) ? 'audio/wav' : /\.ogg$/i.test(n) ? 'audio/ogg' : /\.png$/i.test(n) ? 'image/png' : /\.mp4$/i.test(n) ? 'video/mp4' : /\.webm$/i.test(n) ? 'video/webm' : /\.gif$/i.test(n) ? 'image/gif' : /\.json$/i.test(n) ? 'application/json' : ''; },
+  /* ruta dentro del mod: desde la primera carpeta conocida (data/, images/, songs/…) */
+  strip(rel) { const p = rel.split('/').filter(Boolean); const i = p.findIndex((s, k) => k < p.length - 1 && MOD_TOP.test(s)); return i < 0 ? null : p.slice(i).join('/'); },
 
-  /* archivos (y el contenido de .fnfc/.zip) → [{ name, rel, json|blob }] */
-  async expand(files) {
+  /* ---------- entrada: carpeta o .zip ---------- */
+  fromFolder(files) { return files.map(f => ({ rel: this.relOf(f), name: f.name, blob: f })); },
+  async fromZip(file) {
     const out = [];
-    for (const f of files) {
-      const n = f.name.toLowerCase(), rel = this.relOf(f);
-      if (/\.(fnfc|zip)$/.test(n)) {
-        for (const ent of await Zip.read(await f.arrayBuffer())) {
-          const en = ent.name.split('/').pop();
-          if (/\.json$/i.test(en)) { try { out.push({ name: en, rel: ent.name, json: JSON.parse(new TextDecoder().decode(await ent.data())) }); } catch (e) { console.warn('json inválido', ent.name); } }
-          else if (this.isAudio(en)) out.push({ name: en, rel: ent.name, blob: new Blob([await ent.data()], { type: this.audioType(en) }) });
-        }
-      } else if (/\.json$/.test(n)) { try { out.push({ name: f.name, rel, json: JSON.parse(await f.text()) }); } catch (e) { toast(`${f.name}: JSON inválido (${e.message})`, 4000); } }
-      else if (this.isAudio(n)) out.push({ name: f.name, rel, blob: f });
+    for (const e of await Zip.read(await file.arrayBuffer())) {
+      if (e.name.endsWith('/')) continue;
+      const name = e.name.split('/').pop(); if (!name || name.startsWith('.')) continue;
+      out.push({ rel: e.name, name, blob: new Blob([await e.data()], { type: this.mime(name) }) });
     }
     return out;
   },
-  /* audio: nombre en minúsculas → { blob, name } (lo que espera packAudio) */
-  audioMap(items) { const m = new Map(); for (const it of items) if (it.blob) m.set(it.name.toLowerCase(), { blob: it.blob, name: it.name }); return m; },
-  varOf(name) { const m = /-(?:chart|metadata)-([a-z0-9_-]+)\.json$/i.exec(name); return m ? m[1].toLowerCase() : 'default'; },
-
-  /* ---------- V-Slice ---------- */
-  async assignChart() {
-    const files = await ModUI.pick('.json,.fnfc,.zip', true); if (!files.length) return;
-    const items = await this.expand(files);
-    let nc = 0, nm = 0;
-    for (const it of items) {
-      if (!it.json) continue;
-      if (it.json.timeChanges || it.json.playData) { this.vs.metas[this.varOf(it.name)] = it.json; this.vs.metaNames.push(it.name); nm++; continue; }
-      if (Chart.detect(it.json) !== 'V-Slice') { toast(`${it.name}: no es un chart de V-Slice (${Chart.detect(it.json)}) → usa "Otros motores"`, 4500); continue; }
-      this.vs.charts[this.varOf(it.name)] = it.json; this.vs.chartNames.push(it.name); nc++;
-    }
-    const au = items.filter(i => i.blob);
-    if (au.length) { for (const [k, v] of this.audioMap(au)) this.vs.audio.set(k, v); this.vs.audioFrom = files[0].name; }
-    toast(`Chart: ${nc} archivo(s)${nm ? ` · metadata: ${nm}` : ''}${au.length ? ` · audio: ${au.length}` : ''}`);
-    this.render();
-  },
-  async assignMeta() {
-    const files = await ModUI.pick('.json', true); if (!files.length) return;
-    let n = 0;
-    for (const it of await this.expand(files)) {
-      if (!it.json || !(it.json.timeChanges || it.json.playData)) { toast(`${it.name}: no parece una metadata de V-Slice (sin timeChanges/playData)`, 4000); continue; }
-      this.vs.metas[this.varOf(it.name)] = it.json; this.vs.metaNames.push(it.name); n++;
-    }
-    if (n) toast(`Metadata: ${n} archivo(s) · variaciones: ${this.variations().join(', ')}`, 3500);
-    this.render();
-  },
-  async assignSong(dir) {
-    const files = await ModUI.pick('.ogg,.mp3,.wav', true, dir); if (!files.length) return;
-    const au = (await this.expand(files.filter(f => this.isAudio(f.name)))).filter(i => i.blob);
-    if (!au.length) { toast('No encontré .ogg/.mp3/.wav en lo que elegiste'); return; }
-    this.vs.audio = this.audioMap(au); this.vs.audioFrom = dir ? (this.relOf(files[0]).split('/')[0] || 'carpeta') : `${au.length} archivo(s)`;
-    toast(`Song: ${au.length} pistas (${au.map(a => a.name).slice(0, 6).join(', ')}${au.length > 6 ? '…' : ''})`, 3500);
-    this.render();
-  },
-  /* todas las variaciones que declara la metadata (+ las que tienen chart o metadata propia) */
-  variations() {
-    const m0 = this.vs.metas.default || Object.values(this.vs.metas)[0];
-    const listed = m0 && m0.playData && Array.isArray(m0.playData.songVariations) ? m0.playData.songVariations.map(v => String(v).toLowerCase()) : [];
-    return uniq(['default', ...listed, ...Object.keys(this.vs.metas), ...Object.keys(this.vs.charts)]);
-  },
-  vsPack() {
-    if (!Object.keys(this.vs.charts).length) return null;
-    const charts = Object.assign({}, this.vs.charts);
-    // un solo chart sin sufijo de variación: es el de la canción normal
-    if (!charts.default && Object.keys(charts).length === 1 && !Object.keys(this.vs.metas).length) { charts.default = Object.values(charts)[0]; }
-    return buildSongPack(charts, this.vs.metas, this.vs.audio);
-  },
-  async playVS() {
-    const pack = this.vsPack();
-    if (!pack || !pack.entries.length) { toast('Falta el chart (song-chart.json) de V-Slice'); return; }
-    const v = this.vs.sel && pack.vars.some(x => x.id === this.vs.sel) ? this.vs.sel : (pack.vars.find(x => x.id === 'default') || pack.vars[0]).id;
-    const ent = pack.entries.find(e => e.v === v && e.d === 'normal') || pack.entries.find(e => e.v === v);
-    if (!ent) { toast(`La variación "${v}" no tiene chart: asigna song-chart-${v}.json`, 4000); return; }
-    if (G.mode === 'demo') setMode('keyboard');
-    G.set = null;
-    await loadVariation(pack, ent.v, ent.d);
+  async pickMod(zip) {
+    const files = zip ? await ModUI.pick('.zip', false) : await ModUI.pick('', true, true);
+    if (!files.length) return;
+    this.busy = true; this.render();
+    try {
+      const entries = zip ? await this.fromZip(files[0]) : this.fromFolder(files);
+      const name = zip ? files[0].name.replace(/\.zip$/i, '') : (this.relOf(files[0]).split('/')[0] || 'mod');
+      await this.mount(entries, this.sel, name);
+    } finally { this.busy = false; this.render(); }
   },
 
-  /* ---------- otros motores ---------- */
-  async pickEngine(dir) {
-    const files = await ModUI.pick('.json,.ogg,.mp3,.wav,.xml,.png,.lua,.hx', true, dir); if (!files.length) return;
-    // v3.5.0: personajes / escenarios / imágenes / scripts del mod quedan disponibles en su formato (motores.js)
-    const mounted = EngineData.mount(files); if (mounted) { Scene.ids = null; console.info(`[motores] ${mounted} archivo(s) del mod disponibles (personajes, escenarios, imágenes)`); }
-    const items = await this.expand(files);
-    const songs = this.groupEngine(items, this.eng.engine);
-    if (!songs.size) { toast(`No encontré charts de ${ENGINE_LAYOUT[this.eng.engine].name} (${ENGINE_LAYOUT[this.eng.engine].hint})`, 6000); return; }
-    this.eng.songs = songs; this.eng.song = [...songs.keys()][0];
-    this.eng.audioFrom = dir ? (this.relOf(files[0]).split('/')[0] || 'carpeta') : `${files.length} archivo(s)`;
-    const s = songs.get(this.eng.song);
-    toast(`${ENGINE_LAYOUT[this.eng.engine].name}: ${songs.size} canción(es) · "${s.title}" ${Object.keys(s.diffs).length} dificultad(es) · formato ${s.format}`, 4000);
-    this.render();
+  /* ---------- registro del mod ---------- */
+  unmount() {
+    const m = this.mod; if (!m) return;
+    for (const k of m.keys) { const f = VFS.files.get(k); if (f && f.url) URL.revokeObjectURL(f.url); VFS.files.delete(k); }
+    for (const rec of m.recs) if (Mods.scripts.get(rec.name) === rec) Mods.unregister(rec);
+    try { StageRT.key = null; StageRT.start(); } catch (e) {}
+    ModText.map.clear(); CamFilters.clear(); if (typeof ModRes !== 'undefined') ModRes.cache.clear();
+    this.mod = null; this.cur = null; this.engine = null; Scene.ids = null;
+  },
+  async mount(entries, engine, name) {
+    this.unmount();
+    const m = { name, engine, keys: [], recs: [], fails: [], files: 0, images: 0, scripts: [], songs: new Map(), entries: [] };
+    for (const e of entries) {
+      const rel = this.strip(e.rel); if (!rel) continue;
+      e.path = rel; m.entries.push(e); m.files++;
+      m.keys.push(VFS.put(rel, e.blob, e.name));
+      // V-Slice busca las imágenes y sonidos también en la librería shared/
+      if (/^(images|sounds|music)\//i.test(rel)) m.keys.push(VFS.put('shared/' + rel, e.blob, e.name));
+      if (/^images\/.*\.(png|astc|ktx2?|jpe?g|webp)$/i.test(rel)) m.images++;
+      if (TEXT_EXT.test(e.name)) ModText.put(rel, await e.blob.text());
+    }
+    // scripts del motor
+    const scriptRx = engine === 'vslice' ? /\.hxc$/i : engine === 'codename' ? /\.(hx|hxs)$/i : /\.lua$/i;
+    for (const e of m.entries) if (scriptRx.test(e.name)) m.scripts.push(e.path);
+    if (engine === 'vslice') {
+      for (const e of m.entries) {
+        if (!/\.hxc$/i.test(e.name)) continue;
+        try { m.recs.push(Mods.load(e.name, ModText.get(e.path))); }
+        catch (err) { console.warn('[hxc]', e.path, err); m.fails.push(`${e.name}: ${err.message}`); Mods.failed = Mods.failed || new Map(); Mods.failed.set(e.name, err.message); }
+      }
+      m.songs = await this.vsSongs(m.entries);
+    } else m.songs = this.groupEngine(await this.items(m.entries, engine), engine);
+    this.mod = m; this.gen++; Scene.ids = null; StageRT.key = null;
+    const c = this.counts();
+    toast(`✔ ${ENGINE_LAYOUT[engine].name} · ${name}: ${m.files} archivos · ${c.txt} · ${m.images} imágenes · ${m.songs.size} canción(es)${m.fails.length ? ' · ✘ ' + m.fails.length + ' script(s) con error' : ''}`, 5000);
+    if (!m.songs.size) toast(`No encontré canciones de ${ENGINE_LAYOUT[engine].name} (${ENGINE_LAYOUT[engine].hint})`, 7000);
+    return m;
+  },
+  counts() {
+    const m = this.mod; if (!m) return { txt: '' };
+    if (m.engine !== 'vslice') return { txt: `${m.scripts.length} script(s) ${m.engine === 'codename' ? '.hx' : '.lua'}` };
+    const n = k => m.recs.reduce((a, r) => a + (r[k] ? r[k].length : 0), 0);
+    return { txt: `${m.scripts.length} .hxc (${n('events')} eventos · ${n('kinds')} note kinds · ${n('stages')} escenarios · ${n('modules') - n('stages')} módulos)` };
+  },
+  /* V-Slice: data/songs/<id>/<id>-chart[-var].json + <id>-metadata[-var].json; audio en songs/<id>/ */
+  async vsSongs(entries) {
+    const songs = new Map();
+    const song = id => { if (!songs.has(id)) songs.set(id, { id, title: id, charts: {}, metas: {}, audio: new Map(), engine: 'vslice' }); return songs.get(id); };
+    for (const e of entries) {
+      const p = e.path.toLowerCase().split('/');
+      if (p[0] === 'data' && p[1] === 'songs' && p.length === 4 && p[3].endsWith('.json')) {
+        const id = p[2], idRx = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), m = new RegExp('^' + idRx + '-(chart|metadata)(?:-([a-z0-9_-]+))?\\.json$').exec(p[3]); if (!m) continue;
+        let j; try { j = JSON.parse(await e.blob.text()); } catch (err) { console.warn('json inválido', e.path); continue; }
+        const s = song(id), v = m[2] || 'default';
+        if (m[1] === 'chart') s.charts[v] = j; else { s.metas[v] = j; if (v === 'default' && j.songName) s.title = j.songName; }
+      }
+    }
+    for (const e of entries) {
+      const p = e.path.toLowerCase().split('/');
+      if (p[0] === 'songs' && p.length === 3 && this.isAudio(p[2]) && songs.has(p[1])) songs.get(p[1]).audio.set(e.name.toLowerCase(), { blob: e.blob, name: e.name });
+    }
+    for (const [k, s] of [...songs]) if (!Object.keys(s.charts).length) songs.delete(k);
+    for (const s of songs.values()) {
+      const vars = uniq(['default', ...Object.keys(s.charts)]).filter(v => s.charts[v]);
+      s.diffs = vars.map(v => { const md = s.metas[v] && s.metas[v].playData && s.metas[v].playData.difficulties; return (v === 'default' ? '' : v + ': ') + (md || Object.keys(s.charts[v].notes || {})).join(', '); });
+    }
+    return songs;
+  },
+  /* Psych / Codename / Kade → [{ name, rel, json|blob }] para groupEngine */
+  async items(entries, engine) {
+    const out = [];
+    for (const e of entries) {
+      const p = e.path.toLowerCase().split('/');
+      if (this.isAudio(e.name) && p[0] === 'songs') { out.push({ name: e.name, rel: e.path, blob: e.blob }); continue; }
+      if (!/\.json$/i.test(e.name)) continue;
+      const chartJson = engine === 'codename' ? p[0] === 'songs' : (p[0] === 'data' && p.length === 3 && !/^(characters|stages|weeks|songs|notestyles|players|ui)$/.test(p[1])) || (p[0] === 'songs' && p.length === 3);
+      if (!chartJson) continue;
+      try { out.push({ name: e.name, rel: e.path, json: JSON.parse(await e.blob.text()) }); } catch (err) { console.warn('json inválido', e.path); }
+    }
+    return out;
   },
   /* agrupa por canción según la estructura de cada motor */
   groupEngine(items, engine) {
@@ -160,60 +178,54 @@ const SongImport = {
     for (const s of songs.values()) if (s.meta) s.title = s.meta.displayName || s.meta.name || s.title;
     return songs;
   },
-  async playEngine(diff) {
-    const s = this.eng.songs && this.eng.songs.get(this.eng.song); if (!s) { toast('Primero elige la carpeta de la canción'); return; }
+
+  /* ---------- jugar una canción del mod ---------- */
+  async play(id, diff) {
+    const m = this.mod, s = m && m.songs.get(id); if (!s) return;
+    this.engine = m.engine; this.cur = id; Scene.ids = null; StageRT.key = null;
     if (G.mode === 'demo') setMode('keyboard');
-    await loadEngineSong(s, diff);
+    if (m.engine === 'vslice') {
+      const pack = buildSongPack(s.charts, s.metas, s.audio);
+      const ent = pack.entries.find(e => e.v === 'default' && e.d === (diff || 'normal')) || pack.entries.find(e => e.v === 'default') || pack.entries[0];
+      if (!ent) { toast(`${s.title}: el chart no tiene notas`); return; }
+      G.set = null;
+      await loadVariation(pack, ent.v, ent.d);
+    } else await loadEngineSong(s, diff);
+    // el script de escenario / shaders del mod se aplican ya (aunque el juego siga en pausa)
+    try { StageRT.key = null; StageRT.tick(); } catch (e) { console.warn('[mod] escenario', e); }
+    this.render();
   },
 
   /* ---------- panel ---------- */
   render() {
     const box = $('impBox'); if (!box) return;
-    const esc = escHtml, h = [];
-    const vars = this.variations(), pack = this.vsPack();
-    h.push('<h4>V-Slice</h4><div class="imp-row"><button class="btn mini" type="button" data-imp="chart">📄 Asignar Chart</button><button class="btn mini alt" type="button" data-imp="meta">🗒 Asignar Metadata</button></div>');
-    h.push(`<div class="imp-st">${this.vs.chartNames.length ? '✔ chart: ' + esc(uniq(this.vs.chartNames).join(', ')) : '✘ sin chart'} · ${this.vs.metaNames.length ? '✔ metadata: ' + esc(uniq(this.vs.metaNames).join(', ')) : '✘ sin metadata'}</div>`);
-    if (this.vs.chartNames.length || this.vs.metaNames.length) {
-      h.push('<div class="imp-vars">');
-      for (const v of vars) {
-        const va = pack && pack.vars.find(x => x.id === v), sel = (this.vs.sel || 'default') === v;
-        let info = va ? `${pack.entries.filter(e => e.v === v).map(e => e.d).join(', ')}` : (this.vs.charts[v] ? 'chart sin dificultades' : 'falta song-chart' + (v === 'default' ? '' : '-' + v) + '.json');
-        if (va && this.vs.audio.size) { const au = packAudio(pack, v); info += ' · ' + (au.notes.length ? '✘ ' + au.notes.join(', ') : '✔ ' + au.list.map(t => t.name).join(', ')); }
-        h.push(`<label class="imp-var ${va ? '' : 'falta'} ${sel ? 'sel' : ''}"><input type="radio" name="impVar" value="${esc(v)}" ${sel ? 'checked' : ''} ${va ? '' : 'disabled'}><b>${esc(v === 'default' ? 'normal (default)' : v)}</b> <small>${esc(info)}</small></label>`);
+    const esc = escHtml, h = [], m = this.mod, L = ENGINE_LAYOUT[this.sel];
+    h.push(`<h4>Motor</h4><div class="imp-eng">${Object.entries(ENGINE_LAYOUT).map(([k, v]) => `<button class="btn mini ${k === this.sel ? 'sel' : 'alt'}" type="button" data-eng="${k}">${esc(v.name)}</button>`).join('')}</div>`);
+    h.push(`<p class="hint">${esc(L.hint)}</p>`);
+    h.push(`<div class="imp-row"><button class="btn mini" type="button" data-imp="dir" ${this.busy ? 'disabled' : ''}>📁 Carpeta del mod</button><button class="btn mini alt" type="button" data-imp="zip" ${this.busy ? 'disabled' : ''}>🗜 .zip del mod</button>${this.sel === 'vslice' ? '<button class="btn mini alt" type="button" data-imp="gcd">📀 Chart GCD</button>' : ''}</div>`);
+    if (this.busy) h.push('<div class="imp-st">⏳ Leyendo el mod…</div>');
+    if (m) {
+      const c = this.counts();
+      h.push(`<div class="imp-st">✔ <b>${esc(m.name)}</b> (${esc(ENGINE_LAYOUT[m.engine].name)}) · ${m.files} archivos · ${esc(c.txt)} · ${m.images} imágenes · ${m.songs.size} canción(es)${m.fails.length ? '<br>✘ ' + esc(m.fails.join(' · ')) : ''}</div>`);
+      if (m.songs.size) {
+        h.push('<h4>Canciones</h4><div class="imp-songs">');
+        for (const s of m.songs.values()) {
+          const info = m.engine === 'vslice' ? s.diffs.join(' · ') : sortDiffs(Object.keys(s.diffs)).join(', ') + ' · ' + s.format;
+          h.push(`<button class="btn imp-song ${this.cur === s.id && m.engine === this.engine ? 'sel' : ''}" type="button" data-song="${esc(s.id)}"><b>${esc(s.title)}</b><small>${esc(info)}</small></button>`);
+        }
+        h.push('</div>');
       }
-      h.push('</div>');
-    }
-    h.push(`<button class="btn mini" type="button" data-imp="songdir">🎵 Asignar Song (carpeta)</button><button class="btn mini alt" type="button" data-imp="songfiles">🎵 …o elegir archivos de audio</button>`);
-    h.push(`<div class="imp-st">${this.vs.audio.size ? `✔ audio (${esc(this.vs.audioFrom)}): ${esc([...this.vs.audio.values()].map(a => a.name).join(', '))}` : 'Inst.ogg / Inst-&lt;var&gt;.ogg · Voices-&lt;personaje&gt;[-&lt;var&gt;].ogg · Voices-Player/Opponent.ogg · Voices.ogg'}</div>`);
-    h.push(`<button class="btn go" type="button" data-imp="playvs" ${pack && pack.entries.length ? '' : 'disabled'}>▶ Jugar ${esc(this.vs.sel && this.vs.sel !== 'default' ? 'variación ' + this.vs.sel : 'V-Slice')}</button>`);
-    // otros motores
-    const L = ENGINE_LAYOUT[this.eng.engine];
-    h.push(`<h4>Psych · Codename · Kade</h4><div class="row"><label for="engSel">Motor</label><select id="engSel">${Object.entries(ENGINE_LAYOUT).map(([k, v]) => `<option value="${k}" ${k === this.eng.engine ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`);
-    h.push(`<p class="hint">${esc(L.hint)}</p><div class="imp-row"><button class="btn mini" type="button" data-imp="engdir">📁 Carpeta (canción o mod)</button><button class="btn mini alt" type="button" data-imp="engfiles">📎 Archivos</button></div>`);
-    const songs = this.eng.songs;
-    if (songs && songs.size) {
-      const s = songs.get(this.eng.song) || [...songs.values()][0];
-      if (songs.size > 1) h.push(`<div class="row"><label for="engSong">Canción</label><select id="engSong">${[...songs.values()].map(x => `<option value="${esc(x.id)}" ${x === s ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></div>`);
-      const ds = sortDiffs(Object.keys(s.diffs)), au = engineAudio(s.audio, null);
-      h.push(`<div class="imp-st">✔ ${esc(s.title)} · formato ${esc(s.format)} · dificultades: ${esc(ds.join(', '))}${s.meta ? ' · meta.json' : ''}${s.extra.events.length || s.extra.psychEvents.length ? ' · events.json' : ''}<br>${au.list.length ? '✔ audio: ' + esc(au.list.map(t => t.name).join(', ')) : '✘ sin audio (Inst.ogg / Voices.ogg)'}</div>`);
-      h.push(`<div class="imp-row">${ds.map(d => `<button class="btn mini go" type="button" data-imp="playeng:${esc(d)}">▶ ${esc(d)}</button>`).join('')}</div>`);
     }
     box.innerHTML = h.join('');
+    const run = p => Promise.resolve(p).catch(err => { console.error(err); toast('Error: ' + err.message, 5000); this.busy = false; this.render(); });
+    box.querySelectorAll('[data-eng]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); this.sel = b.dataset.eng; this.render(); }));
     box.querySelectorAll('[data-imp]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation(); e.preventDefault();
-      const a = b.dataset.imp, run = p => Promise.resolve(p).catch(err => { console.error(err); toast('Error: ' + err.message, 5000); });
-      if (a === 'chart') run(this.assignChart());
-      else if (a === 'meta') run(this.assignMeta());
-      else if (a === 'songdir') run(this.assignSong(true));
-      else if (a === 'songfiles') run(this.assignSong(false));
-      else if (a === 'playvs') run(this.playVS());
-      else if (a === 'engdir') run(this.pickEngine(true));
-      else if (a === 'engfiles') run(this.pickEngine(false));
-      else if (a.startsWith('playeng:')) run(this.playEngine(a.slice(8)));
+      const a = b.dataset.imp;
+      if (a === 'gcd') toast('Chart GCD: Próximamente');
+      else run(this.pickMod(a === 'zip'));
     }));
-    box.querySelectorAll('input[name="impVar"]').forEach(r => r.addEventListener('change', e => { e.stopPropagation(); this.vs.sel = r.value; this.render(); }));
-    const es = $('engSel'); if (es) es.addEventListener('change', e => { e.stopPropagation(); this.eng.engine = es.value; this.eng.songs = null; this.render(); });
-    const ss = $('engSong'); if (ss) ss.addEventListener('change', e => { e.stopPropagation(); this.eng.song = ss.value; this.render(); });
+    box.querySelectorAll('[data-song]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); run(this.play(b.dataset.song)); }));
   },
 };
 

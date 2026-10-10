@@ -86,7 +86,7 @@ function menuItems(menu) {
       ['middlescroll', 'Middlescroll: ' + onOff(Opts.middlescroll)],
       ['downscroll', Opts.isDown() ? 'Downscroll' : 'Upscroll'],
       ['keybinds', 'Asignar Teclas'],
-      ['vslice', 'Controles V-Slice: ' + (VSLICE_LABEL[Opts.vslice] || 'Toque')],
+      ['vslice', 'Controles Móvil: ' + (VSLICE_LABEL[Opts.vslice] || 'Hitbox')],
       ['optimizacion', 'Optimización'],
     ];
     case 'optimizacion': return [['back', 'Back'], ...Object.keys(OPT_ITEMS).map(k => ['opt:' + k, optLabel(k)])];
@@ -121,7 +121,7 @@ function buildMenu(menu, keepSel) {
       e.stopPropagation(); if (UI.waitKey !== null) return;
       if (UI.swiped) { UI.swiped = false; return; }   // fue un deslizamiento, no un toque
       // lista larga (Optimización): el primer toque elige la opción (y la centra), el segundo cambia su valor
-      if (menu === 'optimizacion' && i !== UI.sel && id !== 'back') { select(i); return; }
+      if (menu === 'optimizacion' && i !== UI.sel && id !== 'back' && !document.body.classList.contains('movil')) { select(i); return; }
       select(i, true); activate(id);
     });
     box.appendChild(b);
@@ -151,6 +151,8 @@ function select(i, silent) {
   });
   // lista larga (Optimización): se desplaza para que la opción elegida quede al centro
   const box = $('pauseItems');
+  // v3.6.0: en celular la lista se desplaza con el dedo (scroll nativo); solo se asegura que la elegida se vea
+  if (document.body.classList.contains('movil')) { box.style.transform = ''; const el = UI.items[i].el; if (el.scrollIntoView && (el.offsetTop < box.scrollTop || el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight)) el.scrollIntoView({ block: 'nearest' }); if (UI.menu === 'optimizacion') $('optHint').textContent = optHintText(); return; }
   if (box.classList.contains('largo')) {
     const el = UI.items[i].el, y = el.offsetTop + el.offsetHeight / 2;
     const tr = `translateY(${-Math.round(y)}px)`;
@@ -187,7 +189,7 @@ function activate(id) {
   else if (id === 'downscroll') { Opts.downscroll = !Opts.isDown(); Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4); }
   else if (id === 'vslice') {
     const order = VSLICE_MODES; Opts.vslice = order[(order.indexOf(Opts.vslice) + 1) % order.length]; Opts.save(); resize(); buildMenu('options', true); Sfx.play('scrollMenu', 0.4);
-    toast({ toque: 'Controles V-Slice: Toque → tocas directamente las flechas (receptores) del jugador; cada una tiene una zona invisible grande alrededor', hitbox: 'Controles V-Slice: Hitbox → 4 carriles verticales de toda la pantalla que se iluminan al tocar', arrows: 'Controles V-Slice: Flechas grandes → receptores grandes abajo al centro (FunkinHitbox "Arrows")', off: 'Controles V-Slice: 4 zonas → la pantalla dividida en 4 columnas de colores' }[Opts.vslice], 4200);
+    toast({ toque: 'Controles Móvil: Control V-Slice → flechas grandes abajo (← ↓ a la izquierda, ↑ → a la derecha); tocas directamente cada flecha', hitbox: 'Controles Móvil: Hitbox → 4 carriles verticales de toda la pantalla que se iluminan al tocar' }[Opts.vslice], 4200);
     if (G.mode !== 'mobile') toast('Los controles táctiles se usan en modo Táctil (toca la pantalla o elige "Táctil" en Chart y modo). En PC se juega con el teclado.', 4200);
   }
   else if (id === 'reset') { Opts.resetKeys(); buildMenu('keybinds', true); toast('Teclas por defecto: A S W D (+ flechas)'); }
@@ -228,7 +230,7 @@ function togglePanel(id) {
   $('panelOpts').hidden = UI.panel !== 'chart'; $('panelAssets').hidden = UI.panel !== 'assets';
   $('pausePanel').classList.toggle('show', !!UI.panel);
   document.body.classList.toggle('panel-abierto', !!UI.panel);   // el botón de pantalla completa no tapa el panel
-  if (UI.panel === 'assets') { renderAssetList(); UserAssets.render(); }
+  if (UI.panel === 'assets') { renderAssetList(); renderHxcData(); }
   if (UI.panel === 'chart') SongImport.render();
   syncTimeBar();
 }
@@ -342,51 +344,20 @@ $('tbTrack').addEventListener('pointerup', tbEnd); $('tbTrack').addEventListener
 /* ---------- botones / opciones ---------- */
 $('pauseBtn').addEventListener('click', () => { if (!G.overlayKind || G.overlayKind === 'pause') togglePause(); });
 $('modeSel').addEventListener('change', e => { setMode(e.target.value); toast('Modo: ' + e.target.selectedOptions[0].textContent); });
-$('btnLoad').addEventListener('click', () => $('fileInput').click());
-$('btnDemo').addEventListener('click', async () => {
-  const song = await loadSongById(ASSET_CFG.defaultSongId).catch(() => null);
-  G.pack = null; G.variation = 'default'; G.set = null;
-  if (song) { if (G.mode === 'demo') setMode('keyboard'); await loadChart(song.chart, song.audio); toast('Canción "test" cargada'); }
-  else { G.raw = G.meta = null; setMode('demo'); await loadChart(Chart.makeDemo(), []); toast('Canción demo cargada'); }
-});
 $('diffSel').addEventListener('change', e => changeDifficulty(e.target.value));
-$('fileInput').addEventListener('change', async e => {
-  try { await handleFiles([...e.target.files]); } catch (err) { console.error(err); toast('Error al cargar: ' + err.message); }
-  e.target.value = '';
-});
 document.addEventListener('visibilitychange', () => { if (document.hidden && !G.overlayKind && !Loader.active) openOverlay('pause'); });
 
-async function handleFiles(files) {
-  // Psych / Codename / Kade (una dificultad por archivo): se agrupan y convierten igual que en "Otros motores"
-  const peek = await SongImport.expand(files.filter(f => /\.json$/i.test(f.name)));
-  const fmts = peek.map(it => Chart.detect(it.json));
-  if (!fmts.includes('V-Slice') && !files.some(f => /\.(fnfc|zip)$/i.test(f.name)) && fmts.some(f => /^(Psych|Kade|Codename|legacy)/.test(f))) {
-    const engine = fmts.includes('Codename') ? 'codename' : fmts.includes('Kade') ? 'kade' : 'psych';
-    const songs = SongImport.groupEngine(await SongImport.expand(files), engine);
-    if (songs.size) { if (G.mode === 'demo') setMode('keyboard'); await loadEngineSong([...songs.values()][0]); return; }
-  }
-  const { raw, meta, inst, voices, pack } = await readChartFiles(files);
-  if (G.mode === 'demo') setMode('keyboard');
-  if (pack) {
-    // V-Slice: empieza en la variación por defecto (o la primera) con "normal" si existe
-    const first = pack.entries.find(e => e.v === 'default' && e.d === 'normal') || pack.entries.find(e => e.v === 'default') || pack.entries[0];
-    if (!first) throw new Error('el chart no tiene notas');
-    await loadVariation(pack, first.v, first.d);
-    return;
-  }
-  G.pack = null; G.variation = 'default'; G.set = null;
-  const chart = Chart.parse(raw, meta);
-  G.raw = raw; G.meta = meta;
-  const sc = chart.scene || {}, lc = x => String(x || '').toLowerCase();
-  const audio = [];
-  if (inst) audio.push({ blob: inst, role: 'inst', name: 'Inst' });
-  (inst ? voices : voices.slice(0, 1)).forEach((v, i) => {
-    const n = lc(v.name);
-    const role = sc.bf && n.includes('-' + lc(sc.bf) + '.') ? 'player' : sc.dad && n.includes('-' + lc(sc.dad) + '.') ? 'opponent' : inst ? 'voices' : 'inst';
-    audio.push({ blob: v.blob, role, name: v.name });
-  });
-  await loadChart(chart, audio, { label: 'Cargando chart…' });
-  if (!Music.has) toast(`Chart cargado: ${chart.notes.length} notas (sin audio)`);
+/* v3.6.0: Assets cargados → solo los datos de los .hxc (eventos / note kinds / módulos / escenarios) y lo que piden */
+function renderHxcData() {
+  const box = $('hxcBox'); if (!box) return;
+  const recs = [...Mods.scripts.values()], h = [];
+  h.push('<h4>Scripts .hxc</h4>');
+  if (!recs.length) h.push('<p class="hint">Ningún .hxc cargado. Se registran al cargar un mod de V-Slice (Chart y modo → Motor).</p>');
+  else h.push('<ul class="hxc-list">' + recs.map(r => `<li><b>${escHtml(r.name)}</b> <small>${escHtml([r.events.length ? 'eventos: ' + r.events.join(', ') : '', r.kinds.length ? 'note kinds: ' + r.kinds.join(', ') : '', r.modules.length ? 'módulos: ' + r.modules.join(', ') : ''].filter(Boolean).join(' · ') || r.others.join(', ') || '—')}</small></li>`).join('') + '</ul>');
+  if (Mods.failed && Mods.failed.size) h.push('<p class="hint">✘ ' + escHtml([...Mods.failed].map(([n, e]) => n + ': ' + e).join(' · ')) + '</p>');
+  h.push('<button class="btn mini" type="button" id="hxcReq">📜 Eventos y note kinds · assets que piden</button>');
+  box.innerHTML = h.join('');
+  $('hxcReq').addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); ModUI.show(); ModUI.render(); });
 }
 
 /* ---------- teclado ---------- */
@@ -436,7 +407,13 @@ window.addEventListener('keyup', e => {
 /* lista larga: rueda del ratón / deslizar el dedo para recorrerla */
 overlay.addEventListener('wheel', e => { if (UI.menu !== 'optimizacion') return; e.preventDefault(); if (Math.abs(e.deltaY) > 4) select(UI.sel + Math.sign(e.deltaY)); }, { passive: false });
 let _swipeY = null;
-overlay.addEventListener('touchstart', e => { if (UI.menu === 'optimizacion' && e.touches.length === 1) { _swipeY = e.touches[0].clientY; UI.swiped = false; } }, { passive: true });
+/* v3.6.0: botón "← Atrás" (celular): cierra el panel abierto o vuelve al menú anterior */
+$('backBtn').addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); Sfx.play('scrollMenu', 0.4); if (UI.panel) togglePanel(null); else goBack(); });
+/* el scroll nativo del menú no debe contar como toque en una opción */
+{ let y0 = null; $('pauseItems').addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
+  $('pauseItems').addEventListener('touchmove', e => { if (y0 !== null && Math.abs(e.touches[0].clientY - y0) > 10) { UI.swiped = true; UI.scrollAt = performance.now(); } }, { passive: true });
+  $('pauseItems').addEventListener('touchend', () => { y0 = null; setTimeout(() => { UI.swiped = false; }, 60); }, { passive: true }); }
+overlay.addEventListener('touchstart', e => { if (UI.menu === 'optimizacion' && e.touches.length === 1 && !document.body.classList.contains('movil')) { _swipeY = e.touches[0].clientY; UI.swiped = false; } }, { passive: true });
 overlay.addEventListener('touchmove', e => {
   if (_swipeY === null || UI.menu !== 'optimizacion') return;
   const dy = e.touches[0].clientY - _swipeY, step = 36;

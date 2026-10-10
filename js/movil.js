@@ -1,15 +1,13 @@
 /* =====================================================================
    movil.js — celular: SOLO horizontal ("Gira tu dispositivo" en vertical,
    con la partida en pausa), botón de pantalla completa (+ bloqueo de
-   orientación) y controles táctiles (v3.4.0):
-     · Toque    → (por defecto en celular, v3.5.0) disposición de V-Slice móvil:
-                  receptores grandes del jugador repartidos abajo, se tocan
-                  directamente (¼ del ancho alrededor de cada uno); rival
-                  pequeño arriba a la izquierda (ajustable en TOQUE_CFG)
-     · Hitbox   → como V-Slice (FunkinHitbox "FourLanes"): 4 carriles verticales
-                  de toda la pantalla que se iluminan con un degradado al tocar
-     · Flechas grandes → FunkinHitbox "Arrows": receptores grandes abajo al centro
-     · 4 zonas  → la pantalla dividida en 4 columnas de colores
+   orientación) y Controles Móvil (v3.6.0, Opciones → Controles Móvil):
+     · Hitbox          → (por defecto) como V-Slice (FunkinHitbox "FourLanes"): 4 carriles
+                         verticales de toda la pantalla que se iluminan al tocar
+     · Control V-Slice → (id interno 'toque') disposición de V-Slice móvil: receptores
+                         grandes del jugador abajo (← ↓ a la izquierda, ↑ → a la derecha,
+                         con un hueco grande al centro), se tocan directamente; rival
+                         pequeño arriba a la izquierda (ajustable en TOQUE_CFG)
    En PC el modo por defecto es Teclado.
    ===================================================================== */
 'use strict';
@@ -64,7 +62,7 @@ $('rotarFs').addEventListener('click', e => { e.stopPropagation(); Movil.fullscr
    Para verlas: ?zonas=1 en la URL (se dibujan semitransparentes). */
 const TOQUE_CFG = {
   // v3.5.0: disposición de V-Slice móvil (captura de referencia 1280×720 horizontal)
-  lanes: [0.105, 0.285, 0.715, 0.895], // centro X de ← ↓ ↑ → (fracción del ancho): el centro queda libre
+  lanes: [0.075, 0.225, 0.775, 0.925], // v3.6.0: centro X de ← ↓ ↑ → (fracción del ancho): más hueco entre ←↓ y ↑→
   escala: 1.45,       // tamaño de los receptores del jugador (1 = normal de PC)
   margenAbajo: 14,    // separación del borde inferior (px del juego)
   alphaReceptor: 0.6, // receptores en reposo semitransparentes
