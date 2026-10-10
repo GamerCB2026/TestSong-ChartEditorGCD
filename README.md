@@ -14,3 +14,9 @@ Aquí podrás jugar Mods de FNF dependiendo de que tan bueno sea tu PC o Celular
 8. Este FNF GCD contiene optimización desde el mismo juego
 9. Este FNF GCD es compatible con varios dispositivos tras ser algo liviano
 
+# MIS REDES SOCIALES:
+- YouTube (Principal): https://www.youtube.com/@GamerCB2026
+- Instagram: https://www.instagram.com/deiby123rodriguez/
+- X (Twitter): https://x.com/GamerCB2025
+- Grupo De Discord: https://discord.gg/GXyxff8sQM
+- TikTok: https://www.tiktok.com/@gamer_countryballs
