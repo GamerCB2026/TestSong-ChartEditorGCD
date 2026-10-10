@@ -105,7 +105,9 @@ const SongImport = {
 
   /* ---------- otros motores ---------- */
   async pickEngine(dir) {
-    const files = await ModUI.pick('.json,.ogg,.mp3,.wav', true, dir); if (!files.length) return;
+    const files = await ModUI.pick('.json,.ogg,.mp3,.wav,.xml,.png,.lua,.hx', true, dir); if (!files.length) return;
+    // v3.5.0: personajes / escenarios / imágenes / scripts del mod quedan disponibles en su formato (motores.js)
+    const mounted = EngineData.mount(files); if (mounted) { Scene.ids = null; console.info(`[motores] ${mounted} archivo(s) del mod disponibles (personajes, escenarios, imágenes)`); }
     const items = await this.expand(files);
     const songs = this.groupEngine(items, this.eng.engine);
     if (!songs.size) { toast(`No encontré charts de ${ENGINE_LAYOUT[this.eng.engine].name} (${ENGINE_LAYOUT[this.eng.engine].hint})`, 6000); return; }

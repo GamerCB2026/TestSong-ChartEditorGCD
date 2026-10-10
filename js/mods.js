@@ -134,7 +134,7 @@ class HxTimer {
 /* ---------- recursos de los scripts (Paths.*) ---------- */
 const ModRes = {
   cache: new Map(),   // clave -> { status: 'loading'|'ok'|'missing', val, from }
-  DIRS: { image: ['images', '.png'], sparrow: ['images', '.xml'], sound: ['sounds', '.ogg'], music: ['music', '.ogg'], video: ['videos', '.mp4'], frag: ['shaders', '.frag'], font: ['fonts', ''], json: ['data', '.json'], file: ['', ''], notestyle: ['data/notestyles', '.json'] },
+  DIRS: { image: ['images', '.png'], sparrow: ['images', '.xml'], sound: ['sounds', '.ogg'], music: ['music', '.ogg'], video: ['videos', '.mp4'], gif: ['images', '.gif'], frag: ['shaders', '.frag'], font: ['fonts', ''], json: ['data', '.json'], file: ['', ''], notestyle: ['data/notestyles', '.json'] },
   /* ruta que verá el usuario (como en el juego) */
   expected(kind, key, lib) {
     const [dir, ext] = this.DIRS[kind] || ['', ''];
@@ -148,6 +148,8 @@ const ModRes = {
     if (kind === 'music') { const k = String(key); out.push(`music/${k}/${k}.ogg`, `shared/music/${k}/${k}.ogg`); }
     if (kind === 'sound' || kind === 'music') out.push(...out.map(p => p.replace(/\.ogg$/, '.mp3')));
     if (kind === 'image') out.push(...out.map(p => p.replace(/\.png$/i, '.astc')));   // texturas ASTC de los ports móviles
+    if (kind === 'video') out.push(...out.map(p => p.replace(/\.mp4$/i, '.webm')));    // v3.5.0: también .webm
+    if (kind === 'gif') out.push(...out.map(p => p.replace(/^images\//, '')));
     return uniq(out);
   },
   /* "assets/shared/images/x.png" -> { kind, key, lib } */
@@ -164,6 +166,7 @@ const ModRes = {
     for (const c of cands) { const f = VFS.get(c); if (f) return f; }
     const e = this.expected(kind, key, lib).split('/').pop();
     if (kind === 'image') { for (const x of ['', '.astc', '.ktx', '.ktx2']) { const f = VFS.byBase(x ? e.replace(/\.png$/i, x) : e); if (f) return f; } return null; }
+    if (kind === 'video') return VFS.byBase(e) || VFS.byBase(e.replace(/\.mp4$/i, '.webm'));
     return VFS.byBase(e);
   },
   get(kind, key, lib) { const r = this.cache.get(this.keyOf(kind, key, lib)); if (!r) { this.load(kind, key, lib); return null; } return r.status === 'ok' ? r.val : null; },
@@ -194,7 +197,7 @@ const ModRes = {
   async decode(kind, key, blob, user) {
     if (kind === 'image') return await decodeImageBlob(blob, String(key));   // PNG/JPG/WebP o ASTC/KTX
     if (kind === 'sound' || kind === 'music') { const c = Sfx.ensureCtx(); if (!c) return null; const ab = await blob.arrayBuffer(); return await new Promise((ok, bad) => { const p = c.decodeAudioData(ab, ok, bad); if (p && p.then) p.then(ok, bad); }); }
-    if (kind === 'video') return URL.createObjectURL(blob);
+    if (kind === 'video' || kind === 'gif') return URL.createObjectURL(blob);
     if (kind === 'font') { const fam = 'hxfont-' + String(key).replace(/\W+/g, '_'); const ff = new FontFace(fam, await blob.arrayBuffer()); await ff.load(); document.fonts.add(ff); return fam; }
     if (kind === 'json' || kind === 'notestyle') return JSON.parse(await blob.text());
     if (kind === 'sparrow') {
@@ -217,6 +220,38 @@ class HxSprite {
     Object.assign(this, { x: +x || 0, y: +y || 0, alpha: 1, visible: true, alive: true, exists: true, angle: 0, zIndex: null, antialiasing: true, flipX: false, flipY: false, color: 0xFFFFFFFF, blend: null, img: null, solid: null, cameras: null, behind: false, frameW: 0, frameH: 0, __host: 'FunkinSprite', __open: true });
     this.scale = new HxPoint(1, 1); this.scrollFactor = new HxPoint(1, 1); this.offset = new HxPoint(0, 0); this.origin = new HxPoint(0, 0);
     this.animation = new HxAnim(this);
+    this.velocity = new HxPoint(0, 0); this.active = true; this.repeatX = false; this.repeatY = false; this.spacing = new HxPoint(0, 0); this._lt = null;
+  }
+  loadTexture(key) { return this.loadGraphic(String(key).includes('/') ? key : 'images/' + key + '.png'); }
+  /* v3.5.0: velocity de Flixel (coches, nubes, nieblas de FlxBackdrop) */
+  tick() { const t = G.gameTime; if (this._lt !== null && this.active !== false) { const dt = Math.min(0.1, (t - this._lt) / 1000); this.x += this.velocity.x * dt; this.y += this.velocity.y * dt; } this._lt = t; }
+  get glOk() { return !(this instanceof HxText) && this.blend !== 'add' && !(this.flipX || this.flipY || this.angle); }
+  /* dibujo con el destino del render (WebGL o Canvas): imagen / frame Sparrow / color sólido, repetido si es FlxBackdrop */
+  renderR(view, R) {
+    this.tick();
+    if (!this.visible || !this.exists || this.alpha <= 0) return;
+    const M = worldMatrix(view.v, view.zoom, this.scrollFactor.x, this.scrollFactor.y, _hxM);
+    const fr = this.animation.frame(), w = this.width, h = this.height;
+    const c = this.color >>> 0, rgb = (c & 0xFFFFFF) === 0xFFFFFF ? null : [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
+    const a = clamp(this.alpha, 0, 1), smooth = !!this.antialiasing && Optim.s.aa;
+    const one = (x, y) => {
+      mmul(_hxL2, M, mset(_hxL, 1, 0, 0, 1, x - this.offset.x, y - this.offset.y));
+      if (fr) { mmul(_hxL2, _hxL2, mset(_hxL, this.scale.x, 0, 0, this.scale.y, fr.offX || 0, fr.offY || 0)); if (fr.rot) mmul(_hxL2, _hxL2, mset(_hxL, 0, -1, 1, 0, 0, fr.dh)); R.img(fr.img, fr.x, fr.y, fr.w, fr.h, _hxL2, a, smooth, false, rgb); }
+      else if (this.img) { const nw = this.img.naturalWidth || this.img.width, nh = this.img.naturalHeight || this.img.height; mmul(_hxL2, _hxL2, mset(_hxL, w / nw, 0, 0, h / nh, 0, 0)); R.img(this.img, 0, 0, nw, nh, _hxL2, a, smooth, false, rgb); }
+      else if (this.solid !== null) R.rect(cssColor(this.solid), _hxL2, w, h, a);
+    };
+    if (this.shader) R.setShader(this.shader);
+    try {
+      if ((this.repeatX || this.repeatY) && w > 1 && h > 1) {
+        // FlxBackdrop: se repite por toda la pantalla visible (en píxeles del canvas)
+        const cvs = R.cv || (R.c && R.c.canvas), cw = cvs ? cvs.width : 4096, ch = cvs ? cvs.height : 4096;
+        const sx = M[0] || 1, sy = M[3] || 1, tw = w + this.spacing.x, th = h + this.spacing.y;
+        const wx0 = (0 - M[4]) / sx, wx1 = (cw - M[4]) / sx, wy0 = (0 - M[5]) / sy, wy1 = (ch - M[5]) / sy;
+        const xs = this.repeatX ? [Math.floor((wx0 - this.x) / tw), Math.ceil((wx1 - this.x) / tw)] : [0, 0];
+        const ys = this.repeatY ? [Math.floor((wy0 - this.y) / th), Math.ceil((wy1 - this.y) / th)] : [0, 0];
+        for (let j = ys[0]; j <= ys[1] && j - ys[0] < 40; j++) for (let i = xs[0]; i <= xs[1] && i - xs[0] < 40; i++) one(this.x + i * tw, this.y + j * th);
+      } else one(this.x, this.y);
+    } finally { if (this.shader) R.setShader(null); }
   }
   get camera() { return this.cameras ? this.cameras[0] : HOST.camGame; }
   set camera(c) { this.cameras = [c]; }
@@ -262,6 +297,7 @@ class HxSprite {
     else if (this.solid !== null) { ctx.fillStyle = cssColor(this.solid); ctx.fillRect(0, 0, w, h); }
   }
   render(view) {
+    if (view) this.tick();
     if (!this.visible || !this.exists || this.alpha <= 0) return;
     ctx.save();
     if (view) { const M = worldMatrix(view.v, view.zoom, this.scrollFactor.x, this.scrollFactor.y); ctx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); }
@@ -271,6 +307,7 @@ class HxSprite {
     ctx.restore();
   }
 }
+const _hxM = [1, 0, 0, 1, 0, 0], _hxL = [1, 0, 0, 1, 0, 0], _hxL2 = [1, 0, 0, 1, 0, 0];
 class HxAnim {
   constructor(spr) { this.spr = spr; this.anims = new Map(); this.cur = null; this.t0 = 0; this.__host = 'FlxAnimationController'; }
   addByPrefix(name, prefix, fps = 24, loop = true) { this.anims.set(name, { prefix, fps, loop, idx: null }); this.refresh(); }
@@ -342,6 +379,8 @@ class HxSound {
 }
 
 /* ---------- personajes / strumlines vistos desde los scripts ---------- */
+const SIGNAL_NOP = { __host: 'FlxSignal', add() {}, remove() {}, addOnce() {}, removeAll() {} };   // los shaders se actualizan solos cada frame
+const rgbOf = v => { v = v >>> 0; return (v & 0xFFFFFF) === 0xFFFFFF ? null : [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]; };
 const CharW = {
   cache: {},
   get(role) {
@@ -365,8 +404,12 @@ const CharW = {
       get alpha() { const c = real(); return c ? c.alpha : 1; }, set alpha(v) { const c = real(); if (c) c.alpha = +v; },
       get visible() { const c = real(); return c ? c.visible !== false : true; }, set visible(v) { const c = real(); if (c) c.visible = !!v; },
       get holdTimer() { return 0; }, set holdTimer(v) {},
-      get animation() { const c = real(); return { curAnim: c ? { name: c.curName, finished: c.finished() } : null, play: (n, f) => w.playAnimation(n, f), get finished() { return c ? c.finished() : true; }, getByName: n => (c && c.anims.has(n) ? { name: n } : null), exists: n => !!(c && c.anims.has(n)) }; },
+      get animation() { const c = real(); return { onFrameChange: SIGNAL_NOP, onFinish: SIGNAL_NOP, curAnim: c ? { name: c.curName, finished: c.finished() } : null, play: (n, f) => w.playAnimation(n, f), get finished() { return c ? c.finished() : true; }, getByName: n => (c && c.anims.has(n) ? { name: n } : null), exists: n => !!(c && c.anims.has(n)) }; },
       get cameraFocusPoint() { const p = focusPoint(role) || [0, 0]; return new HxPoint(p[0], p[1]); },
+      // v3.5.0: shader del personaje (scripts de escenario) y lo que usan sus rim lights
+      get shader() { const c = real(); return c ? c.shader || null : null; }, set shader(v) { const c = real(); if (c) c.shader = v || null; },
+      get frame() { const c = real(); return c ? { angle: 0, __host: 'FlxFrame' } : null; },
+      get color() { const c = real(); return c && c.rgbInt != null ? c.rgbInt : 0xFFFFFFFF; }, set color(v) { const c = real(); if (c) { c.rgbInt = v >>> 0; c.rgb = rgbOf(v); } },
     };
     return (this.cache[role] = w);
   },
@@ -413,6 +456,22 @@ function camObj(which) {
 }
 
 /* ---------- HOST: lo que ven los scripts ---------- */
+/* v3.5.0: prop del escenario visto desde un script (getNamedProp): alpha, x/y, scale.set, color, shader, animation.play */
+function propW(p) {
+  if (p.__w) return p.__w;
+  const scale = { __host: 'FlxPoint', get x() { return p.scale[0]; }, set x(v) { p.scale = [+v, p.scale[1]]; }, get y() { return p.scale[1]; }, set y(v) { p.scale = [p.scale[0], +v]; },
+    set(x = 0, y = x) { p.scale = [+x, +y]; } };
+  const anim = { __host: 'FlxAnimationController', play: (n, force) => { if (!propPlay(p.name, String(n), !!force)) HX.note(`prop ${p.name}: animación "${n}" no existe`); }, get name() { return p.cur || null; }, exists: n => !!(p.anims && p.anims.has(n)), get curAnim() { return p.cur ? { name: p.cur, finished: p.frames ? propFinished(p) : true } : null; }, onFrameChange: SIGNAL_NOP, onFinish: SIGNAL_NOP };
+  return (p.__w = { __host: 'StageProp', __open: true,
+    get alpha() { return p.alpha; }, set alpha(v) { p.alpha = +v; }, get visible() { return p.visible !== false; }, set visible(v) { p.visible = !!v; },
+    get x() { return p.pos[0]; }, set x(v) { p.pos = [+v, p.pos[1]]; }, get y() { return p.pos[1]; }, set y(v) { p.pos = [p.pos[0], +v]; },
+    get zIndex() { return p.z; }, set zIndex(v) { p.z = +v || 0; }, get scale() { return scale; }, get animation() { return anim; },
+    get color() { return p.rgbInt ?? 0xFFFFFFFF; }, set color(v) { p.rgbInt = v >>> 0; p.rgb = rgbOf(v); },
+    get shader() { return p.shader || null; }, set shader(v) { p.shader = v || null; },
+    get frame() { return { angle: 0 }; }, get name() { return p.name; },
+    playAnimation(n, force) { anim.play(n, force); }, setPosition(x = 0, y = 0) { p.pos = [+x, +y]; },
+  });
+}
 const HOST = (() => {
   const camGame = camObj('game'), camHUD = camObj('hud');
   const members = { indexOf: o => (o && o.__host === 'Strumline' ? 100 : -1), length: 0, __host: 'members' };
@@ -422,7 +481,11 @@ const HOST = (() => {
     __host: 'currentStage', __open: true,
     getBoyfriend: () => CharW.get('bf'), getDad: () => CharW.get('dad'), getGirlfriend: () => CharW.get('gf'),
     getCharacter: id => (['bf', 'dad', 'gf'].find(r => Scene.chars[r] && Scene.chars[r].id === id) ? CharW.get(['bf', 'dad', 'gf'].find(r => Scene.chars[r] && Scene.chars[r].id === id)) : null),
-    getNamedProp(name) { const p = Scene.stage && Scene.stage.props.find(p => p.name === name); if (!p) return null; return { __host: 'StageProp', __open: true, get alpha() { return p.alpha; }, set alpha(v) { p.alpha = +v; }, get visible() { return p.visible !== false; }, set visible(v) { p.visible = !!v; }, get x() { return p.pos[0]; }, set x(v) { p.pos[0] = +v; }, get y() { return p.pos[1]; }, set y(v) { p.pos[1] = +v; }, playAnimation() {} }; },
+    getNamedProp(name) {
+      const p = Scene.stage && Scene.stage.props.find(p => p.name === name);
+      if (!p) { HX.note(`getNamedProp("${name}"): no existe en el escenario cargado (se ignora)`); return propW({ name, alpha: 1, pos: [0, 0], scale: [1, 1], z: 0, ghost: true }); }   // en vez de romper el script
+      return propW(p);
+    },
     add: o => addSprite(o), remove: o => removeSprite(o), insert: (i, o) => addSprite(o), refresh() {},
     get camZoom() { return Cam.stageZoom; },
   };
@@ -548,12 +611,20 @@ const HOST = (() => {
     HealthIcon: HX.stub('HealthIcon'), VideoCutscene: { __host: 'VideoCutscene', play: p => { Mods.playVideo(p); }, isPlaying: () => false, finishVideo: () => {} },
   };
   G_.OpenFlAssets = G_.Assets;
+  G_.CharacterType = { __host: 'CharacterType', BF: 'BF', DAD: 'DAD', GF: 'GF', OTHER: 'OTHER' };
+  G_.HapticUtil = { __host: 'HapticUtil', vibrate() {}, increasingVibrate() {}, hapticsAvailable: false };
   const CTORS = {
     FlxTimer: () => new HxTimer(), FlxText: a => new HxText(...a), FunkinSprite: a => new HxSprite(...a), FlxSprite: a => new HxSprite(...a), FlxPoint: a => new HxPoint(...a),
     Map: () => new HX.HxMap(), StringMap: () => new HX.HxMap(), IntMap: () => new HX.HxMap(), ObjectMap: () => new HX.HxMap(), EReg: a => new HX.EReg(a[0], a[1]),
     FlxSound: () => new HxSound({ kind: 'sound', key: '' }), FlxTypedGroup: () => Mods.group(), FlxGroup: () => Mods.group(), FlxSpriteGroup: () => Mods.group(), FlxTypedSpriteGroup: () => Mods.group(),
     Date: () => new Date(), FlxObject: a => new HxSprite(...a),
+    // v3.5.0: escenarios
+    AdjustColorShader: () => new AdjustColorShaderJS(), DropShadowShader: () => new DropShadowShaderJS(),
+    FlxRuntimeShader: a => { const sh = new SprShader(null, 'FlxRuntimeShader'); const src = String(a[0] ?? ''); if (/void\s+main/.test(src)) sh.src = src; else if (src) sh.fromKey(src.split('/').pop().replace(/\.frag$/, '')); else sh.error = 'sin código'; return sh; },
+    FlxBackdrop: a => { const s = new HxSprite(); const g = a[0]; if (g) s.loadGraphic(typeof g === 'string' ? g : (g.__path || '')); const ax = a[1] ?? 0x11; s.repeatX = !!(ax & 0x01); s.repeatY = !!(ax & 0x10); s.spacing.set(+a[2] || 0, +a[3] || 0); s.__host = 'FlxBackdrop'; return s; },
+    Sequence: a => new HxSequence(a[0]),
   };
+  for (const [cls, key] of Object.entries(SPR_CLASS_FRAG)) CTORS[cls] = () => new SprShader(null, cls).fromKey(key);
   return {
     camGame, camHUD, ps,
     global(n) { return n in G_ ? G_[n] : undefined; },
@@ -563,6 +634,7 @@ const HOST = (() => {
       if (/SongEvent$/.test(base)) { obj.id = a[0]; }
       else if (/NoteKind$/.test(base)) { obj.noteKind = a[0]; obj.description = a[1] ?? ''; obj.noteStyleId = a[2] ?? null; obj.params = a[3] ?? []; if (a.length > 4) obj.noAnim = !!a[4]; if (a.length > 5) obj.suffix = a[5] ?? ''; }
       else if (/Module$/.test(base)) { obj.moduleId = a[0]; obj.priority = a[1] ?? 1000; if (!('active' in obj)) obj.active = true; }
+      else if (/Stage$/.test(base)) { obj.stageId = a[0]; }
       else if (/Sprite$|FlxText$/.test(base)) { const s = base === 'FlxText' ? new HxText(...a) : new HxSprite(...a); for (const k of Object.keys(s)) if (!(k in obj)) obj[k] = s[k]; }
     },
     nativeMember(base, obj, n) {
@@ -570,6 +642,7 @@ const HOST = (() => {
       if (n === 'scriptGet') return name => obj[name] ?? null;
       if (n === 'scriptSet') return (name, v) => { obj[name] = v; };
       if (/SongEvent$/.test(base)) { if (n === 'getTitle') return () => obj.id; if (n === 'getEventSchema') return () => []; if (n === 'handleEvent' || n === 'precacheEvent') return () => null; }
+      if (/Stage$/.test(base)) { const v = StageRT.member(obj, n); if (v !== undefined) return v; }
       if (/^on[A-Z]/.test(n)) return () => null;
       return undefined;
     },
@@ -608,7 +681,7 @@ const NoteKinds = {
 
 /* ---------- registro de scripts ---------- */
 const Mods = {
-  scripts: new Map(), events: new Map(), kinds: new Map(), modules: new Map(), classes: new Map(), elapsed: 0, pendingDeath: false, fxLog: [], db: null, ready: null,
+  scripts: new Map(), events: new Map(), kinds: new Map(), modules: new Map(), stages: new Map(), classes: new Map(), elapsed: 0, pendingDeath: false, fxLog: [], db: null, ready: null,
   BUILTIN_EVENTS: ['FocusCamera', 'ZoomCamera', 'SetCameraBop', 'PlayAnimation', 'SetHealthIcon', 'ScrollSpeed'],
   safe(f) { try { return f(); } catch (e) { console.warn('[hxc] callback', e); HX.note('error en callback: ' + e.message); } },
   fx(kind, which) { this.fxLog.push(`${kind}:${which}@${Math.round(G.songPos)}`); if (this.fxLog.length > 40) this.fxLog.shift(); },
@@ -648,6 +721,11 @@ const Mods = {
         this.modules.set(id, { id, inst, script, cls: c, file: name });
         rec.modules.push(id);
         if (script.findMethod(c, 'onCreate')) script.callMethod(inst, 'onCreate', [{}]);
+      } else if (/Stage$/.test(base)) {
+        // v3.5.0: script de escenario → se ejecuta solo con su escenario (StageRT)
+        let id = c.name; try { const inst = script.instantiate(c, []); if (!inst.stageId && hasChildren) continue; id = String(inst.stageId || c.name); } catch (e) { console.warn('[hxc] escenario', e); }
+        this.stages.set(id, { id, script, cls: c, file: name }); rec.stages = (rec.stages || []).concat(id); rec.modules.push('escenario ' + id);
+        StageRT.key = null;
       } else rec.others.push(`${c.name}${c.parent ? ' extends ' + c.parent : ''}`);
     }
     this.scripts.set(name, rec);
@@ -659,6 +737,7 @@ const Mods = {
     for (const id of rec.events) this.events.delete(id);
     for (const id of rec.kinds) this.kinds.delete(id);
     for (const id of rec.modules) this.modules.delete(id);
+    for (const id of rec.stages || []) { this.stages.delete(id); StageRT.key = null; }
     for (const c of rec.script.classes.keys()) this.classes.delete(c);
     this.scripts.delete(rec.name);
   },
@@ -683,17 +762,20 @@ const Mods = {
       if (e.inst.active === false && coll === this.modules) continue;
       if (e.script.findMethod(e.cls, name)) e.script.callMethod(e.inst, name, [ev || {}]);
     }
+    StageRT.call(name, ev);
   },
+  get hasHooks() { return this.modules.size > 0 || !!StageRT.cur; },
   update(dt) {
     this.elapsed = dt / 1000;
     ModRT.tweens = ModRT.tweens.filter(t => !t.update());
     ModRT.timers = ModRT.timers.filter(t => !t.update());
-    if (this.modules.size) this.hook('onUpdate', { elapsed: this.elapsed });
+    StageRT.tick(); VideoSync.tick();
+    if (this.hasHooks) this.hook('onUpdate', { elapsed: this.elapsed, __host: 'UpdateScriptEvent' });
     if (this.pendingDeath) { this.pendingDeath = false; if (G.health <= 0 && !isBot()) openOverlay('over'); }
   },
   /* reiniciar / buscar: se borra todo lo que crearon los scripts */
   resetRuntime(retry) {
-    ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0;
+    ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear();
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
     CamFX.reset(); StrumState.reset(); CharW.cache = {};
     for (const c of Object.values(Scene.chars)) if (c) { c.visible = true; }
@@ -721,8 +803,7 @@ const Mods = {
   playVideo(p) {
     const r = ModRes.parsePath(p); const url = ModRes.get('video', r.key, r.lib);
     if (!url) { HX.note(`video ${r.key}: falta el archivo`); return; }
-    const v = document.createElement('video'); v.src = url; v.autoplay = true; v.playsInline = true; v.className = 'hx-video';
-    v.onended = () => v.remove(); v.onclick = () => v.remove(); document.body.appendChild(v); v.play().catch(() => {});
+    VideoSync.play(url, r.key);
   },
   /* ---- IndexedDB: scripts y archivos que pidió cada script ---- */
   async openDB() {
@@ -768,4 +849,148 @@ const NoteStyles = {
     return rec;
   },
   headFor(kind) { const k = Mods.kinds.get(kind); if (!k || !k.styleId) return null; const r = this.map.get(k.styleId); return r && r.status === 'ok' ? r : null; },
+};
+
+/* =====================================================================
+   v3.5.0 — StageRT: scripts .hxc de ESCENARIO (class X extends Stage).
+   Se ejecutan SOLO cuando el escenario cargado tiene su mismo id:
+   buildStage → onCreate → addCharacter(c, CharacterType) → onSongLoaded,
+   y luego onUpdate / onStepHit / onBeatHit / onSongEvent / onGameOver.
+   Si el id no coincide se avisa (estado + aviso) y no se aplica nada.
+   ===================================================================== */
+class HxSequence {
+  constructor(list) { this.running = true; this.t = 0; this.items = (list || []).map(x => ({ time: +x.time || 0, cb: x.callback, done: false })); this.__host = 'Sequence'; StageRT.seqs.push(this); }
+  update(dt) { if (!this.running) return; this.t += dt; for (const it of this.items) if (!it.done && this.t >= it.time) { it.done = true; Mods.safe(() => it.cb && it.cb()); } }
+  clear() { this.items.length = 0; } destroy() { this.items.length = 0; }
+}
+const StageRT = {
+  cur: null, key: null, chars: {}, seqs: [], sprites: [], mismatch: null, warned: new Set(),
+  status() {
+    const out = [];
+    if (this.cur) out.push(`✔ script del escenario ${this.cur.id} (${this.cur.file}) activo · shaders: ${this.shaderInfo()}`);
+    if (this.mismatch) out.push(`⚠ ${this.mismatch}`);
+    return out;
+  },
+  shaderInfo() {
+    const list = [];
+    for (const r of ['bf', 'dad', 'gf']) { const c = Scene.chars[r]; if (c && c.shader) list.push(`${r}: ${c.shader.name}${c.shader.error ? ' (' + c.shader.error + ')' : ''}`); }
+    for (const p of (Scene.stage ? Scene.stage.props : [])) if (p.shader) list.push(`${p.name}: ${p.shader.name}`);
+    if (!list.length) return 'ninguno';
+    return list.join(', ') + (Render.name && /canvas/i.test(Render.name()) ? ' — con Render Canvas solo se aproxima el ajuste de color (activa WebGL)' : '');
+  },
+  /* miembros nativos de la clase Stage del juego */
+  member(obj, n, isSuper) {
+    const S = HOST.ps.currentStage;
+    switch (n) {
+      case 'buildStage': return () => this.superBuild(obj);
+      case 'addCharacter': return () => null;
+      case 'fetchAssetPaths': return () => [];
+      case 'getNamedProp': return name => S.getNamedProp(name);
+      case 'getBoyfriend': return () => CharW.get('bf');
+      case 'getDad': return () => CharW.get('dad');
+      case 'getGirlfriend': return () => CharW.get('gf');
+      case 'getCharacter': return id => S.getCharacter(id);
+      case 'add': case 'insert': return (a, b) => { const o = b && typeof a === 'number' ? b : a; if (o instanceof HxSprite) this.sprites.push(o); return S.add(o); };
+      case 'remove': return o => S.remove(o);
+      case 'refresh': return () => null;
+      case 'camZoom': return Cam.stageZoom;
+      case 'id': case 'stageId': return obj.stageId;
+    }
+    return undefined;
+  },
+  /* super.buildStage(): si el script cambió _data (assetPath de props, posiciones) antes de llamarlo, se aplica */
+  superBuild(obj) {
+    const st = Scene.stage, d = obj._data; if (!st || !d) return null;
+    (d.props || []).forEach((pd, i) => {
+      const p = st.props[i]; if (!p || !pd) return;
+      if (pd.assetPath && p.__ap0 !== undefined && pd.assetPath !== p.__ap0 && !String(pd.assetPath).startsWith('#')) this.swapProp(st, p, pd);
+    });
+    for (const r of ['bf', 'dad', 'gf']) { const c = Scene.chars[r], pos = d.characters && d.characters[r] && d.characters[r].position; if (c && Array.isArray(pos) && st.data.characters?.[r] && String(pos) !== String(st.data.characters[r].position)) { const old = st.data.characters[r].position; st.data.characters[r].position = pos; placeChar(c, r, st); st.data.characters[r].position = old; } }
+    return null;
+  },
+  async swapProp(st, p, pd) {
+    const pa = parseAssetPath(pd.assetPath);
+    const cands = ASSET_CFG.stageImagePaths.map(t => fillT(t, { stage: st.id, path: pa.path, dir: st.data.directory || 'shared' }));
+    const img = await loadImg(cands, { world: true }).catch(() => null);
+    if (img && !p.anims) { p.img = img; p.path = img.assetPath; } else if (!img) HX.note(`buildStage: falta ${cands[0]}`);
+  },
+  /* cada frame: (re)arranca el script cuando cambia el escenario o se reinicia, y sigue a los cambios de personaje */
+  tick() {
+    const st = Scene.stage;
+    const key = st ? st.id + '|' + Scene.token + '|' + Mods.stages.size : null;
+    if (key !== this.key) { this.key = key; this.start(); }
+    if (!this.cur) return;
+    for (const r of ['bf', 'dad', 'gf']) if (Scene.chars[r] && this.chars[r] !== Scene.chars[r]) this.addChar(r);
+    const dt = Mods.elapsed; for (const s of this.seqs) s.update(dt);
+  },
+  start() {
+    const st = Scene.stage;
+    // se deshace lo del script anterior
+    for (const c of Object.values(Scene.chars)) if (c) { c.shader = null; c.rgb = null; }
+    if (st) for (const p of st.props) { if (!p.__orig) p.__orig = { alpha: p.alpha, pos: p.pos.slice(), scale: p.scale.slice(), visible: p.visible, z: p.z, ap: p.path }; else Object.assign(p, { alpha: p.__orig.alpha, pos: p.__orig.pos.slice(), scale: p.__orig.scale.slice(), visible: p.__orig.visible, z: p.__orig.z }); p.shader = null; p.rgb = null; p.rgbInt = null; }
+    for (const o of this.sprites) { const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); }
+    this.cur = null; this.chars = {}; this.seqs = []; this.sprites = []; this.mismatch = null;
+    if (!st || !Mods.stages.size) return;
+    const rec = Mods.stages.get(st.id) || [...Mods.stages.values()].find(r => r.id.toLowerCase() === String(st.id).toLowerCase());
+    if (!rec) {
+      const ids = [...Mods.stages.keys()];
+      this.mismatch = `el script de escenario (${ids.join(', ')}) no corresponde al escenario cargado "${st.id}": sus shaders y cambios no se aplican. Carga el JSON de ese escenario (data/stages/<id>.json) con el chart.`;
+      if (!this.warned.has(this.mismatch)) { this.warned.add(this.mismatch); toast('⚠ ' + this.mismatch, 6000); }
+      return;
+    }
+    (st.data.props || []).forEach((pd, i) => { if (st.props[i]) st.props[i].__ap0 = pd.assetPath; });
+    const inst = rec.script.instantiate(rec.cls, []);
+    inst._data = JSON.parse(JSON.stringify(st.data));
+    this.cur = { id: rec.id, file: rec.file, inst, rec };
+    const call = (n, ev) => { if (rec.script.findMethod(rec.cls, n)) { try { HX.R.cur = rec.file; rec.script.callMethod(inst, n, [ev || {}]); } catch (e) { console.warn('[hxc escenario]', n, e); HX.note(`${n}: ${e.message}`); } } };
+    call('buildStage'); call('onCreate', { __host: 'ScriptEvent' });
+    for (const r of ['bf', 'dad', 'gf']) if (Scene.chars[r]) this.addChar(r);
+    call('onSongLoaded', { __host: 'ScriptEvent' });
+  },
+  addChar(r) {
+    this.chars[r] = Scene.chars[r];
+    const T = { bf: 'BF', dad: 'DAD', gf: 'GF' }[r];
+    this.call('addCharacter', CharW.get(r), T, true);
+  },
+  call(n, ev, extra, raw) {
+    const c = this.cur; if (!c || !c.rec.script.findMethod(c.rec.cls, n)) return;
+    try { HX.R.cur = c.file; c.rec.script.callMethod(c.inst, n, raw ? [ev, extra] : [ev || {}]); }
+    catch (e) { console.warn('[hxc escenario]', n, e); HX.note(`${n}: ${e.message}`); }
+  },
+  /* evento del chart → onSongEvent(event) */
+  songEvent(ev) { if (this.cur) this.call('onSongEvent', { __host: 'SongEventScriptEvent', eventData: { __host: 'SongEventData', eventKind: ev.e, kind: ev.e, time: ev.t, value: ev.v ?? null } }); },
+};
+
+/* =====================================================================
+   v3.5.0 — VideoSync: videos de eventos (mp4/webm) como capa HTML
+   sincronizada con la canción: se pausa con la pausa, se corrige si se
+   desfasa más de 0.25 s y desaparece al buscar/reiniciar o al terminar.
+   ===================================================================== */
+const VideoSync = {
+  list: [],
+  play(url, key, t0 = G.songPos, opts = {}) {
+    const v = document.createElement(opts.gif ? 'img' : 'video');
+    v.className = 'hx-video' + (opts.gif ? ' hx-gif' : ''); v.src = url; v.dataset.key = key;
+    if (!opts.gif) { v.playsInline = true; v.preload = 'auto'; v.onended = () => this.remove(it); }
+    v.onclick = () => this.remove(it);
+    const it = { v, t0, key, gif: !!opts.gif, until: opts.ms ? t0 + opts.ms : null };
+    document.body.appendChild(v); this.list.push(it);
+    if (!opts.gif) v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });   // sin gesto: arranca en silencio
+    return it;
+  },
+  remove(it) { it.v.remove(); const i = this.list.indexOf(it); if (i >= 0) this.list.splice(i, 1); },
+  clear() { for (const it of [...this.list]) this.remove(it); },
+  tick() {
+    for (const it of [...this.list]) {
+      if (it.until !== null && G.songPos >= it.until) { this.remove(it); continue; }
+      if (it.gif) continue;
+      const v = it.v, want = (G.songPos - it.t0) / 1000;
+      if (want < 0) { this.remove(it); continue; }
+      if (G.paused) { if (!v.paused) v.pause(); continue; }
+      if (v.paused && !v.ended) v.play().catch(() => {});
+      if (isFinite(v.duration) && want > v.duration + 0.5) { this.remove(it); continue; }
+      if (v.readyState >= 1 && Math.abs(v.currentTime - want) > 0.25) v.currentTime = Math.max(0, want);
+    }
+  },
+  pauseAll() { for (const it of this.list) if (!it.gif && !it.v.paused) it.v.pause(); },
 };

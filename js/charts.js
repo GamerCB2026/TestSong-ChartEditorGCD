@@ -171,7 +171,7 @@ const Chart = {
       }
     }
     const sp = song.speed && typeof song.speed === 'object' ? (song.speed[diff] ?? song.speed.normal ?? Object.values(song.speed)[0]) : song.speed;
-    const scene = { bf: song.player1, dad: song.player2, gf: song.gfVersion || song.player3 || song.gf, stage: song.stage || song.stageDefault };
+    const scene = { bf: song.player1, dad: song.player2, gf: song.gfVersion || song.player3 || song.gf, stage: song.stage || song.stageDefault || (typeof KADE_SONG_STAGE !== 'undefined' && KADE_SONG_STAGE[String(song.song || '').toLowerCase().replace(/\s+/g, '-')]) || undefined };
     const label = raw.generatedBy && fmt === 'legacy' ? `legacy (${raw.generatedBy})` : fmt;
     return this.finalize({ title: song.song || song.songName || 'Canción', artist: song.artist || '', bpm: bpm0, timeChanges: tcs, speed: +sp || 1.6, notes, events, scene,
       difficulties: diffs || null, difficulty: diff, voiceList: Array.isArray(song.voiceList) ? song.voiceList : null, needsVoices: song.needsVoices !== false,

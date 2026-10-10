@@ -7,8 +7,12 @@
 
 /* ---------- Escenario ---------- */
 async function loadStage(id) {
-  const sj = await fetchFirst(ASSET_CFG.stageDataPaths.map(t => fillT(t, { id })));
-  const data = sj ? sj.data : DEFAULT_DATA.stages[id];
+  let sj = await fetchFirst(ASSET_CFG.stageDataPaths.map(t => fillT(t, { id })));
+  let data = sj ? sj.data : null;
+  // v3.5.0: escenarios de Psych (stages/<id>.json + .lua/.hx) y Codename (data/stages/<id>.xml) → formato V-Slice
+  if (data && EngineData.isPsychStage(data)) data = await EngineData.psychStage(data, id);
+  if (!data) { const x = await EngineData.findStage(id).catch(e => { console.warn('[motores]', e); return null; }); if (x) { data = x.data; sj = { path: x.path + ` (convertido de ${x.data.convertedFrom})` }; } }
+  if (!data) data = DEFAULT_DATA.stages[id];
   if (!data) return null;
   // v3.3.0: los props se cargan en paralelo (antes uno por uno) y sus imágenes se decodifican fuera del hilo principal
   const props = await Promise.all((data.props || []).map(async p => {
@@ -151,6 +155,10 @@ function worldMatrix(v, zoom, sfx, sfy, out) {
 const _pM = [1, 0, 0, 1, 0, 0], _pL = [1, 0, 0, 1, 0, 0];
 function drawProp(p, v, zoom, R) {
   if (p.visible === false || p.optHidden) return;
+  if (p.shader) { R.setShader(p.shader); try { drawPropInner(p, v, zoom, R); } finally { R.setShader(null); } }
+  else drawPropInner(p, v, zoom, R);
+}
+function drawPropInner(p, v, zoom, R) {
   const M = worldMatrix(v, zoom, p.scroll[0], p.scroll[1], _pM), smooth = !p.isPixel && Optim.s.aa;
   mmul(M, M, mset(_pL, 1, 0, 0, 1, p.pos[0], p.pos[1]));
   if (p.color) { R.rect(p.color, M, p.scale[0], p.scale[1], p.alpha); return; }
@@ -160,12 +168,13 @@ function drawProp(p, v, zoom, R) {
     mmul(M, M, mset(_pL, p.scale[0], 0, 0, p.scale[1], 0, 0));
     mmul(M, M, mset(_pL, 1, 0, 0, 1, fr.offX - p.off[0], fr.offY - p.off[1]));
     if (fr.rot) mmul(M, M, mset(_pL, 0, -1, 1, 0, 0, fr.dh));
-    R.img(fr.img, fr.x, fr.y, fr.w, fr.h, M, p.alpha, smooth, false);
+    if (p.shader && p.shader.updateFrameInfo) p.shader.angleOffset = fr.rot ? -90 : 0;
+    R.img(fr.img, fr.x, fr.y, fr.w, fr.h, M, p.alpha, smooth, false, p.rgb);
   } else if (p.img) {
     const nw = p.img.naturalWidth, nh = p.img.naturalHeight, w = nw * p.scale[0], h = nh * p.scale[1];
     if (p.flipX || p.flipY) mmul(M, M, mset(_pL, p.flipX ? -1 : 1, 0, 0, p.flipY ? -1 : 1, p.flipX ? w : 0, p.flipY ? h : 0));
     mmul(M, M, mset(_pL, w / nw, 0, 0, h / nh, 0, 0));
-    R.img(p.img, 0, 0, nw, nh, M, p.alpha, smooth, false);
+    R.img(p.img, 0, 0, nw, nh, M, p.alpha, smooth, false, p.rgb);
   }
 }
 
@@ -175,7 +184,7 @@ function worldNeedsDirect() {
   if (!st || !st.props.some(p => p.img || p.color || p.frames)) return true;   // escenario improvisado
   if (!Scene.chars.bf || !Scene.chars.dad) return true;                         // personaje improvisado
   if (CamFX.active('game')) return true;                                        // efectos de cámara de scripts
-  for (const sp of ModRT.sprites) if (!sp.onHud) return true;                   // sprites de scripts en el mundo
+  for (const sp of ModRT.sprites) if (!sp.onHud && !sp.glOk) return true;      // sprites de scripts que solo sabe dibujar el 2D (texto, rotados, blend add)
   return false;
 }
 
@@ -210,7 +219,7 @@ function renderWorld(dt, bump, R) {
   // parlantes de GF (parlantes.js), detrás de ella
   if (Speaker.cur && Optim.s.gf && Speaker.place()) layers.push({ z: Speaker.cur.z, k: 4, o: Speaker });
   // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)
-  if (direct) for (const sp of ModRT.sprites) if (!sp.onHud) layers.push({ z: sp.zIndex ?? 5000, k: 3, o: sp });
+  for (const sp of ModRT.sprites) if (!sp.onHud && (direct || sp.glOk)) layers.push({ z: sp.zIndex ?? 5000, k: 3, o: sp });
   Cam.lastView = { v, zoom };
   layers.sort((a, b) => a.z - b.z);
   for (const l of layers) {
@@ -224,6 +233,7 @@ function renderWorld(dt, bump, R) {
         const s = M1[3] / DPR * 400 / 215;
         if (l.o === 'bf') drawCharacter(G.bf, drawBoy, x, y, s, -1); else drawCharacter(G.dad, drawRival, x, y, s, 1);
       } else if (l.k === 4) Speaker.draw(v, zoom, R);
+      else if (l.o.glOk) l.o.renderR({ v, zoom }, R);                          // v3.5.0: también con WebGL (FlxBackdrop, coches…)
       else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
     } catch (e) { reportOnce('capa ' + (l.o && (l.o.name || l.o.id) || l.k), e); }   // una capa rota no deja sin HUD al juego
   }

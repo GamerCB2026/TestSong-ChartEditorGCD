@@ -121,6 +121,7 @@ const Events = {
   fire(ev, instant) {
     const v = this.vals(ev);
     this.fired++; this.log.push(ev.e + '@' + Math.round(ev.t)); if (this.log.length > 20) this.log.shift();
+    if (!instant) StageRT.songEvent(ev);            // v3.5.0: onSongEvent del script del escenario (p. ej. "blackIn")
     const step = this.stepMs();
     switch (ev.e) {
       case 'FocusCamera': {
@@ -162,7 +163,10 @@ const Events = {
         if (instant) return;
         const tg = String(v.target ?? 'boyfriend'), anim = String(v.anim ?? 'idle'), force = getBool(v.force, false);
         const role = roleOfTarget(tg), c = role && Scene.chars[role];
-        if (c) c.playEvent(anim, force);
+        // v3.5.0: si el objetivo no tiene la animación pero otro personaje cargado sí, la hace ese
+        const other = c && !c.anims.has(anim) ? ['bf', 'dad', 'gf'].map(r => Scene.chars[r]).find(x => x && x !== c && x.anims.has(anim)) : null;
+        if (other) { other.playEvent(anim, force); this.lastPlayAnim = { anim, target: tg, by: other.role }; }
+        else if (c) { c.playEvent(anim, force); this.lastPlayAnim = { anim, target: tg, by: c.role }; }
         else if (role) { if (role !== 'gf') { const st = role === 'bf' ? G.bf : G.dad; const lane = LANE_DIRS.findIndex(d => anim.toUpperCase().includes(d)); if (lane >= 0) sing(st, lane); } }
         else propPlay(tg, anim, force);                    // prop del escenario con nombre (getNamedProp)
         break;
@@ -222,7 +226,10 @@ const Events = {
         const cc = !Mods.events.has(ev.e) && changeCharInfo(ev);
         if (cc) { this.changeChar(cc.role, cc.id, instant); break; }
         // eventos de mods: si se cargó su .hxc, se ejecuta handleEvent (imitación); al buscar no se reproducen
-        if (!instant) { try { Mods.fireEvent(ev); } catch (e) { console.warn('[hxc] evento', ev.e, e); HX.note(`${ev.e}: error al ejecutar (${e.message})`); } }
+        let done = false;
+        if (!instant) { try { done = Mods.fireEvent(ev); } catch (e) { console.warn('[hxc] evento', ev.e, e); HX.note(`${ev.e}: error al ejecutar (${e.message})`); done = true; } }
+        // v3.5.0: evento sin .hxc que nombra un video / gif / sonido / imagen → se muestra o suena (imitación)
+        if (!done && !instant) this.playMedia(ev);
         break;
       }
     }
@@ -244,6 +251,13 @@ const Events = {
     applyBarColors();
     if (Scene.focus === role && !Cam.tween) { const p = focusPoint(role); if (p && Cam.follow) Cam.follow = p; }
   },
+  playMedia(ev) {
+    for (const m of this.mediaOf(ev)) {
+      if (m.kind === 'video') { const url = ModRes.get('video', m.key, null); if (url) { VideoSync.play(url, m.key, ev.t); this.lastMedia = 'video ' + m.key; } }
+      else if (m.kind === 'gif') { const url = ModRes.get('gif', m.key, null); if (url) { VideoSync.play(url, m.key, ev.t, { gif: true, ms: 3000 }); this.lastMedia = 'gif ' + m.key; } }
+      else if (m.kind === 'sound') { const buf = ModRes.get('sound', m.key, null), c = Sfx.ensureCtx && Sfx.ensureCtx(); if (buf && c) { const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination); src.start(); this.lastMedia = 'sonido ' + m.key; } }
+    }
+  },
   iconKey(ch, v) { return JSON.stringify([ch, v.id, v.scale, v.flipX, v.isPixel, v.offsetX, v.offsetY]); },
   loadIcon(ch, v) {
     const key = this.iconKey(ch, v), id = String(v.id ?? 'face');
@@ -264,9 +278,55 @@ const Events = {
       else if (ev.e === '_PlaySound' && v.sound) sounds.add(String(v.sound));
       else { const cc = changeCharInfo(ev); if (cc) { const k = cc.role + '|' + cc.id; chars.set(k, { role: cc.role, id: cc.id, n: (chars.get(k)?.n || 0) + 1, from: ev.e }); } }
     }
+    // v3.5.0: TODOS los eventos (también los desconocidos): personajes, imágenes, videos, gifs y sonidos que nombran
+    const media = new Map();
+    for (const ev of this.allEvents(chart)) {
+      if (!counts.has(ev.e)) counts.set(ev.e, 0);
+      for (const m of this.mediaOf(ev)) {
+        if (m.kind === 'char') { if (![...chars.values()].some(c => c.id === m.key)) chars.set(m.role + '|' + m.key, { role: m.role, id: m.key, n: 1, from: ev.e }); }
+        else if (m.kind === 'sound') sounds.add(m.key);
+        else { const k = m.kind + '|' + m.key; const o = media.get(k); if (o) o.n++; else media.set(k, { kind: m.kind, key: m.key, n: 1, from: ev.e }); }
+      }
+    }
     // personajes que piden los .hxc cargados (CharacterDataParser.fetchCharacter("…"))
     for (const rec of Mods.scripts.values()) for (const id of (rec.analysis && rec.analysis.chars) || []) { const k = 'dad|' + id; if (![...chars.values()].some(c => c.id === id)) chars.set(k, { role: 'dad', id, n: 0, from: rec.name }); }
-    return { counts, chars: [...chars.values()], icons: [...icons], sounds: [...sounds] };
+    return { counts, chars: [...chars.values()], icons: [...icons], sounds: [...sounds], media: [...media.values()] };
+  },
+  /* eventos de TODAS las dificultades y variaciones cargadas (paquete V-Slice o canción de Psych/Codename/Kade) */
+  allEvents(chart) {
+    const key = G.pack || G.set || G.raw;
+    if (this._allKey !== key || this._allChart !== chart) {
+      const out = [...((chart && chart.events) || [])];
+      try {
+        if (G.pack) for (const va of G.pack.vars) for (const d of (Chart.parse(va.chart, va.meta).difficulties || [])) out.push(...Chart.parse(va.chart, va.meta, d).events);
+        else if (G.set) for (const d of Object.keys(G.set.diffs)) out.push(...Chart.parse(G.set.diffs[d], G.set.meta, d, G.set.extra).events);
+      } catch (e) { console.warn('[eventos] análisis de variaciones', e); }
+      this._allKey = key; this._allChart = chart; this._all = out;
+    }
+    return this._all;
+  },
+  /* lo que nombra un evento: "video.mp4", "images/x.png", "sonido.ogg", "cutscene.gif", ids de personaje… */
+  mediaOf(ev) {
+    if (ev._media) return ev._media;
+    const out = [], v = this.vals(ev), name = String(ev.e || '');
+    const strs = []; const walk = (x, k, d) => { if (d > 3 || x == null) return; if (typeof x === 'string') strs.push([k, x.trim()]); else if (Array.isArray(x)) x.forEach((y, i) => walk(y, k, d + 1)); else if (typeof x === 'object') for (const [kk, y] of Object.entries(x)) walk(y, kk, d + 1); };
+    walk(v, '', 0); if (typeof ev.v === 'string') strs.push(['', ev.v.trim()]);
+    const clean = s => s.replace(/^assets\/(\w+\/)?/, '').replace(/^(shared|preload|week\d+):/, '');
+    const isVidEv = /video|cutscene|movie|mp4/i.test(name), isSndEv = /sound|sfx|audio|play\s*snd/i.test(name), isImgEv = /image|sprite|graphic|overlay|picture|flash\s*image|show/i.test(name);
+    const isGifEv = /gif/i.test(name), isCharEv = /char(acter)?|swap|player\s*change|change\s*(bf|dad|gf|opponent|player)/i.test(name) && !/icon|color|colour|camera|focus|anim/i.test(name);
+    for (const [k, raw] of strs) {
+      if (!raw || raw.length > 120 || /^(true|false|null|-?\d+(\.\d+)?|#?[0-9a-f]{6,8}|linear|classic|instant|in|out|inout)$/i.test(raw)) continue;
+      const s = clean(raw), base = s.replace(/^(videos|images|sounds|music)\//i, '');
+      if (/\.(mp4|webm)$/i.test(s) || /^videos\//i.test(s) || (isVidEv && /^[\w\/ -]+$/.test(s) && !/^(skip|true|false)$/i.test(s))) out.push({ kind: 'video', key: base.replace(/\.(mp4|webm)$/i, '') + (/\.webm$/i.test(s) ? '.webm' : '') });
+      else if (/\.gif$/i.test(s) || (isGifEv && /^[\w\/ -]+$/.test(s))) out.push({ kind: 'gif', key: base.replace(/\.gif$/i, '') });
+      else if (/\.(ogg|mp3|wav)$/i.test(s) || /^sounds\//i.test(s) || (isSndEv && /^[\w\/ -]+$/.test(s))) out.push({ kind: 'sound', key: base.replace(/\.(ogg|mp3|wav)$/i, '') });
+      else if (/\.(png|jpe?g|webp)$/i.test(s) || /^images\//i.test(s) || (isImgEv && /^[\w\/-]+$/.test(s) && /[\/_-]|^[a-z]/i.test(s) && k !== 'target')) out.push({ kind: 'image', key: base.replace(/\.(png|jpe?g|webp)$/i, '') });
+      else if (isCharEv && /^[a-z0-9][\w.-]*$/i.test(s) && !/^(bf|dad|gf|boyfriend|girlfriend|opponent|player|0|1|2)$/i.test(s) && ev.e !== 'ChangeCharacter' && !changeCharInfo(ev)) {
+        const role = /bf|boyfriend|player|^0$/i.test(String(v.target ?? v.char ?? v.value1 ?? '')) ? 'bf' : /gf|girlfriend|^2$/i.test(String(v.target ?? v.value1 ?? '')) ? 'gf' : 'dad';
+        out.push({ kind: 'char', key: s, role });
+      }
+    }
+    return (ev._media = out);
   },
   charStatus(id) {
     for (const [k, r] of this.charCache) if (k.endsWith('|' + id)) return r.loading ? 'loading' : r.char instanceof RealChar ? 'ok' : 'missing';
@@ -279,6 +339,7 @@ const Events = {
     const a = this.analyze(G.chart);
     for (const c of a.chars) out.push({ type: 'evchar', key: c.id, role: c.role, from: `${c.from}${c.n ? ' ×' + c.n : ''}` });
     for (const sn of a.sounds) out.push({ type: 'res', kind: 'sound', key: sn, lib: null, from: 'evento Play Sound' });
+    for (const m of a.media) out.push({ type: 'res', kind: m.kind, key: m.key, lib: null, from: `evento ${m.from}${m.n > 1 ? ' ×' + m.n : ''}` });
     return out;
   },
   async preloadChar(role, id) {
@@ -302,6 +363,7 @@ const Events = {
     const a = this.analyze(chart);
     for (const c of a.chars) if (!this.charCache.has(c.role + '|' + c.id)) tasks.push(this.preloadChar(c.role, c.id));
     for (const sn of a.sounds) tasks.push(ModRes.load('sound', sn, null).then(buf => { if (buf) this.soundCache.set(sn, buf); }).catch(() => {}));
+    for (const m of a.media) tasks.push(Promise.resolve(ModRes.load(m.kind, m.key, null)).catch(() => {}));
     // recursos que piden los .hxc cargados (imágenes, sparrow, sonidos…): listos antes de jugar
     for (const rec of Mods.scripts.values()) for (const r of (rec.analysis && rec.analysis.res) || []) if (r.kind !== 'atlas') tasks.push(Promise.resolve(ModRes.load(r.kind, r.key, r.lib)).catch(() => {}));
     return Promise.all(tasks).then(() => {

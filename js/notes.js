@@ -69,7 +69,7 @@ async function loadNoteSkin() {
 }
 
 /* ---------- Geometría (unidades del HUD) ---------- */
-function laneX(side, i) { const s = LAYOUT[side], x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
+function laneX(side, i) { const s = LAYOUT[side]; if (s.lanes) return s.lanes[i]; const x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
 function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
 function pxPerMs(side) { return FNF.PIXELS_PER_MS * ((G.speedSide && G.speedSide[side]) || G.speed) * LAYOUT[side].k; }   // evento ScrollSpeed (por strumline)
 function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
@@ -83,6 +83,19 @@ function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow 
   ctx.restore();
 }
 
+/* v3.5.0: receptor en reposo teñido (Toque en celular, como V-Slice móvil): se tiñe UNA vez y se guarda */
+const _tintCache = new WeakMap();
+function drawTinted(frames, cx, cy, sc, tint) {
+  if (!frames || !frames.length) return;
+  const fr = frames[0]; let c = _tintCache.get(fr);
+  if (!c || c.tint !== tint) {
+    c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(fr.fw)); c.height = Math.max(1, Math.ceil(fr.fh)); c.tint = tint;
+    const g = c.getContext('2d'); drawSparrowFrame(g, fr, 0, 0, 1);
+    g.globalCompositeOperation = 'source-atop'; g.globalAlpha = 0.55; g.fillStyle = tint; g.fillRect(0, 0, c.width, c.height);
+    _tintCache.set(fr, c);
+  }
+  ctx.drawImage(c, cx - fr.fw * sc / 2, cy - fr.fh * sc / 2, fr.fw * sc, fr.fh * sc);
+}
 /* --- Flecha vectorial (si no hay NoteAssets) --- */
 const ARROW = [[-0.46, 0], [-0.02, -0.42], [-0.02, -0.16], [0.42, -0.16], [0.42, 0.16], [-0.02, 0.16], [-0.02, 0.42]];
 const ROT = [0, -Math.PI / 2, Math.PI / 2, Math.PI];
@@ -160,7 +173,7 @@ function drawStrumsAndNotes() {
   for (const side of ['opponent', 'player']) {
     const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0, lane: [] };   // alpha/visible/x/y que tocan los scripts .hxc
     if (!ss.visible) continue;
-    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side), base = (LAYOUT[side].alpha ?? 1) * ss.alpha;
+    const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y = strumCY(side), base = (LAYOUT[side].strumAlpha ?? LAYOUT[side].alpha ?? 1) * ss.alpha;
     ctx.save(); ctx.translate(ss.x, ss.y);
     for (let i = 0; i < 4; i++) {
       const ln = ss.lane[i] || { alpha: 1, visible: true }; if (!ln.visible) continue;
@@ -171,6 +184,7 @@ function drawStrumsAndNotes() {
           if (sk.confirm[i]) drawFrameCentered(sk.confirm[i], t, x, y, sc);
           else drawFrameCentered(sk.head[i], 0, x, y, sc * (1 + 0.08 * Math.max(0, 1 - t / 140)), 1, false, LANE_COLORS[i]);
         } else if (anim === 'press') drawFrameCentered(sk.press[i], t, x, y, sc * (sk.placeholder[i] ? 0.92 : 1));
+        else if (LAYOUT[side].tintIdle) drawTinted(sk.strum[i], x, y, sc, LAYOUT[side].tintIdle);   // Toque (celular): receptor morado/gris semitransparente
         else drawFrameCentered(sk.strum[i], 0, x, y, sc, 1);
         continue;
       }

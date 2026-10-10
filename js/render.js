@@ -55,6 +55,8 @@ class CanvasTarget {
     c.setTransform(m[0] * k, m[1] * k, m[2] * k, m[3] * k, m[4] * k, m[5] * k);
     c.globalAlpha = alpha > 1 ? 1 : alpha; c.fillStyle = color; c.fillRect(0, 0, w, h);
   }
+  /* Canvas: solo AdjustColorShader se aproxima con un filtro CSS; los demás shaders de sprite necesitan WebGL */
+  setShader(sh) { const c = this.c; c.filter = sh && sh.cssFilter ? sh.cssFilter() : 'none'; }
   done() { const c = this.c; c.globalAlpha = 1; c.imageSmoothingEnabled = true; c.filter = 'none'; }
 }
 
@@ -165,7 +167,7 @@ const GLW = {
   begin(k) {
     const gl = this.gl, w = Math.max(1, Math.round(cv.width * k)), h = Math.max(1, Math.round(cv.height * k));
     if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
-    this.k = k; this.n = 0; this.cur = null; this.curPm = -1; this.curTint = -1;
+    this.k = k; this.n = 0; this.cur = null; this.curPm = -1; this.curTint = -1; this.sp = null;
     gl.viewport(0, 0, w, h); gl.useProgram(this.pr); gl.uniform2f(this.u.res, w, h);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vb); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ib);
     gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); gl.activeTexture(gl.TEXTURE0);
@@ -184,6 +186,7 @@ const GLW = {
     if (this.cur !== r || r.filter !== f || this.curTint !== ti) {
       this.flush();
       if (this.cur !== r || r.filter !== f) { gl.bindTexture(gl.TEXTURE_2D, r.tex); if (r.filter !== f) { gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f); r.filter = f; } }
+      if (this.sp) { if (this.sp.loc.openfl_TextureSize && this.cur !== r) gl.uniform2f(this.sp.loc.openfl_TextureSize.l, r.w, r.h); this.cur = r; return; }
       if (this.curPm !== r.pm) { gl.uniform1f(this.u.pm, r.pm); this.curPm = r.pm; }
       if (this.curTint !== ti) { gl.uniform1f(this.u.tint, ti); this.curTint = ti; }
       this.cur = r;
@@ -203,20 +206,74 @@ const GLW = {
     d[o + 24] = a * sw + c * sh + e; d[o + 25] = b * sw + dd * sh + f; d[o + 26] = u1; d[o + 27] = v1;
     for (let i = 0; i < 4; i++) { const j = o + i * 8 + 4; d[j] = cr; d[j + 1] = cg; d[j + 2] = cb; d[j + 3] = ca; }
     this.n++;
+    // shader de sprite con uFrameBounds (DropShadowShader): cada quad lleva sus propios límites
+    if (this.sp && this.sp.loc.uFrameBounds) { const gl = this.gl; this.n--; this.flush(); gl.uniform4f(this.sp.loc.uFrameBounds.l, Math.min(u0, u1), Math.min(v0, v1), Math.max(u0, u1), Math.max(v0, v1)); this.n = 0;
+      // el quad ya está en data[0..]: se reescribe al principio
+      if (o) for (let i = 0; i < 32; i++) d[i] = d[o + i];
+      this.n = 1; this.flush(); }
   },
-  img(t, sx, sy, sw, sh, m, alpha, smooth, tint) {
+  /* ---------- v3.5.0: shaders por sprite (character.shader / prop.shader de los scripts) ---------- */
+  sp: null, spProgs: new Map(),
+  spVS: 'attribute vec2 a_p;attribute vec2 a_uv;attribute vec4 a_c;uniform vec2 u_res;varying vec2 openfl_TextureCoordv;varying float openfl_Alphav;varying vec4 v_c;' +
+    'void main(){openfl_TextureCoordv=a_uv;openfl_Alphav=a_c.a;v_c=a_c;gl_Position=vec4(a_p.x/u_res.x*2.0-1.0,1.0-a_p.y/u_res.y*2.0,0.0,1.0);}',
+  spHeader: '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n' +
+    'varying vec2 openfl_TextureCoordv;varying float openfl_Alphav;varying vec4 v_c;uniform sampler2D bitmap;uniform vec2 openfl_TextureSize;uniform bool hasTransform;uniform bool hasColorTransform;' +
+    'vec4 flixel_texture2D(sampler2D b, vec2 uv){return texture2D(b,uv);}\n',
+  /* programa de un shader de sprite (se compila una vez por fuente) */
+  spProg(sh) {
+    const key = sh.src; let P = this.spProgs.get(key);
+    if (P) return P.pr ? P : null;
+    P = { pr: null, loc: {} }; this.spProgs.set(key, P);
+    const gl = this.gl;
+    try {
+      let src = String(sh.src).replace(/^\s*#version[^\n]*\n/, '').replace(/#extension[^\n]*\n/g, '');
+      src = src.replace(/#pragma\s+header/g, '').replace(/#pragma\s+body/g, '');
+      src = src.replace(/\bvoid\s+main\s*\(\s*(void)?\s*\)/, 'void fx_main_()');
+      const fsrc = this.spHeader + src + '\nvoid main(){fx_main_();gl_FragColor*=v_c;}';
+      const comp = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) { const l = gl.getShaderInfoLog(o); gl.deleteShader(o); throw new Error(l); } return o; };
+      const pr = gl.createProgram(); gl.attachShader(pr, comp(gl.VERTEX_SHADER, this.spVS)); gl.attachShader(pr, comp(gl.FRAGMENT_SHADER, fsrc));
+      gl.bindAttribLocation(pr, 0, 'a_p'); gl.bindAttribLocation(pr, 1, 'a_uv'); gl.bindAttribLocation(pr, 2, 'a_c'); gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+      const n = gl.getProgramParameter(pr, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(pr, i); P.loc[u.name.replace(/\[0\]$/, '')] = { l: gl.getUniformLocation(pr, u.name), type: u.type }; }
+      P.pr = pr; return P;
+    } catch (e) { sh.error = 'no compila: ' + String(e.message).split('\n').filter(Boolean).slice(0, 2).join(' · '); console.warn('[shader de sprite]', sh.name, e); return null; }
+  },
+  /* activa (o quita con null) el shader de sprite para lo que se dibuje a continuación */
+  setShader(sh) {
+    if (sh && (sh.error || !sh.src)) sh = null;
+    if (this.sp ? this.sp.sh === sh : !sh) return;
+    this.flush();
+    const gl = this.gl;
+    if (!sh) { this.sp = null; gl.useProgram(this.pr); gl.uniform2f(this.u.res, this.cv.width, this.cv.height); this.cur = null; this.curPm = -1; this.curTint = -1; return; }
+    const P = this.spProg(sh); if (!P) { if (this.sp) this.setShader(null); return; }
+    gl.useProgram(P.pr);
+    if (P.loc.u_res) gl.uniform2f(P.loc.u_res.l, this.cv.width, this.cv.height);
+    if (P.loc.bitmap) gl.uniform1i(P.loc.bitmap.l, 0);
+    for (const [name, u] of Object.entries(P.loc)) {
+      let v = sh.vals[name]; if (v === undefined) v = sh[name]; if (v === undefined || v === null || typeof v === "object" && !Array.isArray(v)) continue;
+      const a = Array.isArray(v) ? v : [v];
+      if (u.type === gl.FLOAT) gl.uniform1f(u.l, +a[0]); else if (u.type === gl.FLOAT_VEC2) gl.uniform2fv(u.l, a); else if (u.type === gl.FLOAT_VEC3) gl.uniform3fv(u.l, a); else if (u.type === gl.FLOAT_VEC4) gl.uniform4fv(u.l, a);
+      else if (u.type === gl.FLOAT_MAT3) gl.uniformMatrix3fv(u.l, false, a); else if (u.type === gl.FLOAT_MAT4) gl.uniformMatrix4fv(u.l, false, a);
+      else if (u.type === gl.BOOL || u.type === gl.INT) gl.uniform1i(u.l, a[0] ? (+a[0] | 0) || 1 : 0);
+    }
+    if (P.loc.iTime || P.loc.uTime) gl.uniform1f((P.loc.iTime || P.loc.uTime).l, Math.max(0, G.songPos) / 1000);
+    this.sp = { sh, loc: P.loc }; this.cur = null; this.curPm = -1; this.curTint = -1;
+  },
+  img(t, sx, sy, sw, sh, m, alpha, smooth, tint, rgb) {
     if (!t || alpha <= 0) return;
     const r = this.rec(t); if (!r) return;
     this.use(r, smooth, tint);
     const a = alpha > 1 ? 1 : alpha;
-    this.quad(r, sx, sy, sw, sh, m, a, a, a, a);
+    if (rgb) this.quad(r, sx, sy, sw, sh, m, a * rgb[0], a * rgb[1], a * rgb[2], a);
+    else this.quad(r, sx, sy, sw, sh, m, a, a, a, a);
   },
   rect(color, m, w, h, alpha) {
     const c = cssRgba(color), a = c[3] * (alpha > 1 ? 1 : alpha);
     this.use(this.whiteRec, true, false);
     this.quad(this.whiteRec, 0, 0, 1, 1, [m[0] * w, m[1] * w, m[2] * h, m[3] * h, m[4], m[5]], c[0] * a, c[1] * a, c[2] * a, a);
   },
-  done() { this.flush(); },
+  done() { this.setShader(null); this.flush(); },
 };
 const _cssCache = new Map();
 function cssRgba(col) {

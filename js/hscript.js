@@ -752,6 +752,8 @@ const HX = (() => {
     superMember(sc, n) {
       const cls = sc.cls; const p = cls && cls.script.parentOf(cls);
       if (p) { const m = p.script.findMethod(p, n); if (m) return m.cls.script.mkFunc(m.fn, null, sc.self, m.cls); }
+      // v3.5.0: super.buildStage() / super.addCharacter() de Stage los resuelve el anfitrión
+      if (sc.self && sc.self.__hxc) { const nv = this.host.nativeMember(this.nativeBase(sc.self.__hxc), sc.self, n, true); if (typeof nv === 'function') return nv; }
       return () => null;    // super.onX(event) de las clases del juego: sin efecto aquí
     }
     call(node, sc) {

@@ -25,7 +25,8 @@ async function loadScene(ids) {
     }
     return c;
   };
-  const stageId = ids.stage in ASSET_CFG.stageAlias ? ASSET_CFG.stageAlias[ids.stage] : ids.stage;   // "stage" (legacy) = mainStage
+  // "stage" (legacy/Kade) = mainStage, halloween = spookyMansion… salvo que el mod traiga su propio escenario con ese id (Psych/Codename)
+  const stageId = EngineData.hasOwnStage(ids.stage) ? ids.stage : ids.stage in ASSET_CFG.stageAlias ? ASSET_CFG.stageAlias[ids.stage] : (KADE_STAGES[ids.stage] || ids.stage);
   const [stage, bf, dad, gf, notes] = await Promise.all([
     loadStage(stageId).then(s => s || (stageId !== ASSET_CFG.stage ? loadStage(ASSET_CFG.stage) : null)),
     loadRole('bf'), loadRole('dad'), loadRole('gf'), Scene.notes ? Scene.notes : loadNoteSkin()]);
@@ -85,6 +86,7 @@ function placeChar(c, role, stage) {
   stage = stage || Scene.stage;
   const sc = stage?.data?.characters?.[role] || { position: role === 'bf' ? [989.5, 885] : role === 'dad' ? [335, 885] : [751.5, 787], zIndex: role === 'bf' ? 300 : role === 'dad' ? 200 : 100 };
   c.place(sc);
+  if (role === 'gf' && stage?.data?.hideGf) c.visible = false;   // Psych: hide_girlfriend
 }
 /* colores de la barra: rojo/verde del juego; si el JSON trae colores (estilo Psych) se usan */
 function applyBarColors() {
@@ -109,6 +111,7 @@ function statusLines() {
   out.push(Music.has ? `✔ música de la canción: ${Music.tracks.map(t => (t.name || t.role) + ' [' + t.role + ']').join(', ')} · ${Music.mode === 'webaudio' ? 'Web Audio (reloj del AudioContext)' : '<audio> + resincronización'}` : '✘ música de la canción: no hay Inst/Voices (demo sin audio)');
   if (G.chart) out.push(`✔ chart: ${G.chart.title} · formato ${G.chart.format || '?'} · ${G.chart.notes.length} notas · dificultad ${G.chart.difficulty || '—'} · eventos: ${Events.summary()}`);
   if (G.pack) out.push(`✔ variación: ${G.variation} · disponibles: ${G.pack.vars.map(v => v.id).join(', ')} · ${G.pack.entries.length} dificultades`);
+  out.push(...StageRT.status());
   for (const rec of Mods.scripts.values()) out.push(`✔ script ${rec.name}: ${[...rec.events, ...rec.kinds, ...rec.modules].join(', ') || 'sin registros'} (imitación)`);
   if (G.chart) { const u = ModUI.unknown(G.chart); if (u.ev.size || u.nk.size) out.push(`✘ sin .hxc: ${[...u.ev.keys(), ...u.nk.keys()].join(', ')} (Assets cargados → Eventos / note kinds)`); }
   out.push(...Events.statusLines());
@@ -311,7 +314,7 @@ function onBeat(beat) {
   for (const ic of Object.values(Scene.icons)) if (ic && ic.shouldBop !== false) ic.bop();   // HealthIcon.onStepHit (cada 4 steps)
   propsBeat(beat); Speaker.beat(beat);
   if (beat >= -4 && beat <= -1) Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME);   // introTHREE/TWO/ONE/GO
-  if (Mods.modules.size) Mods.hook('onBeatHit', { beat });
+  if (Mods.hasHooks) Mods.hook('onBeatHit', { beat, __host: 'SongTimeScriptEvent' });
 }
 /* PlayState.stepHit: bop de cámara cada "rate" beats (decimal) con "offset" (SetCameraBop), si el HUD está por debajo de 135 % */
 function onStep(step) {
@@ -320,7 +323,7 @@ function onStep(step) {
     const m = (step + Cam.zoomOffset * spb) % (rate * spb);
     if (Math.abs(m) < 1e-6 || Math.abs(Math.abs(m) - rate * spb) < 1e-6) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }
   }
-  if (Mods.modules.size) Mods.hook('onStepHit', { step });
+  if (Mods.hasHooks) Mods.hook('onStepHit', { step, __host: 'SongTimeScriptEvent' });
 }
 
 function update(dt) {
@@ -417,8 +420,19 @@ function resize() {
   const wide = Movil.isTouch() && W > H;
   V.h = FNF.HEIGHT; V.w = wide ? Math.max(FNF.WIDTH, Math.round(FNF.HEIGHT * W / H)) : FNF.WIDTH;
   V.s = Math.min(W / V.w, H / V.h); V.ox = (W - V.w * V.s) / 2; V.oy = (H - V.h * V.s) / 2;
-  const vsArrows = G.mode === 'mobile' && Opts.vslice === 'arrows';
-  if (vsArrows) {
+  const vsArrows = G.mode === 'mobile' && Opts.vslice === 'arrows', vsToque = G.mode === 'mobile' && Opts.vslice === 'toque';
+  for (const s of ['player', 'opponent']) { LAYOUT[s].lanes = null; LAYOUT[s].tintIdle = null; LAYOUT[s].strumAlpha = null; }
+  if (vsToque) {
+    // v3.5.0 "Toque" = disposición de V-Slice móvil: 4 receptores GRANDES del jugador repartidos abajo
+    // (← abajo-izquierda, ↓ a su derecha, ↑ y → en la mitad derecha), morados/grises semitransparentes;
+    // se tocan directamente (cada uno con ~¼ del ancho a su alrededor). El centro queda libre para los
+    // personajes. Rival pequeño arriba a la izquierda, con sus flechas que brillan. Ajustes: TOQUE_CFG.
+    const T = TOQUE_CFG, kp = T.escala, ko = T.escalaRival;
+    LAYOUT.player.lanes = T.lanes.map(f => f * V.w);
+    Object.assign(LAYOUT.player, { x: 0, y: V.h - NOTE_W * kp - T.margenAbajo, k: kp, spacing: 1, down: true, alpha: 1, strumAlpha: T.alphaReceptor, tintIdle: T.tinte, splitX: null, hideNotes: false });
+    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET - 30, y: FNF.STRUMLINE_Y_OFFSET * 0.4, k: ko, spacing: 1, down: false, alpha: 1, splitX: null, hideNotes: false });
+    Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: V.h * 0.1 });
+  } else if (vsArrows) {
     // FunkinHitbox "Arrows" (PlayState.initNoteHitbox): strumline del jugador grande abajo al centro, downscroll forzado,
     // rival en mini modo (0.4, solo receptores) arriba a la izquierda, barra de vida arriba
     const amp = (V.w / V.h) / (FNF.WIDTH / FNF.HEIGHT);

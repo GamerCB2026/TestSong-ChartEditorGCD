@@ -2,9 +2,10 @@
    movil.js — celular: SOLO horizontal ("Gira tu dispositivo" en vertical,
    con la partida en pausa), botón de pantalla completa (+ bloqueo de
    orientación) y controles táctiles (v3.4.0):
-     · Toque    → (por defecto en celular) se tocan directamente las flechas
-                  (receptores) del jugador, en su sitio normal; cada una tiene
-                  una zona invisible GRANDE alrededor (ajustable en TOQUE_CFG)
+     · Toque    → (por defecto en celular, v3.5.0) disposición de V-Slice móvil:
+                  receptores grandes del jugador repartidos abajo, se tocan
+                  directamente (¼ del ancho alrededor de cada uno); rival
+                  pequeño arriba a la izquierda (ajustable en TOQUE_CFG)
      · Hitbox   → como V-Slice (FunkinHitbox "FourLanes"): 4 carriles verticales
                   de toda la pantalla que se iluminan con un degradado al tocar
      · Flechas grandes → FunkinHitbox "Arrows": receptores grandes abajo al centro
@@ -62,24 +63,31 @@ $('rotarFs').addEventListener('click', e => { e.stopPropagation(); Movil.fullscr
    Unidades: "ancho" y "lados" en separaciones entre flechas; "arriba"/"abajo" en fracción del alto de la pantalla.
    Para verlas: ?zonas=1 en la URL (se dibujan semitransparentes). */
 const TOQUE_CFG = {
-  ancho: 1.0,         // ancho de cada zona = separación entre flechas × ancho (1 = contiguas, sin huecos)
-  lados: 1.5,         // las flechas de los extremos (← y →) se alargan hacia afuera (en separaciones)
-  arriba: 1.0,        // alto por encima del centro de la flecha (fracción del alto: 1 = hasta el borde)
-  abajo: 1.0,         // alto por debajo (1 = hasta el borde: columnas de toda la pantalla)
+  // v3.5.0: disposición de V-Slice móvil (captura de referencia 1280×720 horizontal)
+  lanes: [0.105, 0.285, 0.715, 0.895], // centro X de ← ↓ ↑ → (fracción del ancho): el centro queda libre
+  escala: 1.45,       // tamaño de los receptores del jugador (1 = normal de PC)
+  margenAbajo: 14,    // separación del borde inferior (px del juego)
+  alphaReceptor: 0.6, // receptores en reposo semitransparentes
+  tinte: '#8a6fb8',   // tono morado/gris de los receptores en reposo
+  escalaRival: 0.5,   // flechas del rival, pequeñas arriba a la izquierda
+  ancho: 0.25,        // zona de toque de cada flecha: fracción del ancho de pantalla a su alrededor (¼)
+  arriba: 1.0,        // alto por encima del receptor (fracción del alto: 1 = hasta el borde)
+  abajo: 1.0,
   mostrar: params.get('zonas') === '1',
 };
-/* zonas de "Toque" en px de pantalla, alrededor de cada receptor del jugador */
+/* zonas de "Toque" en px de pantalla: ¼ del ancho alrededor de cada receptor (si se solapan, gana la flecha más cercana) */
 function toqueZones() {
-  const s = LAYOUT.player, k = s.k, pitch = FNF.NOTE_SPACING * s.spacing * k;
-  const cy = strumCY('player'), w = pitch * TOQUE_CFG.ancho;
+  const cy = strumCY('player');
   return [0, 1, 2, 3].map(i => {
-    const cx = laneX('player', i);
+    const cx = laneX('player', i), w = V.w * TOQUE_CFG.ancho;
     let x0 = cx - w / 2, x1 = cx + w / 2;
-    if (i === 0) x0 -= pitch * TOQUE_CFG.lados;
-    if (i === 3) x1 += pitch * TOQUE_CFG.lados;
+    if (i > 0) x0 = Math.max(x0, (laneX('player', i - 1) + cx) / 2);
+    if (i < 3) x1 = Math.min(x1, (laneX('player', i + 1) + cx) / 2);
+    if (i === 0) x0 = Math.min(x0, 0);
+    if (i === 3) x1 = Math.max(x1, V.w);
     const [sx0, sy0] = HUD_TO_SCREEN(x0, cy), [sx1] = HUD_TO_SCREEN(x1, cy);
     const top = Math.max(0, sy0 - H * TOQUE_CFG.arriba), bot = Math.min(H, sy0 + H * TOQUE_CFG.abajo);
-    return { x: sx0, y: top, w: sx1 - sx0, h: bot - top };
+    return { x: Math.max(0, sx0), y: top, w: Math.min(W, sx1) - Math.max(0, sx0), h: bot - top };
   });
 }
 const HUD_TO_SCREEN = (x, y) => [V.ox + x * V.s, V.oy + y * V.s];

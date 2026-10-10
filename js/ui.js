@@ -263,6 +263,8 @@ function hideOverlay() { overlay.classList.remove('show'); document.body.classLi
 function openOverlay(kind, menu) {
   if (Loader.active) return;
   G.paused = true; UI.kind = G.overlayKind = kind; UI.openedAt = performance.now();
+  if (kind === 'over') StageRT.call('onGameOver', { __host: 'ScriptEvent' });
+  VideoSync.pauseAll();
   Music.pause();                                   // guarda la posición exacta y detiene las fuentes (síncrono)
   G.songPos = Music.position();
   for (let i = 0; i < 4; i++) release(i);
@@ -303,7 +305,7 @@ function clearPercentHtml(kind) {
   const c = Fonts.toCanvas('freeplay-clear', pct, 40);
   return c ? `<div class="clear"><img alt="${pct}%" src="${c.toDataURL()}"><b>%</b></div>` : '';
 }
-function setMode(m) { const ch = G.mode !== m; G.mode = m; $('modeSel').value = m; if (ch && typeof resize === 'function' && G.chart) resize(); }
+function setMode(m) { G.mode = m; $('modeSel').value = m; if (typeof resize === 'function') resize(); }   // v3.5.0: siempre (la disposición de Toque depende del modo)
 function fillDiffSel() {
   const ds = G.chart && G.chart.difficulties;
   if (G.pack && G.pack.entries.length > 1) {

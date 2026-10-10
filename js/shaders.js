@@ -186,3 +186,156 @@ uniform vec2 openfl_TextureSize;
     return this.list.map(sh => sh.prog ? `✔ shader ${sh.name}${sh.on && Optim.s.shaders ? '' : ' (apagado)'}${Render.wantGL() ? '' : ' — necesita WebGL (Optimización → Render)'}` : `✘ shader ${sh.name}: ${sh.error}`);
   },
 };
+
+/* =====================================================================
+   v3.5.0 — shaders POR SPRITE (character.shader / getNamedProp(...).shader
+   de los scripts de escenario). Clases del juego portadas de funkin:
+   AdjustColorShader (usa shaders/adjustColor.frag del sitio) y
+   DropShadowShader (luz de borde; su GLSL va dentro de la clase en el juego).
+   Solo con Render WebGL; en Canvas AdjustColor se aproxima con un filtro CSS.
+   ===================================================================== */
+const SPR_FRAG = {
+  // copia de shaders/adjustColor.frag (se reemplaza por la del sitio si existe)
+  adjustColor: `#pragma header
+uniform mat3 hueMatrix;
+uniform float contrast;
+uniform mat3 saturationMatrix;
+uniform float brightness;
+vec3 applyHSBCEffect(vec3 color)
+{
+  vec3 bh = (brightness + color) * hueMatrix;
+  vec3 c = (bh - 0.25) * contrast + 0.25;
+  vec3 s = c * saturationMatrix;
+  return s;
+}
+void main()
+{
+  vec4 color4 = texture2D(bitmap, openfl_TextureCoordv);
+  vec3 color3 = color4.a > 0.0 ? color4.rgb / color4.a : color4.rgb;
+  color3 = applyHSBCEffect(color3);
+  gl_FragColor = vec4(color3 * color4.a, color4.a);
+}`,
+  // DropShadowShader.hx (funkin) — sin derivadas (fwidth) para WebGL1
+  dropShadow: `#pragma header
+uniform vec4 uFrameBounds;
+uniform float dist;
+uniform float str;
+uniform float thr;
+uniform float angCos;
+uniform float angSin;
+uniform sampler2D altMask;
+uniform bool useMask;
+uniform float thr2;
+uniform vec3 dropColor;
+uniform mat3 hueMatrix;
+uniform float contrast;
+uniform mat3 saturationMatrix;
+uniform float brightness;
+const vec3 lumaValue = vec3(0.2126, 0.7152, 0.0722);
+vec3 applyHSBCEffect(vec3 color)
+{
+  vec3 bh = (brightness + color) * hueMatrix;
+  vec3 c = (bh - 0.25) * contrast + 0.25;
+  vec3 s = c * saturationMatrix;
+  return s;
+}
+float getLumaRGB(vec3 color) { return dot(color.rgb, lumaValue); }
+vec4 getTexRGBA(vec2 uv) { return texture2D(bitmap, uv); }
+float lwidth_manual(float center, vec2 uv, vec2 px)
+{
+  float right = getLumaRGB(getTexRGBA(uv + vec2(1.0, 0.0) * px).rgb);
+  float down = getLumaRGB(getTexRGBA(uv + vec2(0.0, 1.0) * px).rgb);
+  float diagonal = getLumaRGB(getTexRGBA(uv + vec2(1.0, 1.0) * px).rgb);
+  float dx = abs(right - center); float dy = abs(down - center); float dd = abs(diagonal - center);
+  return ((dx + dy + dd * 0.7) / (1.0 + 1.0 + 0.7)) * 2.0;
+}
+float getThreshold(vec2 uv)
+{
+  float threshold = thr;
+  if (useMask) { if (texture2D(altMask, uv).b > 0.0) threshold = thr2; }
+  return threshold;
+}
+vec4 createDropShadowEx(vec2 uv, vec2 ratio, vec2 size)
+{
+  vec4 color4 = texture2D(bitmap, uv);
+  vec2 px = ratio;
+  float color3_light = getLumaRGB(color4.rgb);
+  float delta = lwidth_manual(color3_light, uv, px);
+  float threshold = getThreshold(uv);
+  float intensity = smoothstep(threshold - delta, threshold + delta, color3_light);
+  float shadowAlpha = 0.0;
+  vec3 color3_no_effect = color4.a > 0.0 ? color4.rgb / color4.a : color4.rgb;
+  vec3 color3 = applyHSBCEffect(color3_no_effect);
+  vec2 checked = vec2(uv.x + (dist * angCos * ratio.x), uv.y - (dist * angSin * ratio.y));
+  if (checked.x > uFrameBounds.x && checked.y > uFrameBounds.y && checked.x < uFrameBounds.z && checked.y < uFrameBounds.w)
+    shadowAlpha = texture2D(bitmap, checked).a;
+  float rim = (1.0 - (shadowAlpha * str)) * intensity;
+  color3 += dropColor * rim;
+  return vec4(color3 * color4.a, color4.a);
+}
+void main()
+{
+  gl_FragColor = createDropShadowEx(openfl_TextureCoordv, 1.0 / openfl_TextureSize.xy, openfl_TextureSize.xy);
+}`,
+};
+/* clases de shader del juego (funkin.graphics.shaders.*) que usan un .frag de shaders/ */
+const SPR_CLASS_FRAG = { RuntimeRainShader: 'rain', PuddleShader: 'puddle', BuildingShader: 'building', WiggleEffect: 'wiggle', WiggleEffectRuntime: 'wiggle', MosaicEffect: 'mosaic',
+  GaussianBlurShader: 'gaussianBlur', GrayscaleShader: 'grayscale', HSVShader: 'hsv', InverseDotsShader: 'InverseDots', PixelateShader: 'pixel', BlendModesShader: 'customBlend', RuntimeCustomBlendShader: 'customBlend' };
+async function loadSprFrag(key) {
+  const f = VFS.get('shaders/' + key + '.frag'); if (f) return f.blob.text();
+  const r = await fetchFirstRaw(SHADER_DIRS.map(d => d + key + '.frag'), 'text').catch(() => null);
+  return r ? r.data : null;
+}
+const sprHue = h => { const c = Math.cos(h), s = Math.sin(h), wR = 0.299, wG = 0.587, wB = 0.114;
+  return [wR + (1 - wR) * c - wR * s, wG - wG * c - wG * s, wB - wB * c + (1 - wB) * s, wR - wR * c + 0.143 * s, wG + (1 - wG) * c + 0.140 * s, wB - wB * c - 0.283 * s, wR - wR * c - (1 - wR) * s, wG - wG * c + wG * s, wB + (1 - wB) * c + wB * s]; };
+const sprSat = s => { const lr = 0.2126, lg = 0.7152, lb = 0.0722, i = 1 - s; return [lr * i + s, lg * i, lb * i, lr * i, lg * i + s, lb * i, lr * i, lg * i, lb * i + s]; };
+const sprSatVal = v => { if (v > 0) v *= 3; return 1 + v / 100; };
+const sprConVal = v => { v = 1 + v / 100; if (v > 1) v = (((0.00852259 * Math.pow(Math.E, 4.76454 * (v - 1))) * 1.01) - 0.0086078159) * 10 + 1; return v; };
+class SprShader {
+  constructor(src, name) { this.src = src || null; this.name = name || 'FlxRuntimeShader'; this.vals = {}; this.error = ''; this.__host = name || 'FlxRuntimeShader'; this.__open = true; }
+  setFloat(n, v) { this.vals[n] = +v; } setInt(n, v) { this.vals[n] = +v | 0; } setBool(n, v) { this.vals[n] = !!v; }
+  setFloatArray(n, a) { this.vals[n] = Array.from(a || [], Number); } setIntArray(n, a) { this.setFloatArray(n, a); } setBoolArray(n, a) { this.vals[n] = Array.from(a || []); }
+  getFloat(n) { const v = this.vals[n]; return v === undefined ? null : +v; } getInt(n) { return this.getFloat(n); } getBool(n) { return !!this.vals[n]; }
+  setSampler2D() { HX.note(`${this.name}.setSampler2D (textura extra) no se imita`); }
+  get data() { return this; }
+  cssFilter() { return 'none'; }
+  /* frag de shaders/ (asíncrono) */
+  fromKey(key) { this.fragKey = key; loadSprFrag(key).then(t => { if (t) this.src = t; else this.error = `falta shaders/${key}.frag`; }); return this; }
+}
+class AdjustColorShaderJS extends SprShader {
+  constructor() {
+    super(SPR_FRAG.adjustColor, 'AdjustColorShader');
+    if (SPR_FRAG.siteAdjust) this.src = SPR_FRAG.siteAdjust;
+    this._h = this._s = this._b = this._c = 0; this.hue = 0; this.saturation = 0; this.brightness = 0; this.contrast = 0;
+  }
+  get hue() { return this._h; } set hue(v) { this._h = +v || 0; this.vals.hueMatrix = sprHue(this._h * Math.PI / 180); }
+  get saturation() { return this._s; } set saturation(v) { this._s = +v || 0; this.vals.saturationMatrix = sprSat(sprSatVal(this._s)); }
+  get brightness() { return this._b; } set brightness(v) { this._b = +v || 0; this.vals.brightness = this._b / 255; }
+  get contrast() { return this._c; } set contrast(v) { this._c = +v || 0; this.vals.contrast = sprConVal(this._c); }
+  cssFilter() { return `hue-rotate(${this._h}deg) saturate(${sprSatVal(this._s)}) brightness(${Math.max(0, 1 + this._b / 255)}) contrast(${sprConVal(this._c)})`; }
+  toString() { return `AdjustColorShader(${this._h}, ${this._s}, ${this._b}, ${this._c})`; }
+}
+class DropShadowShaderJS extends SprShader {
+  constructor() {
+    super(SPR_FRAG.dropShadow, 'DropShadowShader');
+    this._ang = 0; this._angOff = 0; this.attachedSprite = null;
+    this.angle = 0; this.distance = 15; this.strength = 1; this.threshold = 0.1; this.color = 0xFF000000; this.useAltMask = false; this.maskThreshold = 0;
+    this.setAdjustColor(0, 0, 0, 0);
+  }
+  upd() { const a = (this._ang + this._angOff) * Math.PI / 180; this.vals.angCos = Math.cos(a); this.vals.angSin = Math.sin(a); }
+  get angle() { return this._ang; } set angle(v) { this._ang = +v || 0; this.upd(); }
+  get angleOffset() { return this._angOff; } set angleOffset(v) { this._angOff = +v || 0; this.upd(); }
+  get distance() { return this.vals.dist; } set distance(v) { this.vals.dist = +v || 0; }
+  get strength() { return this.vals.str; } set strength(v) { this.vals.str = +v; }
+  get threshold() { return this.vals.thr; } set threshold(v) { this.vals.thr = +v; }
+  get maskThreshold() { return this.vals.thr2; } set maskThreshold(v) { this.vals.thr2 = +v || 0; }
+  get useAltMask() { return !!this.vals.useMask; } set useAltMask(v) { this.vals.useMask = false; if (v) HX.note('DropShadowShader.useAltMask (máscara alternativa) no se imita'); }
+  get color() { return this._col; } set color(c) { this._col = c >>> 0; this.vals.dropColor = [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255]; }
+  setAdjustColor(b, h, c, s) { this.baseBrightness = b; this.baseHue = h; this.baseContrast = c; this.baseSaturation = s;
+    this.vals.brightness = (+b || 0) / 255; this.vals.hueMatrix = sprHue((+h || 0) * Math.PI / 180); this.vals.contrast = sprConVal(+c || 0); this.vals.saturationMatrix = sprSat(sprSatVal(+s || 0)); }
+  updateFrameInfo(frame) { this.angleOffset = frame && frame.angle ? -frame.angle : 0; }
+  loadAltMask() { HX.note('DropShadowShader.loadAltMask no se imita'); }
+  cssFilter() { const b = this.baseBrightness || 0; return `hue-rotate(${this.baseHue || 0}deg) saturate(${sprSatVal(this.baseSaturation || 0)}) brightness(${Math.max(0, 1 + b / 255)}) contrast(${sprConVal(this.baseContrast || 0)})`; }
+}
+// adjustColor.frag del sitio (shaders/) si está
+loadSprFrag('adjustColor').then(t => { if (t && /hueMatrix/.test(t)) SPR_FRAG.siteAdjust = t; }).catch(() => {});

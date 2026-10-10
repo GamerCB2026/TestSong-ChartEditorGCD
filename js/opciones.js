@@ -33,7 +33,7 @@ const Opts = {
   save() {
     try { localStorage.setItem(OPTS_KEY, JSON.stringify({ ver: 34, middlescroll: this.middlescroll, downscroll: this.downscroll, keys: this.keys, vslice: this.vslice })); } catch (e) {}
   },
-  isDown() { if (typeof G !== 'undefined' && G.mode === 'mobile' && this.vslice === 'arrows') return true; return this.downscroll ?? false; },
+  isDown() { if (typeof G !== 'undefined' && G.mode === 'mobile' && (this.vslice === 'arrows' || this.vslice === 'toque')) return true; return this.downscroll ?? false; },
   /* carril de una tecla: asignación del usuario o flechas */
   laneOf(key) {
     if (key in ARROW_KEYS) return ARROW_KEYS[key];

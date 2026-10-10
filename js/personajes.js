@@ -59,8 +59,17 @@ class RealChar {
   /* Stage.addCharacter: posición = pies (position) - origen (ancho/2, alto) + offsets globales */
   place(sc) {
     this.ts = this.scale * (+sc.scale || 1);
-    this.bx = sc.position[0] - this.ref.w * this.ts / 2 + this.offsets[0];
-    this.by = sc.position[1] - this.ref.h * this.ts + this.offsets[1];
+    if (sc.topLeft && this.data && (this.data.convertedFrom === 'Psych' || this.data.convertedFrom === 'Codename')) {
+      // v3.5.0: escenarios de Psych/Codename con personajes de su motor: esquina superior izquierda + position del personaje
+      this.bx = sc.position[0] + this.offsets[0]; this.by = sc.position[1] + this.offsets[1];
+    } else if (sc.topLeft) {
+      // personaje V-Slice en escenario de Psych/Codename: se traslada (las posiciones por defecto coinciden con las de V-Slice)
+      const d = TOPLEFT_TO_FEET[this.role] || TOPLEFT_TO_FEET.dad, x = sc.position[0] + d[0], y = sc.position[1] + d[1];
+      this.bx = x - this.ref.w * this.ts / 2 + this.offsets[0]; this.by = y - this.ref.h * this.ts + this.offsets[1];
+    } else {
+      this.bx = sc.position[0] - this.ref.w * this.ts / 2 + this.offsets[0];
+      this.by = sc.position[1] - this.ref.h * this.ts + this.offsets[1];
+    }
     this.z = sc.zIndex ?? 0; this.stageCam = sc.cameraOffsets || [0, 0]; this.scroll = sc.scroll || [1, 1];
     this.alpha = sc.alpha ?? 1;
   }
@@ -74,9 +83,12 @@ class RealChar {
     const a = this.anims.get(name); if (!a) return false;
     if (!restart && this.curName === name && !this.finished()) return true;    // FlxAnimationController.play sin Force
     this.curName = name; this.cur = a; this.t0 = G.gameTime; this.finishFired = false;
-    if (ignoreOther) this.lock = true;
+    if (ignoreOther) { this.lock = true; this.lockUntil = G.gameTime + this.animMs(a); }
     return true;
   }
+  /* v3.5.0: duración de una pasada completa (hasta el último frame; en loop, un ciclo) */
+  animMs(a) { return a.frames.length / Math.max(1, a.fps) * 1000; }
+  doneOnce() { return G.gameTime - this.t0 >= this.animMs(this.cur); }
   frameIdx() {
     const a = this.cur, n = a.frames.length;
     const i = animFrame(G.gameTime - this.t0, a.fps);
@@ -90,7 +102,7 @@ class RealChar {
     if (!force) {
       if (this.singing() && this.isSingAnim()) return;
       const n = this.curName || '';
-      if (!n.startsWith('dance') && !n.startsWith('idle') && !this.finished()) return;
+      if (!n.startsWith('dance') && !n.startsWith('idle') && !(this.finished() || (this.cur && this.cur.loop && this.doneOnce()))) return;
     }
     const sf = this.idleSuffix || '';
     if (this.hasLR) {
@@ -117,9 +129,9 @@ class RealChar {
     this.holdUntil = G.gameTime + holdMs;
     this.singUntil = G.gameTime + holdMs + this.singTime * step * (miss ? 2 : 1);
   }
-  /* evento PlayAnimation (PlayAnimationSongEvent): tempVocals = force; playAnimation(anim, force, force).
-     Con force la animación se reproduce COMPLETA: ni el baile ni el canto la interrumpen hasta que termina.
-     Sin force: el canto puede interrumpirla, pero el baile espera a que termine. */
+  /* evento PlayAnimation (PlayAnimationSongEvent): tempVocals = force.
+     v3.5.0: SIEMPRE completa (canto y baile bloqueados hasta el último frame; loop = un ciclo).
+     PLAYANIM_CFG.singRompeForzada = true deja que el canto la corte. */
   playEvent(name, force) {
     if (!this.anims.has(name)) return false;
     this.tempVocals = !!force;
@@ -127,7 +139,9 @@ class RealChar {
       const r = this.role === 'bf' ? 'player' : this.role === 'dad' ? 'opponent' : null;
       if (r && Music.getVolume(r) === 0) Music.setVolume(r, 1); else this.tempVocals = false;
     }
-    const ok = this.play(name, !!force, !!force);
+    // v3.5.0: la animación de PlayAnimation SIEMPRE se reproduce completa (con o sin force):
+    // canto y baile esperan hasta su último frame; si es en loop, un ciclo completo
+    const ok = this.play(name, !!force || this.curName !== name || this.finished(), true);
     if (ok) { this.singUntil = -1e9; this.holdUntil = -1e9; }
     return ok;
   }
@@ -146,7 +160,7 @@ class RealChar {
   }
   update() {
     if (!this.cur) return;
-    if (!this.finishFired && this.finished()) { this.finishFired = true; this.onFinished(this.curName); }
+    if (!this.finishFired && (this.finished() || (this.lock && this.cur.loop && this.doneOnce()))) { this.finishFired = true; this.onFinished(this.curName); }
     if (this.lock) return;
     if (this.curName.startsWith('sing') && !this.singing()) { this.missTint = false; this.dance(true); return; }
     // al terminar una animación pasa a "<anim>-hold" en loop si existe (sustain del canto, poses de Darnell…)
@@ -158,6 +172,12 @@ class RealChar {
     const a = this.cur; if (!a || this.visible === false) return;
     const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off = a.off || [0, 0];
     const alpha = this.alpha ?? 1, smooth = !this.isPixel && Optim.s.aa, tint = !!this.missTint, m = _charM;
+    // v3.5.0: shader del personaje puesto por el script del escenario (AdjustColor / DropShadow…)
+    const sh = this.shader || null; R.setShader(sh);
+    if (sh && sh.updateFrameInfo && fr) sh.angleOffset = fr.rot ? -90 : 0;
+    try { this.drawInner(a, fr, s, flip, off, alpha, smooth, tint, m, M, R); } finally { if (sh) R.setShader(null); }
+  }
+  drawInner(a, fr, s, flip, off, alpha, smooth, tint, m, M, R) {
     if (a.type === 'atlas') {
       mmul(m, M, mset(_charL, flip ? -s : s, 0, 0, s, this.bx - off[0] + (flip ? this.ref.maxX * s : -this.ref.minX * s), this.by - off[1] - this.ref.minY * s));
       atlasDibujarR(R, a.model, a.timeline, fr, m, alpha, smooth, tint);
@@ -165,10 +185,11 @@ class RealChar {
       const rx = flip ? (fr.fw - fr.offX - fr.dw) : fr.offX;
       mmul(m, M, mset(_charL, flip ? -s : s, 0, 0, s, this.bx + rx * s - off[0] + (flip ? fr.dw * s : 0), this.by + fr.offY * s - off[1]));
       if (fr.rot) mmul(m, m, mset(_charL, 0, -1, 1, 0, 0, fr.dh));
-      R.img(fr.img, fr.x, fr.y, fr.w, fr.h, m, alpha, smooth, tint);
+      R.img(fr.img, fr.x, fr.y, fr.w, fr.h, m, alpha, smooth, tint, this.rgb);
     }
   }
 }
+const TOPLEFT_TO_FEET = { bf: [219.5, 785], dad: [235, 785], gf: [351.5, 657] };   // Psych (770,100) → V-Slice (989.5,885)…
 const _charM = [1, 0, 0, 1, 0, 0], _charL = [1, 0, 0, 1, 0, 0];
 /* frame de una animación según Optimización → Animaciones (normal / reducida a 12 fps / estática) */
 function animFrame(ms, fps) {
@@ -193,7 +214,7 @@ function normalizeCharData(d) {
   };
 }
 async function loadCharacter(role, id) {
-  const dj = await fetchFirst(ASSET_CFG.charDataPaths.map(t => fillT(t, { id })));
+  const dj = await fetchFirst(ASSET_CFG.charDataPaths.map(t => fillT(t, { id }))) || await EngineData.findChar(id).catch(() => null);   // v3.5.0: + XML de Codename
   const data = normalizeCharData(dj ? dj.data : DEFAULT_DATA.characters[id]);
   if (!data) return { error: `no hay data/characters/${id}.json` };
   const mainAp = data.assetPath || `characters/${id}`;
