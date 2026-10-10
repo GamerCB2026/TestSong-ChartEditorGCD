@@ -119,9 +119,9 @@ const fillT = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
 const assetUrl = p => ROOT + p.split('/').map(encodeURIComponent).join('/');
 const uniq = a => [...new Set(a)];
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-const VERSION = '3.7.0';
+const VERSION = '3.8.0';
 const cubeInOut = t => t < 0.5 ? 4 * t * t * t : 0.5 * Math.pow(2 * t - 2, 3) + 1;
-const formatMoney = n => Math.round(n).toLocaleString('en-US');
+const formatMoney = n => { n = +n || 0; const neg = n < 0; return (neg ? '-' : '') + Math.floor(Math.abs(n)).toLocaleString('en-US'); };   // FlxStringUtil.formatMoney(x, false, true): ffloor del valor absoluto
 const $ = id => document.getElementById(id);
 const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 

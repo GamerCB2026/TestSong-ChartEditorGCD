@@ -111,7 +111,7 @@ const Chart = {
     const list = raw.notes[diff] || [];
     const ss = raw.scrollSpeed || {};
     const speed = +(ss[diff] ?? ss.default ?? ss.normal ?? 1.6) || 1.6;
-    const tcs = (Array.isArray(meta?.timeChanges) ? meta.timeChanges : []).filter(t => +t.bpm > 0).map(t => ({ t: +t.t || 0, bpm: +t.bpm }));
+    const tcs = (Array.isArray(meta?.timeChanges) ? meta.timeChanges : []).filter(t => +t.bpm > 0).map(t => ({ t: +t.t || 0, bpm: +t.bpm, n: +t.n || 4, d: +t.d || 4 }));
     const bpm = tcs[0]?.bpm || raw.bpm || 100;
     const notes = list.map(n => ({ time: +n.t, lane: (n.d | 0) % 4, side: ((n.d | 0) % 8) < 4 ? 'player' : 'opponent', sustain: +(n.l || 0), kind: n.k || '', params: Array.isArray(n.p) ? n.p : null, raw: n.d | 0 }));
     const pc = meta?.playData?.characters || {};
@@ -251,7 +251,7 @@ const Chart = {
         return out; }
       case 'Play Animation': return [{ t, e: 'PlayAnimation', v: { target: who(v2), anim: s1, force: true } }];
       case 'Change Scroll Speed': { const sec = +v2 || 0; return [{ t, e: 'ScrollSpeed', v: { scroll: s1 === '' ? 1 : (+v1 || 1), absolute: false, duration: sec * 1000 / (60000 / bpm / 4), ease: sec ? 'linear' : 'INSTANT' } }]; }
-      case 'Camera Follow Pos': return (s1 === '' && s2 === '') ? [{ t, e: 'FocusCamera', v: { char: -2 } }] : [{ t, e: 'FocusCamera', v: { char: -1, x: +v1 || 0, y: +v2 || 0, ease: 'CLASSIC' } }];
+      case 'Camera Follow Pos': return (s1 === '' && s2 === '') ? [{ t, e: '_CamFollowAuto', v: {} }] : [{ t, e: 'FocusCamera', v: { char: -1, x: +v1 || 0, y: +v2 || 0, ease: 'CLASSIC' } }];
       case 'Add Camera Zoom': return [{ t, e: '_AddCameraZoom', v: { game: s1 === '' ? 0.015 : +v1 || 0, hud: s2 === '' ? 0.03 : +v2 || 0 } }];
       case 'Change Character': return s2 ? [{ t, e: 'ChangeCharacter', v: { target: who(v1), char: s2 } }] : [];
       case 'Set GF Speed': return [{ t, e: '_SetGFSpeed', v: { speed: Math.max(1, Math.round(+v1 || 1)) } }];

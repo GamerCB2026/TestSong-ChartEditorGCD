@@ -122,6 +122,8 @@ function sparrowFrames(atlas, prefijo, indices, img) {
 }
 /* Dibuja un frame Sparrow con su "trim" (offX/offY) en (x,y) = esquina del frame completo */
 function drawSparrowFrame(ctx, fr, x, y, sx = 1, sy = sx) {
+  // v3.8.0: camino rápido (sin save/translate/scale/restore): un solo drawImage con el rectángulo final
+  if (!fr.rot && sx > 0 && sy > 0) { blit(ctx, fr.img, fr.x, fr.y, fr.w, fr.h, x + fr.offX * sx, y + fr.offY * sy, fr.w * sx, fr.h * sy); return; }
   ctx.save(); ctx.translate(x, y); ctx.scale(sx, sy); ctx.translate(fr.offX, fr.offY);
   if (fr.rot) { ctx.translate(0, fr.dh); ctx.rotate(-Math.PI / 2); }
   blit(ctx, fr.img, fr.x, fr.y, fr.w, fr.h, 0, 0, fr.w, fr.h);

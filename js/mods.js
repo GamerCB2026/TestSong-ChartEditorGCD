@@ -79,42 +79,26 @@ const ModText = {
   keyOf(text) { for (const [k, v] of this.map) if (v === text) return k.split('/').pop().replace(/\.\w+$/, ''); return null; },
   get(p) { const k = this.key(p); if (this.map.has(k)) return this.map.get(k); const b = k.split('/').pop(); for (const [kk, v] of this.map) if (kk.split('/').pop() === b) return v; HX.note(`Assets.getText("${p}"): no está en el mod`); return ''; },
 };
-const ModRT = { tweens: [], timers: [], sprites: [], sounds: [] };
+const ModRT = { tweens: [], timers: [], sprites: [], sounds: [], tweenMgr: new VS.FlxTweenManager() };
 function getPath(o, p) { const ks = p.split('.'); for (let i = 0; i < ks.length - 1; i++) o = o?.[ks[i]]; return [o, ks[ks.length - 1]]; }
-class HxTween {
-  constructor(target, props, dur, opts, fn) {
-    opts = opts || {};
-    Object.assign(this, { target, props: props || {}, dur: Math.max(0, +dur || 0) * 1000, opts, fn, t0: G.gameTime + (+opts.startDelay || 0) * 1000, started: false, active: true, finished: false, percent: 0, from: {}, backward: false, type: +opts.type || 8 });
-    this.ease = typeof opts.ease === 'function' ? opts.ease : Ease.linear;
-    this.__host = 'FlxTween';
-    ModRT.tweens.push(this);
+/* v3.8.0: FlxTween de los scripts = VarTween / NumTween de vslice.js (tiempo acumulado por frame, valores
+   iniciales en el primer update, onComplete después de actualizar todos los tweens, duración 0 = nunca corre) */
+function HxTween(target, props, dur, opts, fn, from = 0, to = 1) {
+  opts = opts || {};
+  const cb = f => (typeof f === 'function' ? (t => Mods.safe(() => f(t))) : null);
+  const o = { ease: typeof opts.ease === 'function' ? opts.ease : null, type: +opts.type || 8, startDelay: +opts.startDelay || 0, loopDelay: +opts.loopDelay || 0,
+    framerate: +opts.framerate || 0, onStart: cb(opts.onStart), onUpdate: cb(opts.onUpdate), onComplete: cb(opts.onComplete) };
+  const mgr = ModRT.tweenMgr, d = Math.max(0, +dur || 0);
+  let tw;
+  if (fn) { tw = new VS.NumTween(o, mgr); tw.tween(+from, +to, d, v => Mods.safe(() => fn(v))); }
+  else {
+    tw = new VS.VarTween(o, mgr);
+    try { tw.tween(target, props || {}, d); } catch (e) { HX.note(`FlxTween.tween: ${e.message}`); tw.active = false; return tw; }
+    tw.target = target;
   }
-  start() {
-    this.started = true;
-    if (this.fn) return;
-    for (const k of Object.keys(this.props)) { const [o, f] = getPath(this.target, k); this.from[k] = o ? +o[f] || 0 : 0; }
-    if (this.opts.onStart) Mods.safe(() => this.opts.onStart(this));
-  }
-  update() {
-    if (!this.active) return true;
-    if (G.gameTime < this.t0) return false;
-    if (!this.started) this.start();
-    let k = this.dur <= 0 ? 1 : clamp((G.gameTime - this.t0) / this.dur, 0, 1);
-    this.percent = k;
-    let e = this.ease(this.backward ? 1 - k : k);
-    if (this.fn) this.fn(this.from0 + (this.to0 - this.from0) * e);
-    else for (const [key, to] of Object.entries(this.props)) { const [o, f] = getPath(this.target, key); if (o) o[f] = this.from[key] + (to - this.from[key]) * e; }
-    if (this.opts.onUpdate) Mods.safe(() => this.opts.onUpdate(this));
-    if (k >= 1) {
-      if (this.type & 2 || this.type & 4) { this.t0 = G.gameTime + (+this.opts.loopDelay || 0) * 1000; if (this.type & 4) this.backward = !this.backward; if (this.opts.onComplete) Mods.safe(() => this.opts.onComplete(this)); return false; }
-      this.finished = true; this.active = false;
-      if (this.opts.onComplete) Mods.safe(() => this.opts.onComplete(this));
-      return true;
-    }
-    return false;
-  }
-  cancel() { this.active = false; }
-  destroy() { this.active = false; }
+  tw.__host = 'FlxTween'; tw.__open = true; tw.destroy = () => tw.cancel();
+  mgr.add(tw);
+  return tw;
 }
 class HxTimer {
   constructor() { this.active = false; this.finished = false; this.loops = 1; this.elapsedLoops = 0; this.time = 0; this.__host = 'FlxTimer'; this.__open = true; }
@@ -402,23 +386,30 @@ const CharW = {
     const real = () => Scene.chars[role];
     const w = {
       __host: 'BaseCharacter', __open: true, __role: role,
-      playAnimation(name, restart = false, ignoreOther = false) {
-        const c = real(); name = String(name);
-        if (c) { if (c.playEvent(name, true)) return; if (name === 'idle' || name.startsWith('dance')) { c.singUntil = -1e9; c.dance(true); return; } HX.note(`animación "${name}" no existe en ${role} (${c.id})`); return; }
-        if (role !== 'gf') { const lane = LANE_DIRS.findIndex(d => name.toUpperCase().includes(d)); if (lane >= 0) sing(role === 'bf' ? G.bf : G.dad, lane); }
-      },
-      playSingAnimation(dir, miss = false, suffix = '') { const lane = typeof dir === 'number' ? dir : LANE_DIRS.indexOf(String(dir).toUpperCase()); if (lane >= 0) sing(role === 'bf' ? G.bf : role === 'dad' ? G.dad : G.dad, lane, !!miss, 0, { suffix }); },
-      dance(force) { const c = real(); if (c) { c.singUntil = -1e9; c.dance(true); } },
-      hasAnimation(n) { const c = real(); return !!(c && c.anims.has(n)); },
-      getCurrentAnimation() { const c = real(); return c ? c.curName : 'idle'; },
-      isAnimationFinished() { const c = real(); return c ? c.finished() : true; },
+      // v3.8.0: BaseCharacter / Bopper de verdad (vslice.js): exclusiones, holdTimer, dance, idleSuffix…
+      playAnimation(name, restart = false, ignoreOther = false) { const c = real(); if (c) c.playAnimation(String(name), !!restart, !!ignoreOther); },
+      playSingAnimation(dir, miss = false, suffix = '') { const c = real(); const lane = typeof dir === 'number' ? dir : LANE_DIRS.indexOf(String(dir).toUpperCase()); if (c && lane >= 0) c.playSingAnimation(lane, !!miss, suffix ?? ''); },
+      dance(force = false) { const c = real(); if (c) c.dance(!!force); },
+      hasAnimation(n) { const c = real(); return !!(c && c.hasAnimation(String(n))); },
+      getCurrentAnimation() { const c = real(); return c ? c.getCurrentAnimation() : ''; },
+      isAnimationFinished() { const c = real(); return c ? c.isAnimationFinished() : true; },
+      isSinging() { const c = real(); return !!(c && c.isSinging()); },
       get characterId() { const c = real(); return c ? c.id : role; }, get characterName() { const c = real(); return c ? (c.data.name || c.id) : role; },
+      get characterType() { const c = real(); return c ? c.characterType : null; },
       get x() { const c = real(); return c ? c.bx : 0; }, set x(v) { const c = real(); if (c) c.bx = +v; },
       get y() { const c = real(); return c ? c.by : 0; }, set y(v) { const c = real(); if (c) c.by = +v; },
       get alpha() { const c = real(); return c ? c.alpha : 1; }, set alpha(v) { const c = real(); if (c) c.alpha = +v; },
       get visible() { const c = real(); return c ? c.visible !== false : true; }, set visible(v) { const c = real(); if (c) c.visible = !!v; },
-      get holdTimer() { return 0; }, set holdTimer(v) {},
-      get animation() { const c = real(); return { onFrameChange: SIGNAL_NOP, onFinish: SIGNAL_NOP, curAnim: c ? { name: c.curName, finished: c.finished() } : null, play: (n, f) => w.playAnimation(n, f), get finished() { return c ? c.finished() : true; }, getByName: n => (c && c.anims.has(n) ? { name: n } : null), exists: n => !!(c && c.anims.has(n)) }; },
+      get holdTimer() { const c = real(); return c ? c.holdTimer : 0; }, set holdTimer(v) { const c = real(); if (c) c.holdTimer = +v; },
+      get singTimeSteps() { const c = real(); return c ? c.singTimeSteps : 8; }, set singTimeSteps(v) { const c = real(); if (c) c.singTimeSteps = +v; },
+      get danceEvery() { const c = real(); return c ? c.danceEvery : 1; }, set danceEvery(v) { const c = real(); if (c) c.danceEvery = +v; },
+      get idleSuffix() { const c = real(); return c ? c.idleSuffix : ''; }, set idleSuffix(v) { const c = real(); if (c) c.idleSuffix = String(v ?? ''); },
+      get shouldBop() { const c = real(); return !!(c && c.shouldBop); }, set shouldBop(v) { const c = real(); if (c) c.shouldBop = !!v; },
+      get canPlayOtherAnims() { const c = real(); return c ? c.canPlayOtherAnims : true; }, set canPlayOtherAnims(v) { const c = real(); if (c) c.canPlayOtherAnims = !!v; },
+      get ignoreExclusionPref() { const c = real(); return c ? c.ignoreExclusionPref : []; }, set ignoreExclusionPref(v) { const c = real(); if (c) c.ignoreExclusionPref = v || []; },
+      get tempVocals() { const c = real(); return !!(c && c.tempVocals); }, set tempVocals(v) { const c = real(); if (c) c.tempVocals = !!v; },
+      get isDead() { const c = real(); return !!(c && c.isDead); }, set isDead(v) { const c = real(); if (c) c.isDead = !!v; },
+      get animation() { const c = real(); const ctl = c && c.animation; return { __host: 'FlxAnimationController', onFrameChange: SIGNAL_NOP, onFinish: SIGNAL_NOP, get curAnim() { const a = ctl && ctl.curAnim; return a ? { name: a.name, finished: a.finished, curFrame: a.curFrame, numFrames: a.numFrames, frameRate: a.frameRate, looped: a.looped } : null; }, get name() { return ctl ? ctl.name : null; }, play: (n, f = false) => { if (ctl) ctl.play(String(n), !!f); }, get finished() { return ctl ? ctl.finished : true; }, getByName: n => (ctl && ctl.exists(n) ? { name: n } : null), exists: n => !!(ctl && ctl.exists(n)) }; },
       get cameraFocusPoint() { const p = focusPoint(role) || [0, 0]; return new HxPoint(p[0], p[1]); },
       // v3.5.0: shader del personaje (scripts de escenario) y lo que usan sus rim lights
       get shader() { const c = real(); return c ? c.shader || null : null; }, set shader(v) { const c = real(); if (c) c.shader = v || null; },
@@ -445,7 +436,7 @@ function strumlineW(side) {
     get alpha() { return st().alpha; }, set alpha(v) { st().alpha = +v; },
     get visible() { return st().visible; }, set visible(v) { st().visible = !!v; },
     get x() { return st().x; }, set x(v) { st().x = +v; }, get y() { return st().y; }, set y(v) { st().y = +v; },
-    get scrollSpeed() { return G.speed; }, set scrollSpeed(v) { G.speed = +v; G.speedTween = null; if (G.speedSide) { G.speedSide.player = G.speedSide.opponent = +v; G.speedTweens = {}; } },
+    get scrollSpeed() { return VS.play[side + 'Strumline'].scrollSpeed; }, set scrollSpeed(v) { if (isFinite(+v)) VS.play[side + 'Strumline'].scrollSpeed = +v; },
     strumlineNotes: { members, forEach: f => members.forEach(f) }, members,
     getByIndex: i => members[i], getByDirection: d => members[typeof d === 'number' ? d : LANE_DIRS.indexOf(String(d).toUpperCase())],
     forEach: f => members.forEach(f), get isPlayer() { return side === 'player'; },
@@ -458,8 +449,13 @@ function camObj(which) {
   const s = () => CamFX[which];
   const o = {
     __host: which === 'game' ? 'camGame' : 'camHUD', __which: which, __open: true,
-    get zoom() { return which === 'game' ? Cam.zoom : G.hudZoom; },
-    set zoom(v) { v = +v; if (!isFinite(v)) return; if (which === 'game') { Cam.zoomTween = null; Cam.zoom = v; } else G.hudZoom = v; },
+    // v3.8.0: FlxG.camera.zoom / camHUD.zoom reales (PlayState los recalcula cada frame si cameraZoomRate > 0)
+    get zoom() { return which === 'game' ? VS.play.camera.zoom : VS.play.camHUD.zoom; },
+    set zoom(v) { v = +v; if (!isFinite(v)) return; if (which === 'game') VS.play.camera.zoom = v; else VS.play.camHUD.zoom = v; },
+    get scroll() { return which === 'game' ? VS.play.camera.scroll : { x: 0, y: 0 }; },
+    get targetOffset() { return VS.play.camera.targetOffset; },
+    get followLerp() { return VS.play.camera.followLerp; }, set followLerp(v) { if (which === 'game') VS.play.camera.followLerp = +v; },
+    get target() { return which === 'game' ? VS.play.camera.target : null; }, set target(v) { if (which === 'game') VS.play.camera.target = v || null; },
     get angle() { return s().angle; }, set angle(v) { s().angle = +v || 0; },
     get scrollAngle() { return s().angle; }, set scrollAngle(v) { s().angle = +v || 0; },
     get alpha() { return s().alpha; }, set alpha(v) { s().alpha = +v; },
@@ -471,7 +467,9 @@ function camObj(which) {
     shake(intensity = 0.05, duration = 0.5, onComplete = null, force = true, axes = 0x11) { if (!force && s().shake) return; s().shake = { i: +intensity || 0, t0: G.gameTime, dur: (+duration || 0) * 1000, done: onComplete, axes: axes ?? 0x11 }; Mods.fx('shake', which); },
     stopFlash() { s().flash = null; }, stopFade() { s().fade = null; }, stopShake() { s().shake = null; }, stopFX() { s().flash = s().fade = s().shake = null; },
     setFilters(f) { o._filters = f || []; CamFilters.set('hxc:' + which, o._filters); }, set filters(f) { o.setFilters(f); }, get filters() { return o._filters || []; },
-    follow() {}, focusOn() {}, snapToTarget() {},
+    follow(t, style, lerp = 1) { if (which === 'game') VS.play.camera.follow(t || null, +lerp); },
+    focusOn(pt) { if (which === 'game' && pt) VS.play.camera.focusOn(pt); },
+    snapToTarget() { const c = VS.play.camera; if (which === 'game' && c.target) { c.updateFollow(); c.scroll.x = c._scrollTarget.x; c.scroll.y = c._scrollTarget.y; } },
     // v3.7.0: Codename camGame.addShader(new CustomShader("x"))
     addShader(sh) { if (sh) o.setFilters([...(o._filters || []), { shader: sh }]); return sh; }, removeShader(sh) { o.setFilters((o._filters || []).filter(f => f.shader !== sh)); return true; },
   };
@@ -524,31 +522,45 @@ const HOST = (() => {
     get currentStage() { return stage; }, get camGame() { return camGame; }, get camHUD() { return camHUD; }, get camCutscene() { return camHUD; }, get camOther() { return camHUD; },
     isMinimalMode: false, isPracticeMode: false, isChartingMode: false, playbackRate: 1, startingSong: false, isInCutscene: false, disableKeys: false,
     get isBotPlayMode() { return isBot(); },
-    get health() { return G.health; }, set health(v) { v = +v; if (!isFinite(v)) return; G.health = clamp(v, 0, FNF.HEALTH_MAX); if (G.health <= 0 && !isBot()) Mods.pendingDeath = true; },
-    get songScore() { return G.score; }, set songScore(v) { G.score = +v || 0; },
+    // v3.8.0: health / songScore de PlayState sin recortar al asignar (se recorta en update, como V-Slice)
+    get health() { return VS.play.health; }, set health(v) { v = +v; if (isFinite(v)) VS.play.health = v; },
+    get songScore() { return VS.play.songScore; }, set songScore(v) { VS.play.songScore = +v || 0; },
     get boyfriend() { return CharW.get('bf'); }, get dad() { return CharW.get('dad'); }, get gf() { return CharW.get('gf'); },
     get playerStrumline() { return strumlineW('player'); }, get opponentStrumline() { return strumlineW('opponent'); },
-    get defaultCameraZoom() { return Cam.stageZoom; }, set defaultCameraZoom(v) { Cam.stageZoom = +v || 1; Cam.zoom = Cam.stageZoom; },
-    get currentCameraZoom() { return Cam.zoom; }, set currentCameraZoom(v) { Cam.zoomTween = null; Cam.zoom = +v || 1; },
-    get stageZoom() { return Cam.stageZoom; },
-    get cameraZoomRate() { return Cam.zoomRate; }, set cameraZoomRate(v) { Cam.zoomRate = +v; },
-    get cameraBopIntensity() { return Cam.bopIntensity; }, set cameraBopIntensity(v) { Cam.bopIntensity = +v; },
-    get cameraBopMultiplier() { return Cam.bop; }, set cameraBopMultiplier(v) { Cam.bop = +v || 1; },
-    get hudCameraZoomIntensity() { return Cam.hudIntensity; }, set hudCameraZoomIntensity(v) { Cam.hudIntensity = +v; },
-    get cameraFollowPoint() { const o = { __host: 'cameraFollowPoint', get x() { return (Cam.follow || [Cam.x])[0]; }, set x(v) { Cam.followTo(+v, (Cam.follow || [0, Cam.y])[1]); }, get y() { return (Cam.follow || [0, Cam.y])[1]; }, set y(v) { Cam.followTo((Cam.follow || [Cam.x])[0], +v); }, setPosition(x, y) { Cam.followTo(+x, +y); }, set(x, y) { Cam.followTo(+x, +y); } }; return o; },
+    get defaultCameraZoom() { return VS.play.stageZoom; }, set defaultCameraZoom(v) { VS.play.stageZoom = +v || 1; },
+    get stageZoom() { return VS.play.stageZoom; }, set stageZoom(v) { VS.play.stageZoom = +v || 1; },
+    get currentCameraZoom() { return VS.play.currentCameraZoom; }, set currentCameraZoom(v) { VS.play.currentCameraZoom = +v; },
+    get defaultHUDCameraZoom() { return VS.play.defaultHUDCameraZoom; }, set defaultHUDCameraZoom(v) { VS.play.defaultHUDCameraZoom = +v; },
+    get cameraZoomRate() { return VS.play.cameraZoomRate; }, set cameraZoomRate(v) { VS.play.cameraZoomRate = +v; },
+    get cameraZoomRateOffset() { return VS.play.cameraZoomRateOffset; }, set cameraZoomRateOffset(v) { VS.play.cameraZoomRateOffset = +v; },
+    get cameraBopIntensity() { return VS.play.cameraBopIntensity; }, set cameraBopIntensity(v) { VS.play.cameraBopIntensity = +v; },
+    get cameraBopMultiplier() { return VS.play.cameraBopMultiplier; }, set cameraBopMultiplier(v) { VS.play.cameraBopMultiplier = +v; },
+    get hudCameraZoomIntensity() { return VS.play.hudCameraZoomIntensity; }, set hudCameraZoomIntensity(v) { VS.play.hudCameraZoomIntensity = +v; },
+    get cameraFollowPoint() { return VS.play.cameraFollowPoint; },
+    get cameraFollowTween() { return VS.play.cameraFollowTween; }, get cameraZoomTween() { return VS.play.cameraZoomTween; },
+    resetCamera: (z, c, s) => VS.play.resetCamera(z ?? true, c ?? true, s ?? true), resetCameraZoom: () => VS.play.resetCameraZoom(),
+    tweenCameraToPosition: (x, y, d, e) => { G.autoFocus = false; VS.play.tweenCameraToPosition(x ?? 0, y ?? 0, d ?? 0, e ?? null); },
+    tweenCameraToFollowPoint: (d, e) => VS.play.tweenCameraToFollowPoint(d ?? 0, e ?? null),
+    tweenCameraZoom: (z, d, direct, e) => VS.play.tweenCameraZoom(z ?? 1, d ?? 0, !!direct, e ?? null),
+    cancelCameraFollowTween: () => VS.play.cancelCameraFollowTween(), cancelCameraZoomTween: () => VS.play.cancelCameraZoomTween(), cancelAllCameraTweens: () => VS.play.cancelAllCameraTweens(),
+    tweenScrollSpeed: (sp, d, e, sl) => VS.play.tweenScrollSpeed(sp, d ?? 0, e ?? null, sl || ['playerStrumline', 'opponentStrumline']),
+    cancelScrollSpeedTweens: () => VS.play.cancelScrollSpeedTweens(),
+    get currentStep() { return VS.play.conductor.currentStep; },
     get currentChart() { return { songName: G.chart.title, songArtist: G.chart.artist, difficulty: G.chart.difficulty, variation: G.variation || 'default', characters: { player: Scene.chars.bf?.id, opponent: Scene.chars.dad?.id, girlfriend: Scene.chars.gf?.id }, stage: Scene.stage?.id, __host: 'currentChart' }; },
     get currentDifficulty() { return G.chart.difficulty; }, get currentVariation() { return G.variation || 'default'; },
-    get vocals() { return { __host: 'vocals', __open: true, volume: 1 }; },
+    get vocals() { return VS.play.host.vocals; },
     members, add: o => addSprite(o), insert: (i, o) => addSprite(o, i < 100), remove: o => removeSprite(o),
-    get songEvents() { return G.chart.events; },
+    get songEvents() { return VS.play.songEvents; },
+    get notes() { return VS.play.notes; },
   };
-  const conductor = {
-    __host: 'Conductor.instance',
-    get songPosition() { return G.songPos; }, get bpm() { return 60000 / Cond.crochet(G.songPos); }, get beatLengthMs() { return Cond.crochet(G.songPos); }, get stepLengthMs() { return Cond.stepMs(G.songPos); },
-    get measureLengthMs() { return Cond.crochet(G.songPos) * 4; }, get currentBeat() { return Math.floor(Cond.beat(G.songPos)); }, get currentStep() { return Math.floor(Cond.step(G.songPos)); },
-    get currentMeasure() { return Math.floor(Cond.beat(G.songPos) / 4); }, get currentBeatTime() { return Cond.beat(G.songPos); }, get currentStepTime() { return Cond.step(G.songPos); },
-    get crochet() { return Cond.crochet(G.songPos); }, get stepCrochet() { return Cond.stepMs(G.songPos); },
-  };
+  // v3.8.0: el Conductor de verdad (vslice.js): songPosition, bpm, beatLengthMs, stepLengthMs, currentStep/Beat/Measure(+Time),
+  // getTimeInSteps / getStepTimeInMs / getBeatTimeInMs / getTimeInMeasures (crochet / stepCrochet = nombres de Psych)
+  const conductor = new Proxy({}, {
+    get(_, k) { const c = VS.play.conductor; if (k === '__host') return 'Conductor.instance'; if (k === '__open') return true; if (k === 'crochet') return c.beatLengthMs; if (k === 'stepCrochet') return c.stepLengthMs;
+      const v = c[k]; return typeof v === 'function' ? v.bind(c) : v; },
+    set(_, k, v) { VS.play.conductor[k] = v; return true; },
+    has(_, k) { return k in VS.play.conductor || k === 'crochet' || k === 'stepCrochet' || k === '__host'; },
+  });
   const paths = {
     __host: 'Paths',
     image: (k, lib) => `assets/${lib && lib !== 'preload' ? lib + '/' : ''}images/${k}.png`,
@@ -578,15 +590,15 @@ const HOST = (() => {
   const tween = {
     __host: 'FlxTween',
     tween: (t, props, dur = 1, opts) => (t == null ? null : new HxTween(t, props, dur, opts)),
-    num: (from, to, dur = 1, opts, fn) => { const tw = new HxTween(null, {}, dur, opts, typeof fn === 'function' ? fn : () => {}); tw.from0 = +from; tw.to0 = +to; return tw; },
+    num: (from, to, dur = 1, opts, fn) => new HxTween(null, null, dur, opts, typeof fn === 'function' ? fn : () => {}, from, to),
     angle: (t, from, to, dur = 1, opts) => { if (t) t.angle = from; return t ? new HxTween(t, { angle: to }, dur, opts) : null; },
-    color: (t, dur = 1, c1, c2, opts) => { if (!t) return null; const a = argb(c1), b = argb(c2); const tw = new HxTween(null, {}, dur, opts, k => { const m = (x, y) => Math.round(x + (y - x) * k); t.color = ((Math.round((a.a + (b.a - a.a) * k) * 255) << 24) | (m(a.r, b.r) << 16) | (m(a.g, b.g) << 8) | m(a.b, b.b)) >>> 0; }); tw.from0 = 0; tw.to0 = 1; return tw; },
-    cancelTweensOf: t => ModRT.tweens.forEach(tw => { if (tw.target === t) tw.cancel(); }),
-    completeTweensOf: t => ModRT.tweens.forEach(tw => { if (tw.target === t) { tw.t0 = -1e12; tw.update(); } }),
-    globalManager: { __host: 'FlxTween.globalManager', cancelTweensOf: t => tween.cancelTweensOf(t), completeTweensOf: t => tween.completeTweensOf(t), clear: () => ModRT.tweens.forEach(t => t.cancel()) },
+    color: (t, dur = 1, c1, c2, opts) => { if (!t) return null; const a = argb(c1), b = argb(c2); return new HxTween(null, null, dur, opts, k => { const m = (x, y) => Math.round(x + (y - x) * k); t.color = ((Math.round((a.a + (b.a - a.a) * k) * 255) << 24) | (m(a.r, b.r) << 16) | (m(a.g, b.g) << 8) | m(a.b, b.b)) >>> 0; }, 0, 1); },
+    cancelTweensOf: t => ModRT.tweenMgr.cancelTweensOf(t),
+    completeTweensOf: t => { for (const tw of ModRT.tweenMgr._tweens.slice()) if (tw._object === t && tw.active) { tw._secondsSinceStart = tw.duration + (tw.executions > 0 ? tw.loopDelay : tw.startDelay); tw.update(0); tw.finish(); } },
+    globalManager: { __host: 'FlxTween.globalManager', cancelTweensOf: t => tween.cancelTweensOf(t), completeTweensOf: t => tween.completeTweensOf(t), clear: () => ModRT.tweenMgr.clear() },
     PERSIST: 1, LOOPING: 2, PINGPONG: 4, ONESHOT: 8, BACKWARD: 16,
   };
-  const ease = Object.assign({ __host: 'FlxEase' }, Object.fromEntries(Object.entries(Ease).filter(([k, v]) => typeof v === 'function' && k !== 'get')));
+  const ease = Object.assign({ __host: 'FlxEase' }, Object.fromEntries(Object.entries(VS.FlxEase).filter(([k, v]) => typeof v === 'function')));
   const COLORS = { WHITE: 0xFFFFFFFF, BLACK: 0xFF000000, RED: 0xFFFF0000, GREEN: 0xFF008000, LIME: 0xFF00FF00, BLUE: 0xFF0000FF, YELLOW: 0xFFFFFF00, CYAN: 0xFF00FFFF, MAGENTA: 0xFFFF00FF, ORANGE: 0xFFFFA500, PURPLE: 0xFF800080, PINK: 0xFFFFC0CB, GRAY: 0xFF808080, BROWN: 0xFF8B4513, TRANSPARENT: 0x00000000 };
   const flxColor = Object.assign({ __host: 'FlxColor' }, COLORS, {
     fromRGB: (r, g, b, a = 255) => (((a & 255) << 24) | ((r & 255) << 16) | ((g & 255) << 8) | (b & 255)) >>> 0,
@@ -678,8 +690,9 @@ const HOST = (() => {
     construct(base, args, full) { if (CTORS[base]) return CTORS[base](args); HX.note(`new ${full}() no se imita`); return HX.stub('new ' + base); },
     findClass(n) { return Mods.classes.get(n) || null; },
     nativeSuper(base, obj, a) {
-      if (/SongEvent$/.test(base)) { obj.id = a[0]; }
-      else if (/NoteKind$/.test(base)) { obj.noteKind = a[0]; obj.description = a[1] ?? ''; obj.noteStyleId = a[2] ?? null; obj.params = a[3] ?? []; if (a.length > 4) obj.noAnim = !!a[4]; if (a.length > 5) obj.suffix = a[5] ?? ''; }
+      // v3.8.0: SongEvent(id, ?{processOldEvents}) · NoteKind(noteKind, description, ?noteStyleId, ?params, ?noanim, ?suffix) + scoreable = true
+      if (/SongEvent$/.test(base)) { obj.id = a[0]; obj.processOldEvents = !!(a[1] && a[1].processOldEvents); }
+      else if (/NoteKind$/.test(base)) { obj.noteKind = a[0]; obj.description = a[1] ?? ''; obj.noteStyleId = a[2] ?? null; obj.params = a[3] ?? []; obj.noanim = obj.noAnim = !!(a[4] ?? false); obj.suffix = a[5] ?? ''; if (!('scoreable' in obj)) obj.scoreable = true; }
       else if (/Module$/.test(base)) { obj.moduleId = a[0]; obj.priority = a[1] ?? 1000; if (!('active' in obj)) obj.active = true; }
       else if (/Stage$/.test(base)) { obj.stageId = a[0]; }
       else if (/Sprite$|FlxText$/.test(base)) { const s = base === 'FlxText' ? new HxText(...a) : new HxSprite(...a); for (const k of Object.keys(s)) if (!(k in obj)) obj[k] = s[k]; }
@@ -688,7 +701,8 @@ const HOST = (() => {
       if (n === 'scriptCall') return (name, args) => obj.__hxc.script.callMethod(obj, name, args || []) ?? null;
       if (n === 'scriptGet') return name => obj[name] ?? null;
       if (n === 'scriptSet') return (name, v) => { obj[name] = v; };
-      if (/SongEvent$/.test(base)) { if (n === 'getTitle') return () => obj.id; if (n === 'getEventSchema') return () => []; if (n === 'handleEvent' || n === 'precacheEvent') return () => null; }
+      if (/SongEvent$/.test(base)) { if (n === 'getTitle') return () => String(obj.id).replace(/\b\w/g, ch => ch.toUpperCase()); if (n === 'getEventSchema') return () => null; if (n === 'handleEvent' || n === 'precache' || n === 'precacheEvent') return () => null; }
+      if (/NoteKind$/.test(base)) { if (n === 'toString') return () => obj.noteKind; if (n === 'getNotes' || n === 'getOtherNotes') return (vis) => (VS.play ? VS.play.notes.filter(x => x.alive && ((x.kind || '') === obj.noteKind) === (n === 'getNotes') && (!vis || x.visible !== false)) : []); }
       if (/Stage$/.test(base)) { const v = StageRT.member(obj, n); if (v !== undefined) return v; }
       if (/^on[A-Z]/.test(n)) return () => null;
       return undefined;
@@ -724,7 +738,36 @@ const NoteKinds = {
   known(k) { return !!(this.builtin(k) || Mods.kinds.has(k)); },
   isHurt(k) { const d = this.get(k); return !!(d && d.hurt); },
   get(k) { return Mods.kinds.get(k) || this.builtin(k); },
+  /* v3.8.0: los tipos del juego base sin su script (.hxc) son NoteKind de respaldo en NoteKindManager
+     (aproximados: el comportamiento real lo da el script del mod cuando se carga) */
+  cache: new Map(),
+  fallback(k) {
+    if (this.cache.has(k)) return this.cache.get(k);
+    const d = this.builtin(k); let kind = null;
+    if (d && d.id) {
+      kind = new VS.NoteKind(k, 'respaldo (sin .hxc)', null, null, !!(d.noAnim || d.special || d.gf || d.hurt || d.blazin), d.suffix ? d.suffix.replace(/^-/, '') : '');
+      kind.fallback = true;
+      const pick = (c, names, alt) => { if (!c) return false; const l = alt && names.length > 1 ? [names[1], names[0], ...names.slice(2)] : names; for (const nm of l) if (c.hasAnimation(nm)) { c.playAnimation(nm, true, true); return true; } return false; };
+      const singer = n => Scene.chars[n.side === 'player' ? 'bf' : 'dad'];
+      const sing = (c, n, miss) => { if (c) { c.playSingAnimation(n.lane, miss, ''); c.holdTimer = 0; } };
+      kind.onNoteHit = e => {
+        if (e.eventCanceled) return; const n = e.note;
+        if (d.special && !pick(singer(n), d.special)) sing(singer(n), n, false);
+        if (d.gf) sing(Scene.chars.gf || singer(n), n, false);
+        if (d.hurt) { e.healthChange = d.hitHealth; e.score = 0; e.isComboBreak = true; sing(singer(n), n, true); }
+        if (d.blazin) { const alt = Math.round(n.time / 10) % 2 === 1; const a = pick(Scene.chars.bf, d.blazin[0], alt), b = pick(Scene.chars.dad, d.blazin[1], alt); if (!(n.side === 'player' ? a : b)) sing(singer(n), n, false); }
+      };
+      kind.onNoteMiss = e => {
+        if (e.eventCanceled) return; const n = e.note;
+        if (d.hurt) { n.visible = false; e.cancel(); return; }      // dejar pasar una nota "hurt" no es fallo (Psych)
+        if (d.blazin && !pick(Scene.chars.bf, ['hitHigh', 'hitLow'])) sing(Scene.chars.bf, n, true);
+        if (d.gf || d.special) sing(singer(n), n, true);
+      };
+    }
+    this.cache.set(k, kind); return kind;
+  },
 };
+VS.NoteKindManager.fallbacks = { get: k => (k == null || k === '' ? null : NoteKinds.fallback(k)) };
 
 /* ---------- registro de scripts ---------- */
 const Mods = {
@@ -740,6 +783,7 @@ const Mods = {
     const script = new HX.Script(name, text, HOST);
     const rec = { name, text, script, events: [], kinds: [], modules: [], others: [], analysis: HX.analyze(text) };
     for (const c of script.classes.values()) { c.__hxcls = true; this.classes.set(c.name, c); }
+    HX.R.gen++;   // v3.8.0: invalida las cachés de métodos del intérprete
     for (const c of script.classes.values()) {
       const base = script.nativeBase(c);
       const hasChildren = [...script.classes.values()].some(x => x !== c && (x.parent || '').split('.').pop() === c.name);
@@ -749,8 +793,9 @@ const Mods = {
         const id = String(inst.id || c.name);
         const title = script.callMethod(inst, 'getTitle', []) || id;
         let schema = null; try { schema = script.callMethod(inst, 'getEventSchema', []); } catch (e) {}
-        this.events.set(id, { id, inst, script, cls: c, title, schema, file: name });
-        rec.events.push(id);
+        const ent = { id, inst, script, cls: c, title, schema, file: name };
+        this.events.set(id, ent); rec.events.push(id);
+        VS.SongEventRegistry.register(this.eventAdapter(ent));      // v3.8.0: ScriptedSongEvent en el registro de V-Slice
       } else if (/NoteKind$/.test(base)) {
         const inst = script.instantiate(c, []);
         if (!inst.noteKind && hasChildren) continue;
@@ -758,14 +803,15 @@ const Mods = {
         const hitM = script.findMethod(c, 'onNoteHit'), src = hitM ? text.slice(0) : '';
         const hitBody = (() => { const m = new RegExp('function\\s+onNoteHit[\\s\\S]*?\\n\\s*}\\s*\\n', 'm').exec(text); return m ? m[0] : ''; })();
         const hurt = /hurt|mine|damage|death|kill/i.test(id) || /health\s*(-=|=\s*0\b)|healthChange\s*=\s*-|\.health\s*-=/.test(hitBody);
-        this.kinds.set(id, { id, inst, script, cls: c, styleId: inst.noteStyleId || null, desc: inst.description || id, noAnim: !!inst.noAnim, suffix: inst.suffix || '', hurt, scripted: true, file: name });
-        rec.kinds.push(id);
+        const ent = { id, inst, script, cls: c, styleId: inst.noteStyleId || null, desc: inst.description || id, noAnim: !!inst.noanim, suffix: inst.suffix || '', hurt, scripted: true, file: name };
+        this.kinds.set(id, ent); rec.kinds.push(id);
+        VS.NoteKindManager.register(this.kindAdapter(ent));         // v3.8.0: ScriptedNoteKind en NoteKindManager
         void src;
         if (inst.noteStyleId) NoteStyles.request(inst.noteStyleId);
       } else if (/Module$/.test(base)) {
         const inst = script.instantiate(c, []);
         const id = String(inst.moduleId || c.name);
-        this.modules.set(id, { id, inst, script, cls: c, file: name });
+        this.modules.set(id, { id, inst, script, cls: c, file: name }); this._modCache = null;
         rec.modules.push(id);
         if (script.findMethod(c, 'onCreate')) script.callMethod(inst, 'onCreate', [{}]);
       } else if (/Stage$/.test(base)) {
@@ -781,73 +827,84 @@ const Mods = {
     return rec;
   },
   unregister(rec) {
-    for (const id of rec.events) this.events.delete(id);
-    for (const id of rec.kinds) this.kinds.delete(id);
-    for (const id of rec.modules) this.modules.delete(id);
+    for (const id of rec.events) { this.events.delete(id); VS.SongEventRegistry.eventCache.delete(id); }
+    if (rec.events.length) VS.SongEventRegistry.registerBaseEvents(), Events.registerEngineEvents(), [...this.events.values()].forEach(e => VS.SongEventRegistry.register(this.eventAdapter(e)));
+    for (const id of rec.kinds) { this.kinds.delete(id); VS.NoteKindManager.unregister(id); }
+    for (const id of rec.modules) this.modules.delete(id); this._modCache = null;
     for (const id of rec.stages || []) { this.stages.delete(id); StageRT.key = null; }
     for (const c of rec.script.classes.keys()) this.classes.delete(c);
+    HX.R.gen++;
     this.scripts.delete(rec.name);
   },
-  /* evento del chart → handleEvent(data) */
-  fireEvent(ev) {
-    const e = this.events.get(ev.e); if (!e) return false;
-    const v = ev.v && typeof ev.v === 'object' ? ev.v : {};
-    const get = (k, f) => { const x = v[k]; return x === undefined || x === null ? null : f(x); };
-    const data = {
-      __host: 'SongEventData', eventKind: ev.e, time: ev.t, value: ev.v ?? null, kind: ev.e,
-      getFloat: k => get(k, x => { const n = parseFloat(x); return isNaN(n) ? null : n; }), getInt: k => get(k, x => { const n = parseInt(x); return isNaN(n) ? null : n; }),
-      getBool: k => get(k, x => x === true || x === 'true' || x === 1), getString: k => get(k, x => String(x)), getDynamic: k => get(k, x => x),
-      getArray: k => get(k, x => (Array.isArray(x) ? x : null)), getBoolArray: k => get(k, x => x), getStringArray: k => get(k, x => x), getIntArray: k => get(k, x => x), getFloatArray: k => get(k, x => x),
-      getHandleEvent: () => true, valueAsStruct: () => v,
-    };
-    e.script.callMethod(e.inst, 'handleEvent', [data]);
-    return true;
+  /* v3.8.0: adaptadores para ScriptEventDispatcher.callEvent (onScriptEvent y luego el método del tipo) */
+  target(ent, kind) {
+    // (rendimiento: se cachea si la clase tiene cada método; el UPDATE pasa por aquí cada frame)
+    const has = new Map(), hasM = n => { let v = has.get(n); if (v === undefined) { v = !!ent.script.findMethod(ent.cls, n); has.set(n, v); } return v; };
+    const call = (n, e) => { if (!hasM(n)) return; try { HX.R.cur = ent.file; ent.script.callMethod(ent.inst, n, [e]); } catch (err) { console.warn('[hxc]', n, err); HX.note(`${n}: ${err.message}`); if (typeof ScriptLog !== 'undefined') ScriptLog.err(ent.file, `${n}: ${err.message}`); } };
+    return { __host: kind, __ent: ent,
+      __callEvent(e) {
+        if (kind === 'Module' && ent.inst.active === false) return;
+        call('onScriptEvent', e);
+        if (!e.shouldPropagate) return;
+        const m = VS.METHOD[e.type]; if (m) call(m, e);
+      } };
   },
-  /* ganchos (onSongRetry, onBeatHit, onUpdate…) a módulos y eventos que los definen */
+  eventAdapter(ent) {
+    const self = this, t = this.target(ent, 'ScriptedSongEvent');
+    const ev = new VS.SongEvent(ent.id, { processOldEvents: !!ent.inst.processOldEvents });
+    Object.defineProperty(ev, 'processOldEvents', { get: () => !!ent.inst.processOldEvents });
+    ev.__callEvent = t.__callEvent; ev.scripted = true; ev.file = ent.file;
+    ev.handleEvent = data => { HX.R.cur = ent.file; ent.script.callMethod(ent.inst, 'handleEvent', [data]); };
+    ev.getTitle = () => { try { return ent.script.callMethod(ent.inst, 'getTitle', []) ?? ent.id; } catch (e) { return ent.id; } };
+    ev.getEventSchema = () => { try { return ent.script.callMethod(ent.inst, 'getEventSchema', []); } catch (e) { return null; } };
+    ev.precache = () => { if (ent.script.findMethod(ent.cls, 'precache')) self.safe(() => ent.script.callMethod(ent.inst, 'precache', [])); };
+    return ev;
+  },
+  kindAdapter(ent) {
+    const i = ent.inst, t = this.target(ent, 'ScriptedNoteKind');
+    return { __host: 'NoteKind', __ent: ent, scripted: true, file: ent.file, __callEvent: t.__callEvent,
+      get noteKind() { return ent.id; }, get description() { return i.description ?? ''; }, get noteStyleId() { return i.noteStyleId ?? null; },
+      get params() { return i.params ?? []; }, get noanim() { return !!(i.noanim ?? i.noAnim); }, get suffix() { return i.suffix ?? ''; },
+      get scoreable() { return i.scoreable !== false; }, toString() { return ent.id; } };
+  },
+  /* módulos en orden de prioridad (ModuleHandler: menor prioridad primero) */
+  moduleTargets() {
+    // (rendimiento: lista cacheada; ModuleHandler también ordena una sola vez al cargar)
+    if (this._modCache && this._modCacheSize === this.modules.size && this._modCacheMap === this.modules) return this._modCache;
+    this._modCacheSize = this.modules.size; this._modCacheMap = this.modules;
+    return (this._modCache = [...this.modules.values()].sort((a, b) => (+a.inst.priority || 1000) - (+b.inst.priority || 1000)).map(m => m.__t || (m.__t = this.target(m, 'Module'))));
+  },
+  /* evento del chart → ejecutar ya (compatibilidad) */
+  fireEvent(ev) { if (!VS.SongEventRegistry.getEvent(ev.e)) return false; Events.fire(ev); return true; },
+  /* ganchos con nombre (onPause, onCountdownStep…) → ScriptEvent despachado como PlayState.dispatchEvent */
+  HOOK_TYPES: { onCountdownStart: 'COUNTDOWN_START', onCountdownStep: 'COUNTDOWN_STEP', onCountdownEnd: 'COUNTDOWN_END', onSongStart: 'SONG_START', onSongEnd: 'SONG_END', onPause: 'PAUSE', onResume: 'RESUME', onGameOver: 'GAME_OVER', onSongRetry: 'SONG_RETRY' },
   hook(name, ev) {
-    for (const coll of [this.modules, this.events]) for (const e of coll.values()) {
-      if (e.inst.active === false && coll === this.modules) continue;
-      if (e.script.findMethod(e.cls, name)) e.script.callMethod(e.inst, name, [ev || {}]);
-    }
-    StageRT.call(name, ev);
+    const type = this.HOOK_TYPES[name]; if (!type || !VS.play) return null;
+    const e = type === 'PAUSE' ? new VS.PauseScriptEvent(false) : type.startsWith('COUNTDOWN') ? new VS.CountdownScriptEvent(type, ev && ev.step) : new VS.ScriptEvent(type, type === 'GAME_OVER' || type === 'SONG_END');
+    VS.play.dispatchEvent(e); return e;
   },
   get hasHooks() { return this.modules.size > 0 || !!StageRT.cur; },
   update(dt) {
     this.elapsed = dt / 1000;
-    ModRT.tweens = ModRT.tweens.filter(t => !t.update());
-    ModRT.timers = ModRT.timers.filter(t => !t.update());
     StageRT.tick(); VideoSync.tick();
-    if (this.hasHooks) this.hook('onUpdate', { elapsed: this.elapsed, __host: 'UpdateScriptEvent' });
     ScriptHub.update(dt);   // v3.7.0: onUpdate de .lua / update de .hx (y onSongStart al cruzar 0)
     if (this.pendingDeath) { this.pendingDeath = false; if (G.health <= 0 && !isBot()) openOverlay('over'); }
   },
+  /* v3.8.0: tweens/timers de los scripts = FlxTween.globalManager / FlxTimer (antes de la lógica del estado) */
+  updatePlugins(dt) {
+    ModRT.tweenMgr.update(dt / 1000);
+    const ts = ModRT.timers; if (ts.length) { let j = 0; for (let i = 0; i < ts.length; i++) { const t = ts[i]; if (!t.update()) ts[j++] = t; } ts.length = j; }   // (sin crear arrays por frame)
+  },
   /* reiniciar / buscar: se borra todo lo que crearon los scripts */
   resetRuntime(retry) {
-    ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
+    ModRT.tweenMgr.clear(); ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
     CamFX.reset(); StrumState.reset(); CharW.cache = {}; HOST.camGame._filters = []; HOST.camHUD._filters = [];
     for (const c of Object.values(Scene.chars)) if (c) { c.visible = true; }
-    if (retry) this.hook('onSongRetry', {});
+    void retry;
   },
-  /* notas: ganchos del NoteKind */
-  noteW(n) {
-    if (n.__w) return n.__w;
-    const p = Array.isArray(n.params) ? n.params : [];
-    const par = k => { const x = p.find(q => q && (q.n === k || q.name === k)); return x ? (x.v ?? x.value) : null; };
-    const nd = { __host: 'SongNoteData', __open: true, time: n.time, data: n.raw ?? n.lane, length: n.sustain, kind: n.kind || '', params: p,
-      getDirection: () => n.lane, getMustHitNote: () => n.side === 'player', getFloat: k => { const v = par(k); return v === null ? null : +v; }, getInt: k => { const v = par(k); return v === null ? null : parseInt(v); }, getString: k => { const v = par(k); return v === null ? null : String(v); }, getBool: k => { const v = par(k); return v === null ? null : !!v; } };
-    return (n.__w = { __host: 'NoteSprite', __open: true, noteData: nd, get kind() { return n.kind || ''; }, get direction() { return n.lane; }, get mustHit() { return n.side === 'player'; }, get hasBeenHit() { return !!n.hit; }, alpha: 1, visible: true, get strumTime() { return n.time; } });
-  },
-  noteEvent(type, n, extra) {
-    let canceled = false;
-    const ev = Object.assign({ __host: type, __open: true, type, note: this.noteW(n), eventCanceled: false, playSound: true, cancel() { canceled = true; ev.eventCanceled = true; }, cancelEvent() { canceled = true; ev.eventCanceled = true; }, stopPropagation() {} }, extra);
-    const k = this.kinds.get(n.kind);
-    const hookName = type === 'NOTE_HIT' ? 'onNoteHit' : 'onNoteMiss';
-    if (k && k.script.findMethod(k.cls, hookName)) k.script.callMethod(k.inst, hookName, [ev]);
-    if (this.modules.size) this.hook(hookName, ev);
-    ev.canceled = canceled;
-    return ev;
-  },
+  /* la nota ES el NoteSprite (vslice.js le pone noteData, getParam, hasBeenHit, mayHit…) */
+  noteW(n) { return n; },
   playVideo(p) {
     const r = ModRes.parsePath(p); const url = ModRes.get('video', r.key, r.lib);
     if (!url) { HX.note(`video ${r.key}: falta el archivo`); return; }
@@ -1004,8 +1061,15 @@ const StageRT = {
     const T = { bf: 'BF', dad: 'DAD', gf: 'GF' }[r];
     this.call('addCharacter', CharW.get(r), T, true);
   },
+  /* v3.8.0: destino de PlayState.dispatchEvent (onScriptEvent y luego el método del tipo) */
+  adapter: { __host: 'Stage', __callEvent(e) { if (!StageRT.cur) return; StageRT.call('onScriptEvent', e); if (!e.shouldPropagate) return; const m = VS.METHOD[e.type]; if (m) StageRT.call(m, e); } },
+  has(n) {   // (rendimiento: findMethod cacheado por escenario)
+    const c = this.cur; if (!c) return false;
+    if (this._hasFor !== c) { this._hasFor = c; this._has = new Map(); }
+    let v = this._has.get(n); if (v === undefined) { v = !!c.rec.script.findMethod(c.rec.cls, n); this._has.set(n, v); } return v;
+  },
   call(n, ev, extra, raw) {
-    const c = this.cur; if (!c || !c.rec.script.findMethod(c.rec.cls, n)) return;
+    const c = this.cur; if (!c || !this.has(n)) return;
     try { HX.R.cur = c.file; c.rec.script.callMethod(c.inst, n, raw ? [ev, extra] : [ev || {}]); }
     catch (e) { console.warn('[hxc escenario]', n, e); HX.note(`${n}: ${e.message}`); }
   },

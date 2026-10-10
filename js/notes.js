@@ -67,14 +67,19 @@ async function loadNoteSkin() {
 /* ---------- Geometría (unidades del HUD) ---------- */
 function laneX(side, i) { const s = LAYOUT[side]; if (s.lanes) return s.lanes[i]; const x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
 function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
-function pxPerMs(side) { return FNF.PIXELS_PER_MS * ((G.speedSide && G.speedSide[side]) || G.speed) * LAYOUT[side].k; }   // evento ScrollSpeed (por strumline)
+function pxPerMs(side) { return FNF.PIXELS_PER_MS * VS.play[side === 'player' ? 'playerStrumline' : 'opponentStrumline'].scrollSpeed * LAYOUT[side].k; }   // v3.8.0: Strumline.scrollSpeed (evento ScrollSpeed)
 function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
 
 function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow = null) {
   if (!frames || !frames.length) return;
   const n = frames.length, i = Math.floor(t / 1000 * 24), fr = frames[loop ? i % n : Math.min(i, n - 1)];
+  if (!glow) {   // v3.8.0: sin save/restore (solo cambia la opacidad)
+    const a0 = ctx.globalAlpha; if (alpha !== 1) ctx.globalAlpha = a0 * alpha;
+    drawSparrowFrame(ctx, fr, cx - fr.fw * sc / 2, cy - fr.fh * sc / 2, sc);
+    ctx.globalAlpha = a0; return;
+  }
   ctx.save(); ctx.globalAlpha *= alpha;
-  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 30 * sc; }
+  ctx.shadowColor = glow; ctx.shadowBlur = 30 * sc;
   drawSparrowFrame(ctx, fr, cx - fr.fw * sc / 2, cy - fr.fh * sc / 2, sc);
   ctx.restore();
 }
@@ -132,26 +137,31 @@ function drawSplashes() {
 }
 
 /* --- receptores + notas --- */
-function strumAnim(side, i) {
+// v3.8.0: sin arrays por frame: el resultado queda en _sa.anim / _sa.t
+const _sa = { anim: 'static', t: 0 };
+function _saSet(a, t) { _sa.anim = a; _sa.t = t; return _sa; }
+function strumAnimInto(side, i) {
   const st = G.strums[side], age = G.gameTime - st.confirmAt[i];
   if (side === 'player' && !isBot()) {
-    if (st.pressed[i]) return (st.confirmHeld[i] || age < 150) ? ['confirm', age] : ['press', G.gameTime - st.pressAt[i]];
-    return age < 150 ? ['confirm', age] : ['static', 0];
+    if (st.pressed[i]) return (st.confirmHeld[i] || age < 150) ? _saSet('confirm', age) : _saSet('press', G.gameTime - st.pressAt[i]);
+    return age < 150 ? _saSet('confirm', age) : _saSet('static', 0);
   }
-  return (age < 150 || st.hold[i]) ? ['confirm', age] : ['static', 0];
+  return (age < 150 || st.hold[i]) ? _saSet('confirm', age) : _saSet('static', 0);
 }
+function strumAnim(side, i) { const r = strumAnimInto(side, i); return [r.anim, r.t]; }   // compatibilidad
+const _SIDES = ['opponent', 'player'], _SS_DEF = { alpha: 1, visible: true, x: 0, y: 0, lane: [] }, _LN_DEF = { alpha: 1, visible: true };
 
 function drawStrumsAndNotes() {
   const sk = Scene.notes, hasImg = sk && sk.ok;
-  for (const side of ['opponent', 'player']) {
-    const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0, lane: [] };   // alpha/visible/x/y que tocan los scripts .hxc
+  for (let si = 0; si < 2; si++) {
+    const side = _SIDES[si], ss = StrumState[side] || _SS_DEF;   // alpha/visible/x/y que tocan los scripts .hxc
     if (!ss.visible) continue;
     const k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, y0 = strumCY(side), base = (LAYOUT[side].strumAlpha ?? LAYOUT[side].alpha ?? 1) * ss.alpha;
     ctx.save(); ctx.translate(ss.x, ss.y);
     for (let i = 0; i < 4; i++) {
-      const ln = ss.lane[i] || { alpha: 1, visible: true }; if (!ln.visible) continue;
+      const ln = ss.lane[i] || _LN_DEF; if (!ln.visible) continue;
       ctx.globalAlpha = clamp(base * ln.alpha, 0, 1);
-      const x = laneX(side, i) + (ln.dx || 0), [anim, t] = strumAnim(side, i);
+      const x = laneX(side, i) + (ln.dx || 0), sa = strumAnimInto(side, i), anim = sa.anim, t = sa.t;
       const y = y0 + (ln.dy || 0);
       if (ln.angle) { ctx.save(); ctx.translate(x, y); ctx.rotate(ln.angle * Math.PI / 180); ctx.translate(-x, -y); }
       try {
@@ -167,8 +177,8 @@ function drawStrumsAndNotes() {
     ctx.restore();
   }
   // notas (y colas de sustain). Rival en "mini modo" (controles V-Slice: Flechas): solo receptores.
-  for (const side of ['opponent', 'player']) {
-    const ss = StrumState[side] || { alpha: 1, visible: true, x: 0, y: 0 };
+  for (let si = 0; si < 2; si++) {
+    const side = _SIDES[si], ss = StrumState[side] || _SS_DEF;
     if (!ss.visible || LAYOUT[side].hideNotes) continue;
     ctx.save(); ctx.translate(ss.x, ss.y);
     ctx.globalAlpha = clamp((LAYOUT[side].alpha ?? 1) * ss.alpha, 0, 1);
@@ -177,21 +187,30 @@ function drawStrumsAndNotes() {
   }
   drawSplashes();
 }
+function _offY(down, yy) { return down ? yy < -NOTE_W || yy > V.h + NOTE_W * 4 : yy > V.h + NOTE_W || yy < -NOTE_W * 4; }   // v3.8.0: sin closure por nota
 function drawNotesOf(only) {
   const sk = Scene.notes, hasImg = sk && sk.ok, lanes = (StrumState[only] && StrumState[only].lane) || [], ga = ctx.globalAlpha;
-  for (const n of G.chart.notes) {
+  // (rendimiento: se empieza en la primera nota que aún puede verse, no en la primera de la canción)
+  const notes = G.chart.notes, di = G.drawIdx || (G.drawIdx = { player: 0, opponent: 0 });
+  let start = di[only] || 0; if (start > notes.length) start = 0;
+  while (start < notes.length) { const n0 = notes[start]; if (n0.side === only && n0.time + n0.sustain > G.songPos - 3000) break; if (n0.side !== only && n0.time > G.songPos - 3000) break; start++; }
+  di[only] = start;
+  for (let ni = start; ni < notes.length; ni++) {
+    const n = notes[ni];
     if (n.side !== only || n.skipped) continue;
     if (n.time - G.songPos > 4000) break;
     const ln = lanes[n.lane], dx = ln ? ln.dx || 0 : 0, dy = ln ? ln.dy || 0 : 0;   // v3.7.0: noteTween*/setPropertyFromGroup mueven el carril entero
     if (ln && !ln.visible) continue;
     ctx.globalAlpha = clamp(ga * (ln ? ln.alpha : 1) * (n.alpha ?? 1), 0, 1);
     const side = n.side, k = LAYOUT[side].k, y = noteY(side, n.time) + dy, x = laneX(side, n.lane) + dx, down = LAYOUT[side].down;
-    const off = (yy) => down ? yy < -NOTE_W || yy > V.h + NOTE_W * 4 : yy > V.h + NOTE_W || yy < -NOTE_W * 4;
-    if (n.sustain > 0 && !n.dropped && !(n.hit && !n.holding)) {
-      const yEnd = noteY(side, n.time + n.sustain) + dy, yStart = n.hit ? strumCY(side) + dy : y;
-      if (!(off(yStart) && off(yEnd))) drawSustain(side, n.lane, x, yStart, yEnd, n.missed ? 0.3 : 1);
+    // v3.8.0: SustainTrail de V-Slice (holdNoteSprite: visible / alpha 0 al soltar / sustainLength restante)
+    const hn = n.holdNoteSprite;
+    if (n.sustain > 0 && (hn ? (hn.alive && hn.visible !== false && hn.alpha !== 0) : !n.hit)) {
+      const clip = hn && hn.hitNote && !hn.missedNote && G.songPos > n.time;
+      const yEnd = noteY(side, n.time + n.sustain) + dy, yStart = clip ? strumCY(side) + dy : y;
+      if (!(_offY(down, yStart) && _offY(down, yEnd))) drawSustain(side, n.lane, x, yStart, yEnd, hn && hn.missedNote ? 0.3 : 1);
     }
-    if (n.hit || n.passed) continue;
+    if (n.visible === false || (n.hit && !n.desaturated) || n.passed) continue;
     if (y < -NOTE_W * 2 || y > V.h + NOTE_W * 2) continue;
     const a = n.missed ? 0.35 : 1;
     // note kind con estilo propio (noteStyleId del .hxc + data/notestyles/<id>.json)

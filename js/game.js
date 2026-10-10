@@ -53,7 +53,7 @@ async function loadScene(ids) {
   const [iP1, iP2] = await Promise.all([new HealthIcon(0).load(...iconData('bf')), new HealthIcon(1).load(...iconData('dad'))]);
   if (token !== Scene.token) return;
   Scene.icons = { player: iP1, opponent: iP2 }; Scene.baseIcons = { player: iP1, opponent: iP2 };
-  Cam.stageZoom = +(stage?.data?.cameraZoom) || 1; Cam.zoom = Cam.stageZoom;
+  VS.play.stageZoom = stage ? (+(stage?.data?.cameraZoom) || 1) : 1.05; VS.play.resetCameraZoom();   // PlayState: stageZoom (sin escenario 1.05)
   applyBarColors();
   const loadedProps = stage ? stage.props.filter(p => p.img || p.color || p.frames) : [];
   if (stage) st.push(`${loadedProps.length ? '✔' : '✘'} escenario: ${stage.data.name || stage.id} (${stage.from}) · props ${loadedProps.length}/${stage.props.length} · zoom ${stage.data.cameraZoom ?? 1}` +
@@ -74,7 +74,7 @@ async function loadScene(ids) {
   try { Render.forgetTextures(); const n = Render.prewarm(worldTextures()); st.push(`✔ render: ${Render.name()} · ${n} texturas precargadas · calidad ${Optim.s.preset} (texturas ${Optim.s.tex}%, mundo ${Optim.s.res}%)`); }
   catch (e) { console.warn('[TestSong] precarga', e); }
   st.push(...TexLoad.statusLines());
-  Cam.init = false; Scene.loading = false;
+  G.vsChart = null; Scene.loading = false;   // personajes nuevos → PlayState.create otra vez
   const any = Scene.world || notes.ok || iP1.ok || iP2.ok;
   if (isFile && !(bf instanceof RealChar && dad instanceof RealChar)) toast('Abierto como archivo (file://): el navegador bloquea los assets. Usa GitHub Pages o un servidor local (python -m http.server).', 7000);
   else if (!any) toast('No encontré assets reales (data/, shared/images/…): la pantalla queda en negro (mira Asignar assets o la consola)', 5000);
@@ -131,13 +131,10 @@ const G = {
   chart: null, raw: null, meta: null,
   mode: params.get('modo') || 'demo',
   songPos: 0, gameTime: 0, paused: false, overlayKind: null,
-  health: FNF.HEALTH_START, healthLerp: FNF.HEALTH_START,
-  score: 0, misses: 0, combo: 0, judged: 0, accSum: 0,
-  dad: { pose: 'idle', poseAt: -1e9, poseUntil: -1e9, miss: false },
-  bf:  { pose: 'idle', poseAt: -1e9, poseUntil: -1e9, miss: false },
+  healthLerp: FNF.HEALTH_START,   // health, score, combo… → VS.play (más abajo)
   strums: { opponent: { confirmAt: [-1e9, -1e9, -1e9, -1e9], hold: [0, 0, 0, 0] },
             player:   { confirmAt: [-1e9, -1e9, -1e9, -1e9], hold: [0, 0, 0, 0], pressed: [false, false, false, false], pressAt: [0, 0, 0, 0], confirmHeld: [false, false, false, false] } },
-  lastBeat: -999, hudZoom: 1, speed: 1.6, speedTween: null,
+  autoFocus: false, demoHold: [null, null, null, null], drawIdx: { player: 0, opponent: 0 },
 };
 const isBot = () => G.mode === 'demo' || G.mode === 'botplay';
 
@@ -148,7 +145,7 @@ async function loadChart(chart, audio = [], opts = {}) {
   const tok = ++loadToken;
   if (!opts.keepLoader) Loader.reset(opts.label);
   Loader.active = true; G.paused = true; Music.pause(); hideOverlay();
-  G.chart = chart; G.speed = chart.speed;
+  G.chart = chart; G.vsChart = null;
   // personajes / escenario elegidos en "Assets cargados" mandan sobre los del chart
   const ids = Object.assign({}, chart.scene || {}, UserAssets.overrides());
   await Promise.all([loadScene(ids), opts.keepAudio ? null : Music.set(audio), Events.preload(chart), Mods.ready, opts.minMs ? new Promise(ok => setTimeout(ok, opts.minMs)) : null]);
@@ -160,152 +157,172 @@ async function loadChart(chart, audio = [], opts = {}) {
   ModUI.check(chart);    // eventos / note kinds desconocidos → ventana para cargar sus .hxc
 }
 
-/* Reinicia la canción (paused = queda detenida esperando "Jugar") */
+/* =====================================================================
+   v3.8.0 — PlayState de V-Slice (vslice.js → VS.PlayCore): eventos, note kinds,
+   vida/puntuación PBOT1, combo, voces, cámara, scroll speed, Conductor y
+   personajes salen del port. Aquí solo queda lo que es de este motor
+   (audio, dibujo, scripts .lua/.hx, modo demo).
+   ===================================================================== */
+/* VoicesGroup: voz del jugador / del rival (una sola pista "Voices" = sistema antiguo, la usa el jugador) */
+const VOCALS = {
+  get legacyVoiceSystem() { if (this._tr !== Music.tracks) { this._tr = Music.tracks; this._legacy = !Music.tracks.some(t => t.role === 'player' || t.role === 'opponent'); } return this._legacy; },
+  legacyVoiceUsesPlayer: true,
+  get playerVolume() { return Music.getVolume(this.legacyVoiceSystem ? 'voices' : 'player'); },
+  set playerVolume(v) { v = +v; if (Music.getVolume('player') !== v) Music.setVolume('player', v); if (this.legacyVoiceSystem && Music.getVolume('voices') !== v) Music.setVolume('voices', v); },
+  get opponentVolume() { return Music.getVolume('opponent'); },
+  set opponentVolume(v) { v = +v; if (Music.getVolume('opponent') !== v) Music.setVolume('opponent', v); },
+};
+/* PlayState.currentStage: personajes (Stage.getBoyfriend…), props con nombre y la lista para dispatchToCharacters */
+const STAGE_HOST = {
+  getBoyfriend: () => Scene.chars.bf, getDad: () => Scene.chars.dad, getGirlfriend: () => Scene.chars.gf,
+  getNamedProp: name => propTarget(name),
+  _list: [],
+  characters() {   // dad, bf, gf (orden de Stage.dispatchToCharacters); se rehace solo si cambian
+    const c = Scene.chars;
+    if (this._d !== c.dad || this._b !== c.bf || this._g !== c.gf) { this._d = c.dad; this._b = c.bf; this._g = c.gf; this._list = [c.dad, c.bf, c.gf].filter(Boolean); }
+    return this._list;
+  },
+};
+/* el escenario como destino de dispatchEvent: Stage.onScriptEvent pasa el evento a los boppers (props) y luego el script */
+const STAGE_TARGET = { __host: 'Stage', __callEvent(e) { if (e.type === 'SONG_STEP_HIT') propsStep(e.step); StageRT.adapter.__callEvent(e); } };
+const PLAY_HOST = {
+  modules: () => Mods.moduleTargets(),
+  song: null,
+  stageScript: () => STAGE_TARGET,
+  vocals: VOCALS,
+  _warned: new Set(),
+  warn(m) { if (this._warned.has(m)) return; this._warned.add(m); console.warn('[V-Slice]', m); },
+  setHealthIcon: (which, data, shouldBop) => Events.setIcon(which, data, shouldBop),
+  playMissSound: (lo, hi) => playMissSound(lo, hi),
+  displayRating: id => displayRating(id),
+  displayCombo: c => displayCombo(c),
+  playNoteSplash: n => { if (Optim.s.splash !== false) spawnSplash(n.side, n.lane); },
+  onStrumHit(n) { const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime; if (n.side === 'player') s.confirmHeld[n.lane] = true; },
+  afterHit(n) {
+    n.judged = n.hit = true;
+    if (ScriptHub.on) ScriptHub.noteHit(n, n.side === 'player');    // goodNoteHit / opponentNoteHit (.lua) · onPlayerHit / onDadHit (.hx)
+    if (n.side === 'opponent' && G.mode === 'demo' && VS.play.health > 0.35) VS.play.health -= CONFIG.demoOppDrain;   // demo: la barra se mueve
+  },
+  afterMiss(n) { n.judged = n.missed = true; if (ScriptHub.on) ScriptHub.noteMiss(n); },
+  afterHoldDrop(hn) { if (hn.parent) hn.parent.dropped = true; },
+  /* HealthIcon.onStepHit: bop cada 4 steps */
+  onStepHit(step) {
+    if (step % 4 === 0) for (const k in Scene.icons) { const ic = Scene.icons[k]; if (ic && ic.shouldBop !== false) ic.bop(); }
+    if (step >= 0 && ScriptHub.on) ScriptHub.step(step);
+  },
+  onBeatHit(beat) {
+    Speaker.beat(beat);
+    if (beat >= -4 && beat <= -1) { Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME); ScriptHub.countdown(beat + 4); }   // introTHREE/TWO/ONE/GO
+    if (beat >= 0 && ScriptHub.on) ScriptHub.beat(beat);
+  },
+  onHealthZero() { if (!isBot() && !G.paused) openOverlay('over'); },
+  onEventFired: (ev, canceled) => Events.onFired(ev, canceled),
+  /* FlxState.update de los miembros: animaciones de los personajes */
+  updateMembers(elapsed) { const l = STAGE_HOST.characters(); for (let i = 0; i < l.length; i++) l[i].animation.update(elapsed); },
+};
+VS.play = new VS.PlayCore(PLAY_HOST);
+VS.play.currentStage = STAGE_HOST;
+/* G.health, G.score… = los de PlayState (las demás partes del motor y los scripts .lua/.hx los siguen usando) */
+Object.defineProperties(G, {
+  health: { get: () => VS.play.health, set: v => { VS.play.health = +v; }, configurable: true },
+  score: { get: () => VS.play.songScore, set: v => { VS.play.songScore = +v || 0; }, configurable: true },
+  combo: { get: () => VS.play.tallies.combo, set: v => { VS.play.tallies.combo = +v || 0; }, configurable: true },
+  misses: { get: () => VS.play.tallies.missed, set: v => { VS.play.tallies.missed = +v || 0; }, configurable: true },
+  judged: { get: () => { const t = VS.play.tallies; return t.sick + t.good + t.bad + t.shit + t.missed; }, set() {}, configurable: true },
+  accSum: { get: () => { const t = VS.play.tallies; let s = 0; for (const j of CONFIG.judgments) s += (t[j.id] || 0) * j.acc; return s; }, set() {}, configurable: true },
+  speed: { get: () => VS.play.playerStrumline.scrollSpeed, set: v => { if (+v > 0) VS.play.playerStrumline.scrollSpeed = VS.play.opponentStrumline.scrollSpeed = +v; }, configurable: true },
+  hudZoom: { get: () => VS.play.camHUD.zoom, set: v => { VS.play.camHUD.zoom = +v; }, configurable: true },
+});
+
+/* Conductor de V-Slice con los timeChanges del chart (incluye compases de V-Slice: n/d) */
+function conductorFor(c) {
+  const raw = Array.isArray(c.timeChanges) ? c.timeChanges : [];
+  const list = (c.tc || [{ t: 0, bpm: c.bpm || 100 }]).map(p => { const r = raw.find(x => Math.abs((+x.t || 0) - p.t) < 1e-6); return { t: p.t, bpm: p.bpm, n: r && r.n || 4, d: r && r.d || 4 }; });
+  VS.play.conductor.mapTimeChanges(list);
+}
+function syncPlayMode() {
+  const P = VS.play;
+  P.isBotPlayMode = G.mode === 'botplay';
+  P.demoAutoplay = G.mode === 'demo';
+  P.zoomCameraPref = !!Optim.s.bop;
+  P.ghostTappingFeature = G.mode === 'mobile';   // FEATURE_GHOST_TAPPING solo en móvil (como el juego)
+}
+function stageZoomOf() { const st = Scene.stage; return st ? (+(st.data && st.data.cameraZoom) || 1) : 1.05; }
+
+/* Reinicia la canción (paused = queda detenida esperando "Jugar").
+   Primera vez con este chart = PlayState.create (cámara en el rival, Conductor 5 beats antes);
+   después = reintentar (needsReset: SongRetryEvent, resetStage, resetCamera, regenNoteData…) */
 function restart(paused) {
-  const c = G.chart;
-  c.notes.forEach(n => { n.judged = n.hit = n.missed = n.holding = n.dropped = n.skipped = n.passed = false; });
-  const start = params.has('t') && !G.startedOnce ? +params.get('t') : -c.crochet * 5;   // Countdown.hx: empieza 5 beats antes
+  const c = G.chart, P = VS.play;
+  const start = params.has('t') && !G.startedOnce ? Math.max(0, +params.get('t') || 0) : 0;   // startTimestamp
   G.startedOnce = true;
-  Music.pause(); Music.seek(start);
-  G.songPos = start;
-  G.health = G.healthLerp = FNF.HEALTH_START;
-  G.score = G.misses = G.combo = G.judged = G.accSum = 0;
-  G.lastBeat = Math.floor(Cond.beat(G.songPos)); G.lastStep = Math.floor(Cond.step(G.songPos)); G.hudZoom = 1; Cam.bop = 1; G.noteIdx = 0;
+  Music.pause();
   Popups.length = 0; Splashes.length = 0;
-  resetActors();
-  Cam.init = false; Scene.focus = 'dad';
   Mods.resetRuntime(true);
-  Events.seek(Math.max(0, start));         // eventos en t<=0 (p. ej. FocusCamera inicial) se aplican al instante
-  if (start > 0) skipNotesBefore(start);
-  Music.setVolume('player', 1); Music.setVolume('voices', 1);
+  Events.reset();
+  syncPlayMode();
+  P.stageZoom = stageZoomOf();
+  resetActors();
+  G.drawIdx = { player: 0, opponent: 0 };
+  if (G.vsChart !== c) {
+    G.vsChart = c;
+    conductorFor(c);
+    P.startTimestamp = start;
+    P.health = VS.C.HEALTH_STARTING; P.songScore = 0; for (const k in P.tallies) P.tallies[k] = 0;
+    P.songEvents = c.events.map(e => { const d = new VS.SongEventData(e.t, e.e, e.v); if (e.pe) d.pe = e.pe; if (e.ce) d.ce = e.ce; if (e.psych) d.psych = e.psych; return d; });   // pe/ce: onEvent de .lua / Codename
+    P.setNotes(c.notes, c.speed);
+    // PlayState.initCharacters: "Camera starts at dad"
+    const dad = Scene.chars.dad, fp = dad ? dad.cameraFocusPoint : { x: (focusPoint('dad') || [640, 360])[0], y: (focusPoint('dad') || [640, 360])[1] };
+    P.cameraFollowPoint.setPosition(fp.x, fp.y);
+    P.cancelScrollSpeedTweens(); P.playerStrumline.keysHeld.fill(false);
+    P.begin(start);
+  } else P.retry(start, 0);
+  G.demoHold = [null, null, null, null];
+  G.songPos = P.conductor.songPosition;
+  Music.seek(G.songPos);
+  VOCALS.playerVolume = 1; VOCALS.opponentVolume = 1; Music.setVolume('voices', 1);
+  G.healthLerp = P.health;
   if (paused === true) return;
   closeOverlay();
 }
+/* BaseCharacter.resetCharacter + props + iconos + receptores */
 function resetActors() {
-  for (const ch of [G.dad, G.bf]) { ch.pose = 'idle'; ch.poseUntil = -1e9; ch.miss = false; }
   for (const ch of Object.values(Scene.chars)) if (ch) ch.reset();
   propsReset();
   for (const ic of Object.values(Scene.icons)) if (ic) ic.reset();
   for (const s of Object.values(G.strums)) { s.confirmAt.fill(-1e9); s.hold.fill(0); }
   G.strums.player.pressed.fill(false); G.strums.player.confirmHeld.fill(false);
 }
-/* notas anteriores a la posición: se saltan sin contar fallos ni tocar la vida */
-function skipNotesBefore(pos) {
-  G.noteIdx = 0;
-  for (const n of G.chart.notes) {
-    const skip = n.time < pos;
-    n.judged = n.skipped = skip; n.hit = n.missed = n.holding = n.dropped = n.passed = false;
-  }
-}
-/* Buscar (barra de tiempo de la pausa): canción + chart + eventos juntos */
+/* Buscar (barra de tiempo de la pausa) = probar desde esa posición (startTimestamp del editor de charts de V-Slice):
+   las notas anteriores se saltan, los eventos se reinician y los viejos con processOldEvents (FocusCamera, ZoomCamera,
+   SetCameraBop, ScrollSpeed, SetHealthIcon) se aplican ya; la cámara salta a su sitio */
 function seekTo(pos) {
-  const c = G.chart, total = songLength();
+  const P = VS.play, total = songLength();
   pos = clamp(pos, 0, Math.max(0, total - 50));
-  G.songPos = pos; Music.seek(pos);
-  skipNotesBefore(pos);
-  G.lastBeat = Math.floor(Cond.beat(pos)); G.lastStep = Math.floor(Cond.step(pos));
   Popups.length = 0; Splashes.length = 0;
-  resetActors();
-  Cam.init = false;
   Mods.resetRuntime(false);
-  Events.seek(pos);
-  if (!c.hasFocusEvents) Scene.focus = nextFocus(pos) || Scene.focus;
+  Events.reset();
+  syncPlayMode();
+  resetActors();
+  G.drawIdx = { player: 0, opponent: 0 };
+  P.startTimestamp = pos;
+  P.cancelAllCameraTweens(); P.cancelScrollSpeedTweens();
+  for (const s of [P.playerStrumline, P.opponentStrumline]) { s.scrollSpeed = P.chartScrollSpeed; s.keysHeld.fill(false); }
+  P.prevScrollTargets = [];
+  P.regenNoteData(pos);
+  P.startingSong = false; P.isInCountdown = false;
+  P.conductor.update(pos, false, true);
+  P.processSongEvents();
+  P.resetCamera(false, true, true);
+  if (P.cameraZoomTween) P.cameraZoomTween.cancel();
+  P.camera.zoom = P.currentCameraZoom * P.cameraBopMultiplier;
+  G.songPos = pos; Music.seek(pos);
+  G.demoHold = [null, null, null, null];
 }
 function songLength() { return Math.max(G.chart.endTime - 1800, Music.duration || 0) || G.chart.endTime; }
-function nextFocus(pos) { const n = G.chart.notes.find(n => n.time >= pos); return n ? (n.side === 'player' ? 'bf' : 'dad') : null; }
 
-function changeHealth(delta) {
-  if (!Number.isFinite(delta)) return;
-  G.health = clamp(G.health + delta, 0, FNF.HEALTH_MAX);
-  if (G.health <= 0 && !isBot()) openOverlay('over');
-}
-
-function sing(ch, lane, miss = false, holdMs = 0, suffix = '') {
-  ch.pose = LANE_NAMES[lane]; ch.miss = miss; ch.poseAt = G.gameTime;
-  ch.poseUntil = G.gameTime + Math.max(Cond.crochet(G.songPos) * 0.85, holdMs);
-  const real = Scene.chars[ch === G.bf ? 'bf' : 'dad'];
-  if (real) real.sing(lane, miss, holdMs, suffix);
-}
-/* animación especial (hey, ugh, golpes de Blazin'…): la primera que exista en el personaje */
-function playSpecial(role, names, alt) {
-  const c = Scene.chars[role]; if (!c) return false;
-  const list = alt && names.length > 1 ? [names[1], names[0], ...names.slice(2)] : names;
-  for (const nm of list) if (c.anims.has(nm)) { c.playEvent(nm, true); return true; }
-  return false;
-}
-/* animación de una nota según su note kind (juego base imitado o .hxc) */
-function noteAnim(n, kind, miss) {
-  const isP = n.side === 'player', st = isP ? G.bf : G.dad, role = isP ? 'bf' : 'dad';
-  const plain = () => sing(st, n.lane, miss, miss ? 0 : n.sustain, kind && kind.suffix || '');
-  if (!kind || !kind.id) return plain();
-  if (kind.blazin) {
-    // weekend-1-*: Pico (jugador) y Darnell (rival) hacen los golpes; si no tienen esas anims, cantan normal
-    if (miss) { if (!playSpecial('bf', ['hitHigh', 'hitLow'])) plain(); return; }
-    const alt = Math.round(n.time / 10) % 2 === 1;
-    const a = playSpecial('bf', kind.blazin[0], alt), b = playSpecial('dad', kind.blazin[1], alt);
-    if (!(isP ? a : b)) plain();
-    return;
-  }
-  if (kind.hurt && !miss && isP) return sing(st, n.lane, true);
-  if (kind.noAnim && !miss) return;
-  if (kind.gf) { const gf = Scene.chars.gf; if (gf) { gf.sing(n.lane, miss, miss ? 0 : n.sustain); return; } return plain(); }
-  if (kind.special && !miss && playSpecial(role, kind.special)) return;
-  plain();
-}
-const needsModEvent = n => (n.kind && Mods.kinds.has(n.kind)) || Mods.modules.size > 0;
-
-/* Scoring.hx (PBOT1) */
-function scoreNote(ms) {
-  if (ms > 160) return -100;
-  if (ms < 5) return 500;
-  return Math.floor(500 * (1 - 1 / (1 + Math.exp(-0.08 * (ms - 54.99)))) + 9);
-}
-
-function hitNote(n, diff) {
-  const kind = n.kind ? NoteKinds.get(n.kind) : null, isP = n.side === 'player';
-  const j = CONFIG.judgments.find(j => diff <= j.ms) || CONFIG.judgments[CONFIG.judgments.length - 1];
-  // onNoteHit de los scripts (.hxc): pueden cancelar la nota o cambiar la vida
-  const ev = needsModEvent(n) ? Mods.noteEvent('NOTE_HIT', n, { judgement: j.id, score: isP ? scoreNote(diff) : 0, healthChange: isP ? (kind && kind.hitHealth != null ? kind.hitHealth : j.health) : 0, isComboBreak: false, hitDiff: diff }) : null;
-  n.judged = n.hit = true; n.holding = n.sustain > 0 && !(ev && ev.canceled);
-  if (ev && ev.canceled) return;
-  const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime;
-  if (isP) { s.confirmHeld[n.lane] = true; Music.setVolume('player', 1); Music.setVolume('voices', 1); }
-  noteAnim(n, kind, false);
-  if (ScriptHub.on) ScriptHub.noteHit(n, isP);   // v3.7.0: goodNoteHit / opponentNoteHit (.lua) · onPlayerHit / onDadHit (.hx)
-  if (!isP) {
-    if (G.mode === 'demo' && G.health > 0.35) changeHealth(-CONFIG.demoOppDrain);
-    return;
-  }
-  if (kind && kind.hurt) { changeHealth(ev ? +ev.healthChange || 0 : kind.hitHealth); playMissSound(); return; }   // nota "hurt": tocarla duele
-  G.score += ev ? +ev.score || 0 : scoreNote(diff); G.judged++; G.accSum += j.acc;
-  if (j.id === 'bad' || j.id === 'shit') breakCombo(); else { G.combo++; comboMilestone(); }
-  changeHealth(ev ? +ev.healthChange || 0 : j.health);
-  if (j.id === 'sick') spawnSplash(n.side, n.lane);
-  displayRating(j.id);
-  if (G.combo >= 10) displayCombo(G.combo);
-}
-function comboMilestone() { const gf = Scene.chars.gf; if (gf && gf.anims.has('combo' + G.combo)) gf.special('combo' + G.combo); }
-function breakCombo() {
-  const gf = Scene.chars.gf;
-  if (gf) { const drops = [...gf.anims.keys()].filter(k => /^drop\d+$/.test(k)).map(k => +k.slice(4)).filter(v => G.combo >= v).sort((a, b) => b - a); if (drops.length) gf.special('drop' + drops[0]); }
-  G.combo = 0;
-}
-
-function missNote(n) {
-  const kind = n.kind ? NoteKinds.get(n.kind) : null;
-  if (kind && kind.hurt && !Mods.kinds.has(n.kind)) { n.judged = n.passed = true; return; }   // dejar pasar una nota "hurt" no es fallo
-  const ev = needsModEvent(n) ? Mods.noteEvent('NOTE_MISS', n, { healthChange: FNF.HEALTH_MISS, playSound: true }) : null;
-  n.judged = n.missed = true;
-  if (ev && ev.canceled) { n.missed = false; n.passed = true; return; }
-  if (kind && kind.hurt) { n.missed = false; n.passed = true; if (ev) changeHealth(+ev.healthChange || 0); return; }
-  if (G.combo >= 10) displayCombo(0);
-  G.misses++; G.judged++; G.score -= 100; breakCombo();
-  noteAnim(n, kind, true);
-  if (ScriptHub.on) ScriptHub.noteMiss(n);
-  Music.setVolume('player', 0); Music.setVolume('voices', 0);     // V-Slice: se silencia la voz del jugador
-  if (!ev || ev.playSound !== false) playMissSound();
-  changeHealth(ev ? +ev.healthChange || 0 : FNF.HEALTH_MISS);
-}
+/* compatibilidad: scripts .lua/.hx que suman vida (el límite lo pone PlayState.update) */
+function changeHealth(delta) { if (Number.isFinite(delta)) VS.play.health += delta; }
 
 /* En demo el bot falla a propósito en "olas" para que la barra de vida se mueva */
 function demoShouldMiss(n) {
@@ -313,107 +330,78 @@ function demoShouldMiss(n) {
   const wave = 0.5 + 0.5 * Math.sin(n.time / 5200);
   return n.seed < 0.06 + 0.5 * wave * wave;
 }
+/* demo: teclas sintéticas (como un jugador perfecto que a veces falla), así la lógica es la del jugador */
+function demoInput(pos) {
+  const P = VS.play, pl = P.playerStrumline, hold = G.demoHold;
+  for (let l = 0; l < 4; l++) if (hold[l] != null && pos >= hold[l]) { hold[l] = null; P.inputReleaseQueue.push({ noteDirection: l, songPos: pos }); G.strums.player.pressed[l] = false; }
+  for (let i = 0, a = pl.notes; i < a.length; i++) {
+    const n = a[i];
+    if (!n.alive || n.hasBeenHit || !n.mayHit || pos < n.time || n.demoSkip) continue;
+    if (demoShouldMiss(n) || (n.kind && NoteKinds.isHurt(n.kind))) { n.demoSkip = true; continue; }   // deja pasar la nota (o esquiva la que hace daño)
+    if (hold[n.lane] != null) { P.inputReleaseQueue.push({ noteDirection: n.lane, songPos: pos }); }
+    P.inputPressQueue.push({ noteDirection: n.lane, songPos: n.time });
+    hold[n.lane] = n.time + Math.max(80, n.sustain);
+    G.strums.player.pressed[n.lane] = true;
+  }
+}
 
 /* ---------- update ---------- */
-function onBeat(beat) {
-  for (const c of Object.values(Scene.chars)) if (c) c.onBeat(beat);
-  for (const ic of Object.values(Scene.icons)) if (ic && ic.shouldBop !== false) ic.bop();   // HealthIcon.onStepHit (cada 4 steps)
-  propsBeat(beat); Speaker.beat(beat);
-  if (beat >= -4 && beat <= -1) { Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME); ScriptHub.countdown(beat + 4); }   // introTHREE/TWO/ONE/GO
-  if (Mods.hasHooks) Mods.hook('onBeatHit', { beat, __host: 'SongTimeScriptEvent' });
-  if (beat >= 0 && ScriptHub.on) ScriptHub.beat(beat);   // v3.7.0: onBeatHit de .lua / beatHit de .hx
-}
-/* PlayState.stepHit: bop de cámara cada "rate" beats (decimal) con "offset" (SetCameraBop), si el HUD está por debajo de 135 % */
-function onStep(step) {
-  const rate = Cam.zoomRate, spb = 4;
-  if (Optim.s.bop && rate > 0 && G.hudZoom < 1.35) {
-    const m = (step + Cam.zoomOffset * spb) % (rate * spb);
-    if (Math.abs(m) < 1e-6 || Math.abs(Math.abs(m) - rate * spb) < 1e-6) { Cam.bop = Cam.bopIntensity; G.hudZoom += Cam.hudIntensity; }
-  }
-  if (Mods.hasHooks) Mods.hook('onStepHit', { step, __host: 'SongTimeScriptEvent' });
-  if (step >= 0 && ScriptHub.on) ScriptHub.step(step);
-}
-
 function update(dt) {
-  const c = G.chart;
+  const c = G.chart, P = VS.play;
   G.gameTime += dt;
   // reloj maestro: la posición de la canción sale siempre del reloj del audio (nunca se acumula dt)
   Music.tick();
   G.songPos = Music.position();
-  Events.update(G.songPos);
-  const step = Math.floor(Cond.step(G.songPos)), beat = Math.floor(step / 4);
-  if (step !== G.lastStep) { if (G.lastStep == null || step < G.lastStep || step - G.lastStep > 32) G.lastStep = step - 1; for (let s2 = G.lastStep + 1; s2 <= step; s2++) onStep(s2); G.lastStep = step; }
-  if (beat !== G.lastBeat) { for (let b = G.lastBeat + 1; b <= beat && b - G.lastBeat < 8; b++) onBeat(b); G.lastBeat = beat; }
+  syncPlayMode();
+  // FlxG.plugins (tweens/timers de los scripts) → estado (PlayCore.update en el orden de PlayState)
+  Mods.updatePlugins(dt);
+  if (P.demoAutoplay) demoInput(G.songPos);
+  P.update(dt / 1000, { songPos: G.songPos });
+  P.justPressedAny = false;
+  G.songPos = P.conductor.songPosition;
   Mods.update(dt); CamFX.tick();
-
-  // cámara / HUD: vuelven a 1 (0.95 por frame a 60 fps)
-  const decay = Math.pow(0.95, dt / (1000 / 60));
-  if (Cam.zoomRate > 0) { Cam.bop = lerp(1, Cam.bop, decay); G.hudZoom = lerp(1, G.hudZoom, decay); }   // solo con bop activo (como el juego)
+  // convertidos sin FocusCamera: la cámara sigue a quien canta (como el modo automático de Psych)
+  if (G.autoFocus && G.songPos >= 0) autoFocusStep();
   G.healthLerp = lerp(G.health, G.healthLerp, Math.pow(0.85, dt / (1000 / 60)));
-
-  let focusSet = false;
-  G.strums.opponent.hold.fill(0);
-  // v3.3.0: índice de la primera nota sin terminar (antes se recorrían todas las ya jugadas cada frame)
-  if (G.noteArr !== c.notes) { G.noteArr = c.notes; G.noteIdx = 0; }
-  const notes = c.notes;
-  while (G.noteIdx < notes.length && notes[G.noteIdx].judged && !notes[G.noteIdx].holding && notes[G.noteIdx].time < G.songPos - 1000) G.noteIdx++;
-  for (let ni = G.noteIdx; ni < notes.length; ni++) {
-    const n = notes[ni];
-    if (n.time - G.songPos > 3000) break;
-    if (n.judged) {
-      if (n.holding) {
-        if (G.songPos >= n.time + n.sustain) n.holding = false;
-        else {
-          const s = G.strums[n.side]; s.confirmAt[n.lane] = G.gameTime; if (n.side === 'opponent') s.hold[n.lane] = 1;
-          const ch = n.side === 'player' ? G.bf : G.dad; ch.poseUntil = Math.max(ch.poseUntil, G.gameTime + 60);
-          const real = Scene.chars[n.side === 'player' ? 'bf' : 'dad']; if (real) real.holdOn();
-          if (n.side === 'player') changeHealth(FNF.HEALTH_HOLD_PER_SEC * dt / 1000);
-        }
-      }
-      continue;
-    }
-    const diff = n.time - G.songPos;
-    // cámara: enfoca a quien canta la próxima nota (como los eventos FocusCamera)
-    // (solo si el chart no trae eventos FocusCamera; con eventos manda el evento, como en V-Slice)
-    if (!focusSet && !c.hasFocusEvents) { focusSet = true; if (diff < Cond.crochet(G.songPos) * 2 && G.songPos >= 0) Scene.focus = n.side === 'player' ? 'bf' : 'dad'; }
-    if (n.side === 'opponent') { if (diff <= 0) hitNote(n, 0); continue; }
-    if (isBot() && diff <= 0) {
-      if (n.kind && NoteKinds.isHurt(n.kind)) { /* el bot esquiva las notas que hacen daño */ }
-      else if (G.mode === 'demo' && demoShouldMiss(n)) { /* deja pasar la nota */ }
-      else { hitNote(n, 0); continue; }
-    }
-    if (diff < -FNF.HIT_WINDOW_MS) missNote(n);
+  // receptores: brillo mientras se sostiene una nota larga (Strumline.playConfirmHold)
+  const so = G.strums.opponent; so.hold[0] = so.hold[1] = so.hold[2] = so.hold[3] = 0;
+  for (const side of ['opponent', 'player']) {
+    const hs = P[side + 'Strumline'].holdNotes, st = G.strums[side];
+    for (let i = 0; i < hs.length; i++) { const hn = hs[i]; if (hn.alive && hn.hitNote && !hn.missedNote && hn.sustainLength > 0 && G.songPos >= hn.strumTime) { st.confirmAt[hn.noteDirection] = G.gameTime; if (side === 'opponent') st.hold[hn.noteDirection] = 1; } }
   }
-  for (const [ic, hp] of [[Scene.icons.player, G.health], [Scene.icons.opponent, FNF.HEALTH_MAX - G.health]]) if (ic) ic.updateAnim(hp);
+  const ip = Scene.icons.player, io = Scene.icons.opponent;
+  if (ip) ip.updateAnim(G.health); if (io) io.updateAnim(FNF.HEALTH_MAX - G.health);
   updatePopups(dt);
-
   const end = Math.max(c.endTime, Music.duration + 300);
   if (G.songPos > end) { if (G.mode === 'demo') restart(); else openOverlay('end'); }
 }
+function autoFocusStep() {
+  const P = VS.play, pos = G.songPos, cr = P.conductor.beatLengthMs * 2;
+  let best = null;
+  for (let k = 0; k < 2; k++) {   // v3.8.0: sin array por frame
+    const s = k ? P.playerStrumline : P.opponentStrumline, a = s.noteData; for (let i = s.nextNoteIndex > 8 ? s.nextNoteIndex - 8 : 0; i < a.length; i++) { const n = a[i]; if (n.time < pos - 50) continue; if (!best || n.time < best.time) best = n; break; }
+  }
+  if (!best || best.time - pos > cr) return;
+  const role = best.side === 'player' ? 'bf' : 'dad';
+  if (Scene.focus === role && G.autoFocusSet) return;
+  Scene.focus = role; G.autoFocusSet = true;
+  const ch = Scene.chars[role], p = ch ? ch.cameraFocusPoint : null, f = p ? null : focusPoint(role);
+  if (p || f) P.cameraFollowPoint.setPosition(p ? p.x : f[0], p ? p.y : f[1]);
+}
 
-/* ---------- input ---------- */
+/* ---------- input (PlayState.onKeyPress / onKeyRelease → cola, se procesa en el update) ---------- */
 function press(lane) {
   if (G.paused) return;
   if (G.mode === 'demo') { setMode('keyboard'); toast('Modo Teclado activado ⌨'); }
-  if (isBot()) return;
   const st = G.strums.player; st.pressed[lane] = true; st.pressAt[lane] = G.gameTime; st.confirmHeld[lane] = false;
   // posición exacta del audio en el momento de la tecla (no la del último frame: con pocos FPS eso desfasaba el juicio)
-  if (Music.playing) G.songPos = Music.position();
-  let best = null;
-  const notes = G.chart.notes;
-  for (let ni = G.noteIdx || 0; ni < notes.length; ni++) {
-    const n = notes[ni];
-    if (n.time - G.songPos > FNF.HIT_WINDOW_MS) break;
-    if (n.judged || n.side !== 'player' || n.lane !== lane) continue;
-    if (Math.abs(n.time - G.songPos) <= FNF.HIT_WINDOW_MS) { best = n; break; }
-  }
-  if (best) hitNote(best, Math.abs(best.time - G.songPos));
-  // ghost tapping: sin penalización (opción por defecto del juego)
+  const pos = Music.playing ? Music.position() : G.songPos;
+  VS.play.inputPressQueue.push({ noteDirection: lane, songPos: pos });
+  VS.play.justPressedAny = true;
 }
 function release(lane) {
   const st = G.strums.player; st.pressed[lane] = false; st.confirmHeld[lane] = false;
-  if (isBot()) return;
-  for (const n of G.chart.notes) if (n.holding && n.side === 'player' && n.lane === lane) { n.holding = false; n.dropped = true; }
+  VS.play.inputReleaseQueue.push({ noteDirection: lane, songPos: Music.playing ? Music.position() : G.songPos });
 }
 
 /* ---------- layout (pantalla del juego 1280x720 escalada para caber) ---------- */
@@ -485,10 +473,10 @@ function drawLoading() {
 function drawHudLayer() {
   const hz = G.hudZoom, k = DPR * V.s * hz;
   ctx.setTransform(k, 0, 0, k, DPR * (V.ox + V.s * V.w / 2 * (1 - hz)), DPR * (V.oy + V.s * V.h / 2 * (1 - hz)));
-  const hudSprites = ModRT.sprites.filter(sp => sp.onHud);
-  for (const sp of hudSprites) if (sp.behind) { ctx.save(); sp.render(null); ctx.restore(); }   // insert(indexOf(strumLine) - 1)
+  const ms = ModRT.sprites;   // (sin crear arrays por frame)
+  for (let i = 0; i < ms.length; i++) { const sp = ms[i]; if (sp.onHud && sp.behind) { ctx.save(); sp.render(null); ctx.restore(); } }   // insert(indexOf(strumLine) - 1)
   drawStrumsAndNotes();
-  for (const sp of hudSprites) if (!sp.behind) { ctx.save(); sp.render(null); ctx.restore(); }
+  for (let i = 0; i < ms.length; i++) { const sp = ms[i]; if (sp.onHud && !sp.behind) { ctx.save(); sp.render(null); ctx.restore(); } }
   drawHUD();
 }
 function render(dt = 16) {
@@ -502,7 +490,7 @@ function render(dt = 16) {
   if (Scene.world) {
     // v3.3.0: el mundo se dibuja con WebGL (lotes) o con el lienzo 2D (directo o a menor resolución)
     let R = null;
-    try { R = Render.beginWorld(worldNeedsDirect()); renderWorld(G.paused ? 0 : dt, Optim.s.bop ? Cam.bop : 1, R); }
+    try { R = Render.beginWorld(worldNeedsDirect()); renderWorld(G.paused ? 0 : dt, 1, R); }
     catch (e) { reportOnce('mundo', e); }
     try { if (R) Render.endWorld(R); } catch (e) { reportOnce('fin del mundo', e); }
     // v3.4.0: shaders cargados (post-proceso WebGL de la cámara del juego)

@@ -445,11 +445,14 @@ const HX = (() => {
   }
   class Interval { constructor(a, b) { this.a = a; this.b = b; } }
   class Ret { constructor(v) { this.v = v; } }
+  /* v3.8.0: "return" sin excepciones (lanzar/atrapar Ret costaba ~40 % del tiempo de un onUpdate): bandera compartida */
+  const CF = { ret: false, v: null };
+  function takeRet() { const v = CF.v; CF.ret = false; CF.v = null; return v; }
   const BRK = { brk: 1 }, CNT = { cnt: 1 };
   class HxThrow extends Error { constructor(v) { super(String(v)); this.value = v; } }
 
   /* ---------- registro / avisos ---------- */
-  const R = { cur: null, notes: new Map() };   // script actual -> Set de textos
+  const R = { cur: null, notes: new Map(), gen: 0 };   // v3.8.0: gen = generación de clases (invalida las cachés de métodos)   // script actual -> Set de textos
   function note(text) {
     const k = R.cur || '(script)';
     if (!R.notes.has(k)) R.notes.set(k, new Set());
@@ -493,6 +496,7 @@ const HX = (() => {
       this.name = name; this.src = src; this.host = host; this.classes = new Map(); this.imports = []; this.errors = [];
       const parsed = new Parser(tokenize(src), src).file();
       this.imports = parsed.imports; this.errors = parsed.errors.slice(); this.top = parsed.top; this.topScope = null;
+      R.gen++;
       for (const c of parsed.classes) { c.script = this; this.classes.set(c.name, c); this.errors.push(...c.errors.map(e => `${c.name}: ${e}`)); }
       this.alias = new Map(this.imports.map(im => [im.alias, im.path]));
       for (const c of this.classes.values()) this.initStatics(c);
@@ -515,8 +519,8 @@ const HX = (() => {
       if (vars) for (const [k, v] of Object.entries(vars)) sc.v.set(k, v);
       let r = null;
       const prev = R.cur; R.cur = this.name;
-      try { for (const st of this.top) r = this.exec(st, sc); }
-      catch (e) { if (e instanceof Ret) return e.v; throw e; }
+      try { for (const st of this.top) { r = this.exec(st, sc); if (CF.ret) return takeRet(); } }
+      catch (e) { CF.ret = false; if (e instanceof Ret) return e.v; throw e; }
       finally { R.cur = prev; }
       return r;
     }
@@ -528,9 +532,37 @@ const HX = (() => {
     }
     setTop(n, v) { if (this.topScope) this.topScope.v.set(n, v); }
     findClass(name) { return this.classes.get(name) || this.host.findClass(name); }
-    parentOf(cls) { if (!cls.parent) return null; const base = cls.parent.split('.').pop(); const pc = this.findClass(base); return pc && pc !== cls ? pc : null; }
-    nativeBase(cls) { let c = cls, d = 0; while (c && d++ < 12) { const p = this.parentOf(c); if (!p) return (c.parent || '').split('.').pop(); c = p; } return ''; }
-    findMethod(cls, n) { let c = cls, d = 0; while (c && d++ < 12) { if (c.methods[n]) return { fn: c.methods[n], cls: c }; c = c.script ? c.script.parentOf(c) : null; } return null; }
+    parentOf(cls) {   // v3.8.0: cacheado por clase y generación
+      if (!cls.parent) return null;
+      if (cls.__poGen === R.gen) return cls.__po;
+      const base = cls.parent.split('.').pop(); const pc = this.findClass(base), r = pc && pc !== cls ? pc : null;
+      cls.__po = r; cls.__poGen = R.gen; return r;
+    }
+    nativeBase(cls) {   // v3.8.0: cacheado por clase (se invalida si cambian las clases registradas)
+      if (cls && cls.__nbGen === R.gen) return cls.__nb;
+      let c = cls, d = 0, r = '';
+      while (c && d++ < 12) { const p = this.parentOf(c); if (!p) { r = (c.parent || '').split('.').pop(); break; } c = p; }
+      if (cls) { cls.__nb = r; cls.__nbGen = R.gen; }
+      return r;
+    }
+    findMethod(cls, n) {   // v3.8.0: búsqueda en la cadena de herencia cacheada por clase y nombre
+      if (!cls) return null;
+      let mc = cls.__mc;
+      if (!mc || cls.__mcGen !== R.gen) { mc = cls.__mc = new Map(); cls.__mcGen = R.gen; }
+      let m = mc.get(n);
+      if (m !== undefined) return m;
+      m = null;
+      let c = cls, d = 0; while (c && d++ < 12) { if (c.methods[n]) { m = { fn: c.methods[n], cls: c }; break; } c = c.script ? c.script.parentOf(c) : null; }
+      mc.set(n, m); return m;
+    }
+    /* v3.8.0: método ligado a una instancia, creado una sola vez (antes: una función nueva en cada acceso obj.metodo) */
+    boundMethod(o, m, n) {
+      let bm = o.__bm;
+      if (!bm || bm.gen !== R.gen) { bm = { gen: R.gen, m: new Map() }; Object.defineProperty(o, '__bm', { value: bm, enumerable: false, configurable: true, writable: true }); }
+      let f = bm.m.get(n);
+      if (!f || f.__m !== m) { f = m.cls.script.mkFunc(m.fn, null, o, m.cls); f.__m = m; bm.m.set(n, f); }
+      return f;
+    }
     initStatics(c) {
       c.staticVals = {};
       const sc = new Scope(null, null, c);
@@ -561,22 +593,28 @@ const HX = (() => {
       sc.fn = fn;
       (fn.params || []).forEach((p, i) => { let v = args[i]; if ((v === undefined || v === null) && p.def) v = this.eval(p.def, sc); sc.v.set(p.n, v === undefined ? null : v); });
       if (fn.name) sc.v.set('__fnname', fn.name);
-      try { const r = this.exec(fn.body, sc); return fn.exprBody ? r : null; }
-      catch (e) { if (e instanceof Ret) return e.v; throw e; }
+      try { const r = this.exec(fn.body, sc); if (CF.ret) return takeRet(); return fn.exprBody ? r : null; }
+      catch (e) { CF.ret = false; if (e instanceof Ret) return e.v; throw e; }
     }
     /* ---- sentencias ---- */
     exec(node, sc) {
       if (!node) return null;
       switch (node.k) {
-        case 'block': { const s2 = new Scope(sc); let r = null; for (const st of node.body) r = this.exec(st, s2); return r; }
+        case 'block': {   // v3.8.0: solo se crea un Scope nuevo si el bloque declara algo
+          let need = node.__ns;
+          if (need === undefined) need = node.__ns = node.body.some(st => st && (st.k === 'var' || st.k === 'fndecl' || (st.k === 'fn' && st.name)));
+          const s2 = need ? new Scope(sc) : sc, b = node.body; let r = null;
+          for (let i = 0; i < b.length; i++) { r = this.exec(b[i], s2); if (CF.ret) return r; }
+          return r;
+        }
         case 'var': for (const d of node.decls) sc.v.set(d.n, d.e ? this.eval(d.e, sc) : null); return null;
         case 'fndecl': { const f = this.mkFunc(node.fn, sc, sc.self, sc.cls); sc.v.set(node.name, f); return null; }
-        case 'while': { let guard = 0; while (this.truthy(this.eval(node.c, sc))) { if (++guard > 1e6) throw new Error('bucle infinito'); try { this.exec(node.body, sc); } catch (e) { if (e === BRK) break; if (e === CNT) continue; throw e; } } return null; }
-        case 'do': { let guard = 0; do { if (++guard > 1e6) throw new Error('bucle infinito'); try { this.exec(node.body, sc); } catch (e) { if (e === BRK) break; if (e === CNT) continue; throw e; } } while (this.truthy(this.eval(node.c, sc))); return null; }
+        case 'while': { let guard = 0; while (this.truthy(this.eval(node.c, sc))) { if (++guard > 1e6) throw new Error('bucle infinito'); try { this.exec(node.body, sc); } catch (e) { if (e === BRK) break; if (e === CNT) continue; throw e; } if (CF.ret) return null; } return null; }
+        case 'do': { let guard = 0; do { if (++guard > 1e6) throw new Error('bucle infinito'); try { this.exec(node.body, sc); } catch (e) { if (e === BRK) break; if (e === CNT) continue; throw e; } if (CF.ret) return null; } while (this.truthy(this.eval(node.c, sc))); return null; }
         case 'for': {
           const it = this.eval(node.it, sc);
           const s2 = new Scope(sc);
-          const run = () => { try { this.exec(node.body, s2); } catch (e) { if (e === BRK) return 'b'; if (e === CNT) return; throw e; } };
+          const run = () => { try { this.exec(node.body, s2); } catch (e) { if (e === BRK) return 'b'; if (e === CNT) return; throw e; } if (CF.ret) return 'b'; };
           if (it instanceof Interval) { for (let i = it.a; i < it.b; i++) { s2.v.set(node.v, i); if (run() === 'b') break; } return null; }
           let list;
           if (node.v2) {
@@ -588,7 +626,7 @@ const HX = (() => {
           for (const v of list) { s2.v.set(node.v, v); if (run() === 'b') break; }
           return null;
         }
-        case 'ret': throw new Ret(node.e ? this.eval(node.e, sc) : null);
+        case 'ret': { const v = node.e ? this.eval(node.e, sc) : null; CF.v = v; CF.ret = true; return v; }
         case 'break': throw BRK;
         case 'cont': throw CNT;
         case 'throw': throw new HxThrow(this.eval(node.e, sc));
@@ -618,16 +656,21 @@ const HX = (() => {
     }
     truthy(v) { return isStub(v) ? true : !!v; }
     /* ---- expresiones ---- */
-    lookup(sc, n) {
-      for (let s = sc; s; s = s.parent) if (s.v.has(n)) return { s };
+    lookup(sc, n) {   // v3.8.0: devuelve el Scope (sin objeto intermedio)
+      for (let s = sc; s; s = s.parent) if (s.v.has(n)) return s;
       return null;
     }
-    getId(n, sc) {
-      const l = this.lookup(sc, n); if (l) return l.s.v.get(n);
+    getId(n, sc, node) {
+      for (let s = sc; s; s = s.parent) { const v = s.v.get(n); if (v !== undefined || s.v.has(n)) return v; }
       const self = sc.self;
+      // v3.8.0: identificador pre-resuelto: si la última vez fue una global del anfitrión (FlxG, PlayState, Math…)
+      // con la misma clase y generación, se salta la búsqueda en métodos/estáticos/clases/miembros nativos
+      if (node && node.__gGen === R.gen && node.__gCls === (self ? self.__hxc || self : null) && !(self && Object.prototype.hasOwnProperty.call(self, n))) {
+        const g = this.host.global(n, this.alias.get(n)); if (g !== undefined) return g;
+      }
       if (self) {
         if (Object.prototype.hasOwnProperty.call(self, n)) return self[n];
-        if (self.__hxc) { const m = this.findMethod(self.__hxc, n); if (m) return m.cls.script.mkFunc(m.fn, null, self, m.cls); }
+        if (self.__hxc) { const m = this.findMethod(self.__hxc, n); if (m) return this.boundMethod(self, m, n); }
         else if (n in self) return self[n];
       }
       for (let c = sc.cls, d = 0; c && d < 12; c = c.script.parentOf(c), d++) {
@@ -637,13 +680,13 @@ const HX = (() => {
       const cls = this.findClass(n); if (cls) return cls;
       if (self && self.__hxc) { const nv = this.host.nativeMember(this.nativeBase(self.__hxc), self, n); if (nv !== undefined) return nv; }
       const g = this.host.global(n, this.alias.get(n));
-      if (g !== undefined) return g;
+      if (g !== undefined) { if (node) { node.__gGen = R.gen; node.__gCls = self ? self.__hxc || self : null; } return g; }
       if (/^[A-Z]/.test(n)) { note(`clase desconocida: ${n}`); return stub(n); }
       note(`variable no definida: ${n} (se usa null)`);
       return null;
     }
     setId(n, v, sc) {
-      const l = this.lookup(sc, n); if (l) { l.s.v.set(n, v); return v; }
+      const l = this.lookup(sc, n); if (l) { l.v.set(n, v); return v; }
       const self = sc.self;
       if (self && (Object.prototype.hasOwnProperty.call(self, n) || !self.__hxc)) { self[n] = v; return v; }
       for (let c = sc.cls, d = 0; c && d < 12; c = c.script.parentOf(c), d++) if (c.staticVals && n in c.staticVals) { c.staticVals[n] = v; return v; }
@@ -656,7 +699,7 @@ const HX = (() => {
       if (o.__hxcls) { const c = o; if (c.staticVals && n in c.staticVals) return c.staticVals[n]; if (c.staticMethods[n]) return c.script.mkFunc(c.staticMethods[n], null, null, c); note(`${c.name}.${n} no existe`); return null; }
       if (o.__hxc) {
         if (Object.prototype.hasOwnProperty.call(o, n)) return o[n];
-        const m = this.findMethod(o.__hxc, n); if (m) return m.cls.script.mkFunc(m.fn, null, o, m.cls);
+        const m = this.findMethod(o.__hxc, n); if (m) return this.boundMethod(o, m, n);
         const nv = this.host.nativeMember(this.nativeBase(o.__hxc), o, n); if (nv !== undefined) return nv;
         return null;
       }
@@ -702,7 +745,7 @@ const HX = (() => {
         case 'lit': if (node.isCheck) { const v = this.eval(node.isCheck, sc); return v !== null && v !== undefined; } return node.v;
         case 'str': return node.parts.map(p => typeof p === 'string' ? p : String(this.eval(p, sc) ?? 'null')).join('');
         case 'regex': return new EReg(node.src, node.flags);
-        case 'id': return this.getId(node.n, sc);
+        case 'id': return this.getId(node.n, sc, node);
         case 'this': return sc.self;
         case 'super': return { __super: true };
         case 'arr': return node.items.map(x => this.eval(x, sc));
@@ -791,12 +834,21 @@ const HX = (() => {
       let fn;
       if (f.k === 'field') {
         if (f.o.k === 'super') fn = this.superMember(sc, f.n);
-        else { const o = this.eval(f.o, sc); if (o == null && f.opt) return null; fn = this.getField(o, f.n, f.opt); if (fn == null && f.opt) return null; }
+        else {
+          const o = this.eval(f.o, sc); if (o == null && f.opt) return null;
+          // v3.8.0: método nativo de un objeto del anfitrión: se llama directo (sin .bind por llamada)
+          if (o != null && typeof o === 'object' && !o.__hxc && !o.__hxcls && !Array.isArray(o) && !isStub(o)) {
+            const m = o[f.n];
+            if (typeof m === 'function' && !m.__hxfn && !m.__hxcls) { const a = node.args, av = new Array(a.length); for (let i = 0; i < a.length; i++) av[i] = this.eval(a[i], sc); const r = m.apply(o, av); return r === undefined ? null : r; }
+          }
+          fn = this.getField(o, f.n, f.opt); if (fn == null && f.opt) return null;
+        }
       } else fn = this.eval(f, sc);
       if (fn == null) { if (node.opt) return null; throw new Error(`llamada a null (${this.describe(f)})`); }
       if (fn.__hxcls) { note(`${fn.name}() como función`); return null; }
       if (typeof fn !== 'function') throw new Error(`${this.describe(f)} no es una función`);
-      const r = fn(...args());
+      const a = node.args, av = new Array(a.length); for (let i = 0; i < a.length; i++) av[i] = this.eval(a[i], sc);
+      const r = fn.apply(null, av);
       return r === undefined ? null : r;
     }
     describe(n) { return n.k === 'id' ? n.n : n.k === 'field' ? this.describe(n.o) + '.' + n.n : n.k === 'this' ? 'this' : n.k; }

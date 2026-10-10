@@ -57,34 +57,49 @@ async function loadStage(id) {
 /* ---------- animaciones de props (Bopper / PlayAnimation sobre un prop con nombre) ---------- */
 function propSet(p, a, loop) { p.cur = a.name; p.frames = a.frames; p.fps = a.fps; p.loop = loop ?? a.loop; p.off = a.off; p.t0 = G.gameTime || 0; }
 function propFinished(p) { return !p.loop && (G.gameTime - (p.t0 || 0)) / 1000 * p.fps >= p.frames.length; }
-function propPlay(name, anim, force) {
-  const st = Scene.stage; if (!st) return false;
-  const p = st.props.find(x => x.name === name) || st.props.find(x => String(x.name).toLowerCase() === String(name).toLowerCase());
-  if (!p || !p.anims) return false;
-  const a = p.anims.get(anim); if (!a) return false;
-  if (p.lock && !(p.cur === anim && force)) return false;
-  if (!force && p.cur === anim && !propFinished(p)) return true;
-  propSet(p, a); if (force) p.lock = true;
-  return true;
+function propByName(name) {
+  const st = Scene.stage; if (!st) return null;
+  return st.props.find(x => x.name === name) || st.props.find(x => String(x.name).toLowerCase() === String(name).toLowerCase()) || null;
 }
-/* beat: los props con danceEvery bailan (danceLeft/danceRight o idle), sin cortar una animación especial */
-function propsBeat(beat) {
+/* v3.8.0: FlxAnimationController.play del prop (lo que hace PlayAnimation sobre un prop): sin forzar, la misma
+   animación sin terminar sigue; si no, empieza de nuevo. No bloquea nada (el siguiente bop la puede cortar, como en V-Slice). */
+function propAnimPlay(p, anim, force) {
+  const a = p && p.anims && p.anims.get(anim); if (!a) return false;
+  if (!force && p.cur === anim && !propFinished(p)) return true;
+  propSet(p, a); return true;
+}
+function propPlay(name, anim, force) { return propAnimPlay(propByName(name), anim, force); }
+/* Bopper.correctAnimationName: quita "-sufijo" hasta encontrar una que exista */
+function propCorrect(p, name) { while (true) { if (p.anims.has(name)) return name; const i = name.lastIndexOf('-'); if (i === -1) return null; name = name.substring(0, i); } }
+/* Bopper.onStepHit → dance(shouldBop = true): props de Stage (boppers), en el orden de Stage.onScriptEvent */
+function propsStep(step) {
   const st = Scene.stage; if (!st) return;
   for (const p of st.props) {
     if (!p.anims || !(p.danceEvery > 0)) continue;
-    if (p.lock) { if (propFinished(p)) p.lock = false; else continue; }
-    const every = Math.max(1, Math.round(p.danceEvery));
-    if (((beat % every) + every) % every !== 0) continue;
-    if (p.cur && !/^(idle|dance)/.test(p.cur) && !propFinished(p)) continue;
-    let a;
-    if (p.hasLR) { p.danced = !p.danced; a = p.anims.get(p.danced ? 'danceLeft' : 'danceRight'); }
-    else a = p.anims.get('idle') || p.anims.get(p.cur);
-    if (a) propSet(p, a);
+    if ((step % (p.danceEvery * 4)) !== 0) continue;
+    if (p.shouldAlternate == null) p.shouldAlternate = p.anims.has('danceLeft');
+    let n;
+    if (p.shouldAlternate) { n = p.hasDanced ? 'danceRight' : 'danceLeft'; p.hasDanced = !p.hasDanced; }
+    else n = 'idle';
+    const c = propCorrect(p, n + (p.idleSuffix || ''));
+    if (c) propAnimPlay(p, c, true);
   }
+}
+/* lo que ven los eventos SetTargetBopSpeed / PlayAnimation (Stage.getNamedProp) */
+function propTarget(name) {
+  const p = propByName(name); if (!p) return null;
+  return p.__vs || (p.__vs = { isBopper: !!p.anims, isCharacter: false, name: p.name,
+    get danceEvery() { return p.danceEvery || 0; }, set danceEvery(v) { p.danceEvery = +v; },
+    playPropAnimation(anim, force) { propAnimPlay(p, String(anim), !!force); },
+    animation: { play: (anim, force = false) => propAnimPlay(p, String(anim), !!force) } });
 }
 function propsReset() {
   const st = Scene.stage; if (!st) return;
-  for (const p of st.props) if (p.anims && p.cur) { p.lock = false; p.t0 = 0; }
+  for (const p of st.props) {
+    if (p.danceEvery0 === undefined) p.danceEvery0 = p.danceEvery; else p.danceEvery = p.danceEvery0;
+    p.hasDanced = false;
+    if (p.anims && p.cur) { p.t0 = 0; }
+  }
 }
 
 /* Optimización → Escenario: completo / simple (solo el fondo) / oculto */
@@ -102,23 +117,32 @@ function stageModeFor(st) {
 }
 function Stage_applyMode() { if (Scene.stage) stageModeFor(Scene.stage); }
 
-/* ---------- Cámara del mundo (FlxG.camera de 1280x720 con zoom del escenario) ----------
-   Como PlayState de V-Slice: la cámara sigue a cameraFollowPoint con lerp (CLASSIC) o se mueve con
-   un tween (FocusCamera con ease); zoom = currentCameraZoom × cameraBopMultiplier. */
-const Cam = { x: 640, y: 360, init: false, bop: 1, stageZoom: 1, zoom: 1, zoomTween: null, follow: null, tween: null,
-  zoomRate: FNF.ZOOM_RATE, zoomOffset: 0, bopIntensity: FNF.BOP_INTENSITY, hudIntensity: FNF.HUD_BOP,
-  resetEvents() {
-    this.follow = null; this.tween = null; this.zoomTween = null; this.zoom = this.stageZoom; this.bop = 1;
-    this.zoomRate = FNF.ZOOM_RATE; this.zoomOffset = 0; this.bopIntensity = FNF.BOP_INTENSITY; this.hudIntensity = FNF.HUD_BOP;
+/* ---------- Cámara del mundo = FlxG.camera de PlayState (vslice.js) ----------
+   v3.8.0: Cam es solo una vista de VS.play: scroll + seguimiento LOCKON con lerp 0.04 ajustado por elapsed,
+   tweens de FlxTween, currentCameraZoom × cameraBopMultiplier. x/y = centro de la vista (scroll + 640/360). */
+const Cam = {
+  get P() { return VS.play; },
+  get x() { return this.P.camera.scroll.x + 640; }, set x(v) { this.P.camera.scroll.x = +v - 640; },
+  get y() { return this.P.camera.scroll.y + 360; }, set y(v) { this.P.camera.scroll.y = +v - 360; },
+  get zoom() { return this.P.currentCameraZoom; }, set zoom(v) { this.P.currentCameraZoom = +v; },
+  get viewZoom() { return this.P.camera.zoom; }, set viewZoom(v) { this.P.camera.zoom = +v; },
+  get bop() { return this.P.cameraBopMultiplier; }, set bop(v) { this.P.cameraBopMultiplier = +v; },
+  get stageZoom() { return this.P.stageZoom; }, set stageZoom(v) { this.P.stageZoom = +v; },
+  get zoomRate() { return this.P.cameraZoomRate; }, set zoomRate(v) { this.P.cameraZoomRate = +v; },
+  get zoomOffset() { return this.P.cameraZoomRateOffset; }, set zoomOffset(v) { this.P.cameraZoomRateOffset = +v; },
+  get bopIntensity() { return this.P.cameraBopIntensity; }, set bopIntensity(v) { this.P.cameraBopIntensity = +v; },
+  get hudIntensity() { return this.P.hudCameraZoomIntensity; }, set hudIntensity(v) { this.P.hudCameraZoomIntensity = +v; },
+  get follow() { const f = this.P.cameraFollowPoint; return [f.x, f.y]; },
+  get tween() { const t = this.P.cameraFollowTween; return t && t.active ? t : null; },
+  get zoomTween() { const t = this.P.cameraZoomTween; return t && t.active ? t : null; },
+  /* CLASSIC de FocusCamera: el punto se mueve y la cámara lo sigue con lerp (null = volver al enfoque automático) */
+  followTo(x, y) {
+    if (x === null || x === undefined) { G.autoFocus = true; return; }
+    G.autoFocus = false; this.P.resetCamera(false, false, false); this.P.cancelCameraFollowTween(); this.P.cameraFollowPoint.setPosition(+x, +y);
   },
-  /* CLASSIC: cancela el tween y mueve el punto que la cámara sigue con lerp (null = vuelve a seguir a Scene.focus) */
-  followTo(x, y) { this.tween = null; this.follow = x === null || x === undefined ? null : [x, y]; },
-  tweenTo(x, y, dur, ease) {
-    this.follow = [x, y];
-    if (dur <= 0 || !this.init) { this.tween = null; this.x = x; this.y = y; this.init = true; }
-    else this.tween = makeTween([this.x, this.y], [x, y], dur, ease);
-  },
-  zoomTo(z, dur, ease) { if (dur <= 0) { this.zoomTween = null; this.zoom = z; } else this.zoomTween = makeTween(this.zoom, z, dur, ease); },
+  /* tweenCameraToPosition (dur en ms; 0 = al instante) */
+  tweenTo(x, y, durMs, ease) { G.autoFocus = false; this.P.tweenCameraToPosition(+x, +y, Math.max(0, +durMs || 0) / 1000, ease || null); },
+  zoomTo(z, durMs, ease) { this.P.tweenCameraZoom(+z, Math.max(0, +durMs || 0) / 1000, true, ease || null); },
 };
 
 /* punto de enfoque de un personaje (cameraFocusPoint); si no hay assets, la posición del escenario */
@@ -128,21 +152,14 @@ function focusPoint(role) {
   return sc ? [sc.position[0] + (sc.cameraOffsets?.[0] || 0), sc.position[1] - 200 + (sc.cameraOffsets?.[1] || 0)] : null;
 }
 
+const _view = { k: 1, vx: 0, vy: 0, zoom: 1 }, _pz = +params.get('zoom') || 1;   // ?zoom=0.8 para alejar la cámara
 function worldView(dt) {
-  const st = Scene.stage, sd = st ? st.data : {};
-  const pts = {};
-  for (const r of ['bf', 'dad', 'gf']) { const p = focusPoint(r); if (p) pts[r] = p; }
-  if (Cam.zoomTween) { Cam.zoom = tweenValue(Cam.zoomTween); if (tweenDone(Cam.zoomTween)) Cam.zoomTween = null; }
-  const pz = +params.get('zoom') || 1;   // ?zoom=0.8 para alejar la cámara
-  let k, vx, vy, zoom, target;
+  const pz = _pz;
   // igual que el juego: 1280x720 escalado para caber; lo que sobra a los lados muestra más escenario
   // (en celular horizontal la pantalla se ensancha como en V-Slice móvil)
-  k = V.s; vx = (W - 1280 * V.s) / 2; vy = (H - 720 * V.s) / 2; zoom = Cam.zoom * pz;
-  target = Cam.follow || pts[Scene.focus] || pts.dad || pts.bf || [640, 360];
-  if (Cam.tween) { const p = tweenValue(Cam.tween); Cam.x = p[0]; Cam.y = p[1]; if (tweenDone(Cam.tween)) Cam.tween = null; }
-  else if (!Cam.init) { Cam.x = target[0]; Cam.y = target[1]; Cam.init = true; }
-  else { const f = 1 - Math.pow(1 - FNF.CAMERA_FOLLOW_RATE, dt / (1000 / 60)); Cam.x = lerp(Cam.x, target[0], f); Cam.y = lerp(Cam.y, target[1], f); }
-  return { k, vx, vy, zoom };
+  const k = V.s, vx = (W - 1280 * V.s) / 2, vy = (H - 720 * V.s) / 2, zoom = Cam.viewZoom * pz;
+  void dt;
+  _view.k = k; _view.vx = vx; _view.vy = vy; _view.zoom = zoom; return _view;   // (sin objeto nuevo por frame)
 }
 /* matriz mundo -> canvas (px de dispositivo) para un scroll factor dado */
 function worldMatrix(v, zoom, sfx, sfy, out) {
@@ -186,37 +203,40 @@ function worldNeedsDirect() {
   return false;
 }
 
-const _layers = [];
+const _layers = [], _layerPool = [];
+/* (rendimiento: objetos de capa reutilizados; antes se creaba uno por prop/personaje en cada frame) */
+function pushLayer(z, k, o) { const i = _layers.length; const l = _layerPool[i] || (_layerPool[i] = { z: 0, k: 0, o: null, i: 0 }); l.z = z; l.k = k; l.o = o; l.i = i; _layers.push(l); }
+const _byZ = (a, b) => (a.z - b.z) || (a.i - b.i);
+const _roles = ['gf', 'dad', 'bf'];
 function renderWorld(dt, bump, R) {
   const v = worldView(dt), zoom = v.zoom * bump;
-  const st = Scene.stage, sd = st ? st.data : {};
+  const st = Scene.stage;
   const direct = R.kind === 'canvas' && R.c === ctx;
   // fondo base (por si los props no cubren la pantalla)
   R.clear();
-  const M1 = worldMatrix(v, zoom, 1, 1);
-  const toScreen = (wx, wy) => [(M1[0] * wx + M1[4]) / DPR, (M1[3] * wy + M1[5]) / DPR];
   // v3.7.0: sin props reales el fondo queda negro (ya no hay escenario improvisado)
   // capas ordenadas por zIndex (sin crear funciones por frame)
   const layers = _layers; layers.length = 0;
-  if (st) for (const p of st.props) if (p.img || p.color || p.frames) layers.push({ z: p.z, k: 0, o: p });
-  for (const role of ['gf', 'dad', 'bf']) {
-    const c = Scene.chars[role], sc = sd.characters?.[role];
+  if (st) { const ps = st.props; for (let i = 0; i < ps.length; i++) { const p = ps[i]; if (p.img || p.color || p.frames) pushLayer(p.z, 0, p); } }
+  for (let r = 0; r < 3; r++) {
+    const role = _roles[r], c = Scene.chars[role];
     if (role === 'gf' && !Optim.s.gf) continue;                                 // Optimización → GF oculta
-    if (c) layers.push({ z: c.z, k: 1, o: c });
+    if (c) pushLayer(c.z, 1, c);
   }
   // parlantes de GF (parlantes.js), detrás de ella
-  if (Speaker.cur && Optim.s.gf && Speaker.place()) layers.push({ z: Speaker.cur.z, k: 4, o: Speaker });
+  if (Speaker.cur && Optim.s.gf && Speaker.place()) pushLayer(Speaker.cur.z, 4, Speaker);
   // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)
-  for (const sp of ModRT.sprites) if (!sp.onHud && (direct || sp.glOk)) layers.push({ z: sp.zIndex ?? 5000, k: 3, o: sp });
-  Cam.lastView = { v, zoom };
-  layers.sort((a, b) => a.z - b.z);
-  for (const l of layers) {
+  const ms = ModRT.sprites; for (let i = 0; i < ms.length; i++) { const sp = ms[i]; if (!sp.onHud && (direct || sp.glOk)) pushLayer(sp.zIndex ?? 5000, 3, sp); }
+  const lv = Cam.lastView || (Cam.lastView = { v: null, zoom: 1 }); lv.v = v; lv.zoom = zoom;
+  layers.sort(_byZ);
+  for (let li = 0; li < layers.length; li++) {
+    const l = layers[li];
     try {
       if (l.k === 0) drawProp(l.o, v, zoom, R);
       else if (l.k === 1) { const c = l.o; c.update(); c.draw(worldMatrix(v, zoom, c.scroll[0], c.scroll[1], _cM), R); }
       else if (l.k === 4) Speaker.draw(v, zoom, R);
-      else if (l.o.glOk) l.o.renderR({ v, zoom }, R);                          // v3.5.0: también con WebGL (FlxBackdrop, coches…)
-      else { ctx.save(); l.o.render({ v, zoom }); ctx.restore(); }
+      else if (l.o.glOk) l.o.renderR(lv, R);                          // v3.5.0: también con WebGL (FlxBackdrop, coches…)
+      else { ctx.save(); l.o.render(lv); ctx.restore(); }
     } catch (e) { reportOnce('capa ' + (l.o && (l.o.name || l.o.id) || l.k), e); }   // una capa rota no deja sin HUD al juego
   }
 }

@@ -278,7 +278,7 @@ const PsychRT = {
       get combo() { return G.combo; }, set combo(v) { G.combo = +v || 0; }, get songHits() { return G.judged - G.misses; },
       get defaultCamZoom() { return Cam.stageZoom; }, set defaultCamZoom(v) { v = +v; if (v > 0) Cam.stageZoom = v; },
       camZooming: true, camZoomingMult: 1, camZoomingDecay: 1, cameraSpeed: 1, isCameraOnForcedPos: false, inCutscene: false, startingSong: false, endingSong: false, generatedMusic: true, canPause: true, showRating: true, showCombo: true, showComboNum: true,
-      get songSpeed() { return G.speed; }, set songSpeed(v) { if (+v > 0) { G.speed = +v; G.speedTween = null; if (G.speedSide) { G.speedSide.player = G.speedSide.opponent = +v; } } },
+      get songSpeed() { return G.speed; }, set songSpeed(v) { if (+v > 0) G.speed = +v; },
       get camFollow() { return camFollow; }, get camFollowPos() { return camFollow; },
       get camGame() { return HOST.camGame; }, get camHUD() { return HOST.camHUD; }, get camOther() { return HOST.camHUD; },
       get boyfriend() { return CharW.get('bf'); }, get dad() { return CharW.get('dad'); }, get gf() { return CharW.get('gf'); },
@@ -757,10 +757,7 @@ const ScriptHub = {
       CneRT.call('onEvent', [CneRT.ev({ __host: 'EventGameEvent', event: { name: ev.ce.name, params: ev.ce.params, time: ev.t } })]);
       if (has && Array.isArray(ev.v)) handled = true;
     }
-    if (Mods.modules.size && !String(ev.e).startsWith('_')) {
-      const data = { __host: 'SongEventScriptEvent', eventData: { __host: 'SongEventData', eventKind: ev.e, kind: ev.e, time: ev.t, value: ev.v ?? null } };
-      for (const m of Mods.modules.values()) if (m.inst.active !== false && m.script.findMethod(m.cls, 'onSongEvent')) { try { m.script.callMethod(m.inst, 'onSongEvent', [data]); } catch (e) { ScriptLog.err(m.file, 'onSongEvent: ' + e.message); } }
-    }
+    // (.hxc: onSongEvent ya lo despacha PlayState.dispatchEvent → módulos, escenario, personajes…)
     return handled;
   },
   countdown(tick) {
@@ -771,8 +768,7 @@ const ScriptHub = {
   hx(name, ev) { try { Mods.hook(name, ev); } catch (e) { ScriptLog.err('hxc', `${name}: ${e && e.message || e}`); } },
   songStart() {
     if (PsychRT.scripts.length) { PsychRT.callAll('onSongStart', []); PsychRT.callAll('start', [G.chart ? G.chart.title : '']); }
-    if (CneRT.scripts.length) CneRT.call('onSongStart', []);
-    if (Mods.hasHooks) this.hx('onSongStart', { __host: 'ScriptEvent' });
+    if (CneRT.scripts.length) CneRT.call('onSongStart', []);   // (.hxc: SONG_START lo despacha PlayCore.startSong)
   },
   pause() {
     if (PsychRT.scripts.length) PsychRT.callAll('onPause', []);

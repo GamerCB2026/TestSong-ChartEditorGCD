@@ -23,9 +23,9 @@ const PARENT = { options: null, difficulty: 'options', keybinds: 'options', opti
 
 /* ---------- Optimización: valores de cada ajuste (← → o Enter los recorren) ---------- */
 const OPT_ITEMS = {
-  preset:   { name: 'Calidad', vals: ['alta', 'media', 'baja', 'personalizado'], lab: { alta: 'Alta', media: 'Media', baja: 'Baja', personalizado: 'Personalizado' },
-              hint: 'Alta: todo al máximo · Media: texturas 75 %, escenario simple, 60 FPS · Baja: texturas 50 %, mundo 75 %, sin GF, animaciones reducidas, sin bop ni splashes' },
-  tex:      { name: 'Texturas', vals: [100, 75, 50], lab: v => v + '%', hint: 'Resolución de las imágenes de personajes y escenario (menos memoria y menos trabajo). Al cambiarla se recargan con pantalla de carga' },
+  preset:   { name: 'Calidad', vals: ['alta', 'media', 'baja', 'potato', 'personalizado'], lab: { alta: 'Alta', media: 'Media', baja: 'Baja', potato: 'Modo Potato', personalizado: 'Personalizado' },
+              hint: 'Alta: todo al máximo · Media: texturas 75 %, escenario simple, 60 FPS · Baja: texturas 50 %, mundo 75 %, sin GF, animaciones reducidas, sin bop ni splashes · Modo Potato (PCs muy débiles, sí, hasta Windows 7): texturas 25 %, mundo 50 %, sin escenario ni GF, animaciones estáticas, sin shaders ni splashes, 30 FPS' },
+  tex:      { name: 'Texturas', vals: [100, 75, 50, 25], lab: v => v + '%', hint: 'Resolución de las imágenes de personajes y escenario (menos memoria y menos trabajo). Al cambiarla se recargan con pantalla de carga' },
   res:      { name: 'Resolución', vals: [100, 75, 50], lab: v => v + '%', hint: 'Resolución a la que se dibuja el mundo (escenario + personajes). Las notas y el HUD siguen nítidos' },
   stage:    { name: 'Escenario', vals: ['completo', 'simple', 'oculto'], lab: { completo: 'Completo', simple: 'Simple', oculto: 'Oculto' }, hint: 'Simple: solo el fondo (hasta 3 capas grandes, sin props animados ni de primer plano) · Oculto: fondo negro' },
   gf:       { name: 'GF', vals: [true, false], lab: v => v ? 'Visible' : 'Oculta', hint: 'Oculta a GF (un personaje grande menos que dibujar)' },
@@ -38,7 +38,7 @@ const OPT_ITEMS = {
   consola:  { name: 'Consola De Scripts', vals: [false, true], lab: onOff, hint: 'Muestra los scripts del mod que se están ejecutando (.lua, .hx, .hxc), sus errores y sus debugPrint. Un error de script nunca detiene el juego. También con ?consola=1 en la dirección' },
   renderer: { name: 'Render', vals: ['auto', 'webgl', 'canvas'], lab: v => ({ auto: 'Auto', webgl: 'WebGL', canvas: 'Canvas' }[v]),
               hint: 'Auto: WebGL si hay tarjeta gráfica (sube las texturas ASTC comprimidas a la GPU), si no Canvas' },
-  auto:     { name: 'Bajo Rendimiento Auto', vals: [true, false], lab: onOff, hint: 'Si el juego va por debajo de ~40 FPS unos segundos, baja la calidad sola (te avisa)' },
+  auto:     { name: 'Bajo Rendimiento Auto', vals: [true, false], lab: onOff, hint: 'Si el juego va por debajo de ~40 FPS durante 1,5 s, baja la calidad sola un paso (Alta → Media → Baja → Potato); por debajo de 20 FPS salta directo a Potato. Te avisa' },
   shaders:  { name: 'Shaders', vals: [true, false], lab: onOff, hint: 'Shaders cargados en Assets cargados → Cargar shaders (post-proceso WebGL; en Calidad Baja se apagan)' },
   tirones:  { name: 'Anti Tirones', vals: [true, false], lab: onOff, hint: 'Si la pantalla se congela un momento, las notas que pasaron mientras tanto no cuentan como fallo' },
 };
@@ -267,7 +267,7 @@ function openOverlay(kind, menu) {
   if (Loader.active) return;
   const prevKind = G.overlayKind;
   G.paused = true; UI.kind = G.overlayKind = kind; UI.openedAt = performance.now();
-  if (kind === 'over') StageRT.call('onGameOver', { __host: 'ScriptEvent' });
+  if (kind === 'over') Mods.hook('onGameOver');   // v3.8.0: GAME_OVER por PlayState.dispatchEvent
   // v3.7.0: onPause / onEndSong de los scripts (.lua, .hx, .hxc)
   if (kind === 'pause' && !prevKind) ScriptHub.pause(); else if (kind === 'end' && prevKind !== 'end') ScriptHub.songEnd();
   VideoSync.pauseAll();

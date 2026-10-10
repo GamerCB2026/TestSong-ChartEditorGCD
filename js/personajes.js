@@ -10,10 +10,6 @@
    ===================================================================== */
 'use strict';
 
-/* PlayAnimation con "force": la animación se reproduce completa (ni el baile ni el canto la cortan).
-   En el código actual de V-Slice (BaseCharacter: ignoreExclusionPref = ['sing']) el canto SÍ puede cortarla;
-   pon singRompeForzada: true para imitar eso exactamente. */
-const PLAYANIM_CFG = { singRompeForzada: false };
 
 /* ---------- utilidades de dibujo ---------- */
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
@@ -38,11 +34,15 @@ class RealChar {
     // V-Slice Stage.addCharacter: el jugador se voltea respecto a su JSON
     this.flipX = role === 'bf' ? !data.flipX : !!data.flipX;
     this.offsets = data.offsets || [0, 0]; this.camOff = data.cameraOffsets || [0, 0];
-    this.singTime = +data.singTime || 8; this.danceEvery = data.danceEvery ?? 1;
-    this.hasLR = anims.has('danceLeft') && anims.has('danceRight'); this.danced = false;
+    // v3.8.0: estado de animación = FlxAnimationController + Bopper/BaseCharacter (vslice.js)
+    this.characterType = role === 'bf' ? 'BF' : role === 'dad' ? 'DAD' : role === 'gf' ? 'GF' : 'OTHER';
+    this.singTimeSteps = data.singTime ?? 8; this.danceEvery = data.danceEvery ?? 1; this.ignoreExclusionPref = ['sing'];
+    this.hasLR = anims.has('danceLeft') && anims.has('danceRight');
+    this.animation = new VS.AnimController(n => this.onAnimationFinished(n));
+    for (const [n, a] of anims) this.animation.add(n, a.frames.length, a.fps || 24, !!a.loop);
+    this.initCharacterState();
     const refA = anims.get('idle') || anims.get('danceRight') || anims.get('danceLeft') || anims.values().next().value;
     this.ref = RealChar.box(refA, 0) || { minX: 0, minY: 0, maxX: 300, w: 300, h: 400 };
-    this.singUntil = -1e9; this.holdUntil = -1e9; this.missTint = false;
     this.reset();
   }
   static box(a, i) {
@@ -50,11 +50,11 @@ class RealChar {
     if (a.type === 'atlas') { const b = atlasBounds(a.model, a.timeline, a.frames[i]); return b && { minX: b.minX, minY: b.minY, maxX: b.maxX, w: b.maxX - b.minX, h: b.maxY - b.minY }; }
     const f = a.frames[i]; return f && { minX: 0, minY: 0, maxX: f.fw, w: f.fw, h: f.fh };
   }
+  /* BaseCharacter.resetCharacter (+ estado limpio para reiniciar la canción igual cada vez) */
   reset() {
-    this.singUntil = this.holdUntil = -1e9; this.missTint = false; this.danced = false;
-    this.lock = false; this.tempVocals = false; this.finishFired = true; this.idleSuffix = ''; this.altSing = false;
+    this.initCharacterState(); this.altSing = false; this.danceEvery = this.data.danceEvery ?? 1;
     const st = this.data.startingAnimation;
-    this.play(st && this.anims.has(st) ? st : (this.hasLR ? 'danceRight' : 'idle'), true);
+    if (st && this.hasAnimation(st)) this.playAnimation(st, true); else this.dance(true);
   }
   /* Stage.addCharacter: posición = pies (position) - origen (ancho/2, alto) + offsets globales */
   place(sc) {
@@ -98,102 +98,36 @@ class RealChar {
     // V-Slice resetCameraFocusPoint: centro + cameraOffsets del personaje + cameraOffsets del escenario
     return [this.bx + w / 2 + co[0] + sc[0], this.by + h / 2 + co[1] + sc[1]];
   }
-  /* Bopper.playAnimation(name, restart, ignoreOther): con ignoreOther la animación bloquea a todas las demás
-     (canto y baile incluidos) hasta que termina; solo se puede reiniciar la misma. */
-  play(name, restart, ignoreOther) {
-    if (this.lock && !(this.curName === name && restart) && !(PLAYANIM_CFG.singRompeForzada && name.startsWith('sing'))) return false;
-    const a = this.anims.get(name); if (!a) return false;
-    if (!restart && this.curName === name && !this.finished()) return true;    // FlxAnimationController.play sin Force
-    this.curName = name; this.cur = a; this.t0 = G.gameTime; this.finishFired = false;
-    if (ignoreOther) { this.lock = true; this.lockUntil = G.gameTime + this.animMs(a); }
-    return true;
-  }
-  /* v3.5.0: duración de una pasada completa (hasta el último frame; en loop, un ciclo) */
-  animMs(a) { return a.frames.length / Math.max(1, a.fps) * 1000; }
-  doneOnce() { return G.gameTime - this.t0 >= this.animMs(this.cur); }
+  /* v3.8.0: el canto, el baile, holdTimer, '-hold'/'-end', exclusiones (canPlayOtherAnims) y tempVocals los hace
+     BaseCharacterMixin (port de Bopper/BaseCharacter); aquí solo quedan accesos y compatibilidad. */
+  get charRole() { return this.role; }
+  /* BaseCharacter.cameraFocusPoint (+ cameraOffsets del escenario, como Stage.resetStage) */
+  get cameraFocusPoint() { const p = this.camPoint(), o = this._cfp || (this._cfp = { x: 0, y: 0 }); o.x = p[0]; o.y = p[1]; return o; }
+  get curName() { return this.animation.name; }
+  get cur() { return this.anims.get(this.animation.name) || this.anims.values().next().value; }
+  conductor() { return VS.play.conductor; }
+  get vocals() { return VS.play && VS.play.host ? VS.play.host.vocals : null; }
+  inputState() { const p = VS.play; return p ? { justPressed: p.justPressedAny, holding: p.playerStrumline.keysHeld.some(Boolean) } : { justPressed: false, holding: false }; }
+  defaultSingSuffix() { return this.altSing ? 'alt' : ''; }
   frameIdx() {
-    const a = this.cur, n = a.frames.length;
-    const i = animFrame(G.gameTime - this.t0, a.fps);
-    return a.loop ? ((i % n) + n) % n : clamp(i, 0, n - 1);
+    const ca = this.animation.curAnim; if (!ca) return 0;
+    const mode = Optim.s.anim;
+    if (mode === 'estatica') return 0;
+    if (mode === 'reducida' && ca.frameRate > 12) return Math.floor(Math.floor(ca.curFrame * 12 / ca.frameRate) * ca.frameRate / 12);
+    return ca.curFrame;
   }
-  finished() { return !this.cur.loop && (G.gameTime - this.t0) / 1000 * this.cur.fps >= this.cur.frames.length; }
-  singing() { return G.gameTime < this.singUntil; }
-  isSingAnim() { const n = this.curName || ''; return n.startsWith('sing') && !n.endsWith('-end'); }
-  /* BaseCharacter.dance: sin forzar no interrumpe el canto ni una animación especial que no terminó */
-  dance(force) {
-    if (!force) {
-      if (this.singing() && this.isSingAnim()) return;
-      const n = this.curName || '';
-      if (!n.startsWith('dance') && !n.startsWith('idle') && !(this.finished() || (this.cur && this.cur.loop && this.doneOnce()))) return;
-    }
-    const sf = this.idleSuffix || '';
-    if (this.hasLR) {
-      this.danced = !this.danced;
-      const n = (this.danced ? 'danceLeft' : 'danceRight');
-      if (!this.play(n + sf, true) && sf) this.play(n, true);
-    } else if (!this.play('idle' + sf, true) && sf) this.play('idle', true);
-  }
-  onBeat(beat) {
-    if (this.singing() && this.isSingAnim()) return;
-    const every = Math.max(1, Math.round(this.danceEvery || 1));
-    if (((beat % every) + every) % every === 0) this.dance();
-  }
-  sing(lane, miss, holdMs, suffix = '') {
-    if (this.lock && !PLAYANIM_CFG.singRompeForzada) return; // PlayAnimation forzada en curso: no canta hasta que termine
-    const dir = LANE_DIRS[lane]; let n = 'sing' + dir + (miss ? 'miss' : '');   // sin intercambio LEFT/RIGHT (igual que el juego)
-    this.missTint = false;
-    if (!suffix && this.altSing) suffix = '-alt';          // Codename "Alt Animation Toggle"
-    // note kind con sufijo (alt → singLEFT-alt): si el personaje no la tiene, canta la normal
-    if (suffix && this.anims.has(n + suffix)) n += suffix;
-    else if (!this.anims.has(n)) { if (miss) this.missTint = true; n = 'sing' + dir; }
-    if (!this.play(n, true)) { this.play(this.hasLR ? 'danceRight' : 'idle', true); }
-    const step = Cond.stepMs(G.songPos);
-    this.holdUntil = G.gameTime + holdMs;
-    this.singUntil = G.gameTime + holdMs + this.singTime * step * (miss ? 2 : 1);
-  }
-  /* evento PlayAnimation (PlayAnimationSongEvent): tempVocals = force.
-     v3.5.0: SIEMPRE completa (canto y baile bloqueados hasta el último frame; loop = un ciclo).
-     PLAYANIM_CFG.singRompeForzada = true deja que el canto la corte. */
-  playEvent(name, force) {
-    if (!this.anims.has(name)) return false;
-    this.tempVocals = !!force;
-    if (this.tempVocals) {
-      const r = this.role === 'bf' ? 'player' : this.role === 'dad' ? 'opponent' : null;
-      if (r && Music.getVolume(r) === 0) Music.setVolume(r, 1); else this.tempVocals = false;
-    }
-    // v3.5.0: la animación de PlayAnimation SIEMPRE se reproduce completa (con o sin force):
-    // canto y baile esperan hasta su último frame; si es en loop, un ciclo completo
-    const ok = this.play(name, !!force || this.curName !== name || this.finished(), true);
-    if (ok) { this.singUntil = -1e9; this.holdUntil = -1e9; }
-    return ok;
-  }
-  /* animaciones de GF (combo/drop) y especiales de note kinds: sin bloqueo; el baile espera a que terminen */
-  special(name) { if (this.anims.has(name)) { this.play(name, true); this.singUntil = -1e9; return true; } return false; }
-  holdOn() { if (this.lock && !PLAYANIM_CFG.singRompeForzada) return; this.holdUntil = Math.max(this.holdUntil, G.gameTime + 60); this.singUntil = Math.max(this.singUntil, G.gameTime + this.singTime * Cond.stepMs(G.songPos)); }
-  /* Bopper/BaseCharacter.onAnimationFinished */
-  onFinished(name) {
-    this.lock = false;
-    if ((name.endsWith('-end') && !name.startsWith('idle') && !name.startsWith('dance')) || name.startsWith('combo') || name.startsWith('drop')) this.dance(true);
-    if (this.tempVocals) {
-      const r = this.role === 'bf' ? 'player' : this.role === 'dad' ? 'opponent' : null;
-      if (r && Music.getVolume(r) === 1) Music.setVolume(r, 0);
-      this.tempVocals = false;
-    }
-  }
-  update() {
-    if (!this.cur) return;
-    if (!this.finishFired && (this.finished() || (this.lock && this.cur.loop && this.doneOnce()))) { this.finishFired = true; this.onFinished(this.curName); }
-    if (this.lock) return;
-    if (this.curName.startsWith('sing') && !this.singing()) { this.missTint = false; this.dance(true); return; }
-    // al terminar una animación pasa a "<anim>-hold" en loop si existe (sustain del canto, poses de Darnell…)
-    if (this.finished() && !this.curName.endsWith('-hold') && this.anims.has(this.curName + '-hold') && (!this.curName.startsWith('sing') || G.gameTime < this.holdUntil)) this.play(this.curName + '-hold', true);
-    else if (G.gameTime >= this.holdUntil && this.curName.startsWith('sing') && this.curName.endsWith('-hold')) this.play(this.curName.replace(/-hold$/, ''), false);
-  }
+  finished() { return this.animation.finished; }
+  /* compatibilidad (scripts Psych/Codename, kinds de respaldo) */
+  play(name, restart = false, ignoreOther = false) { if (!this.hasAnimation(name)) return false; this.playAnimation(name, restart, ignoreOther); return this.curName === name; }
+  sing(lane, miss = false, _holdMs = 0, suffix = '') { this.playSingAnimation(lane, !!miss, String(suffix || '').replace(/^-/, '') || this.defaultSingSuffix()); this.holdTimer = 0; }
+  playEvent(name, force) { if (!this.hasAnimation(name)) return false; this.tempVocals = !!force; this.playAnimation(name, !!force, !!force); return true; }
+  special(name) { if (!this.hasAnimation(name)) return false; this.playAnimation(name, true, true); return true; }
+  update() {}
   /* M = matriz mundo -> píxeles del canvas; R = destino (render.js: Canvas o WebGL) */
   draw(M, R) {
     const a = this.cur; if (!a || this.visible === false) return;
     const fr = a.frames[this.frameIdx()], s = this.ts, flip = this.flipX !== !!a.flipX, off0 = a.off || [0, 0], off = this.mirrorOff ? [-off0[0], off0[1]] : off0;
-    const alpha = this.alpha ?? 1, smooth = !this.isPixel && Optim.s.aa, tint = !!this.missTint, m = _charM;
+    const alpha = this.alpha ?? 1, smooth = !this.isPixel && Optim.s.aa, tint = false, m = _charM;
     // v3.5.0: shader del personaje puesto por el script del escenario (AdjustColor / DropShadow…)
     const sh = this.shader || null; R.setShader(sh);
     if (sh && sh.updateFrameInfo && fr) sh.angleOffset = fr.rot ? -90 : 0;
@@ -211,6 +145,7 @@ class RealChar {
     }
   }
 }
+VS.mixCharacter(RealChar.prototype);   // v3.8.0: Bopper + BaseCharacter
 const TOPLEFT_TO_FEET = { bf: [219.5, 785], dad: [235, 785], gf: [351.5, 657] };   // Psych (770,100) → V-Slice (989.5,885)…
 const _charM = [1, 0, 0, 1, 0, 0], _charL = [1, 0, 0, 1, 0, 0];
 /* frame de una animación según Optimización → Animaciones (normal / reducida a 12 fps / estática) */

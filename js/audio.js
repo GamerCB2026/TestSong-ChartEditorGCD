@@ -130,11 +130,13 @@ const Music = {
     if (this.mode === 'element') {
       const pos = this.position(), now = performance.now();
       if (pos < 0) return;
-      if (this.tracks.some(t => t.el.paused && !t.el.ended && pos < t.dur - 50)) { if (now - this.lastResync > 300) { this.lastResync = now; this.startElements(pos); } return; }
+      let stalled = false; const T = this.tracks;   // v3.8.0: sin closures ni slice por frame
+      for (let i = 0; i < T.length; i++) { const t = T[i]; if (t.el.paused && !t.el.ended && pos < t.dur - 50) { stalled = true; break; } }
+      if (stalled) { if (now - this.lastResync > 300) { this.lastResync = now; this.startElements(pos); } return; }
       if (now - this.lastResync < 500) return;
       // resyncVocals de V-Slice: las voces se alinean a la Inst si se alejan más de 20 ms
       const inst = this.tracks[0].el.currentTime * 1000;
-      for (const t of this.tracks.slice(1)) if (!t.el.paused && Math.abs(t.el.currentTime * 1000 - inst) > 20) { t.el.currentTime = inst / 1000; this.resyncs++; this.lastResync = now; }
+      for (let i = 1; i < T.length; i++) { const t = T[i]; if (!t.el.paused && Math.abs(t.el.currentTime * 1000 - inst) > 20) { t.el.currentTime = inst / 1000; this.resyncs++; this.lastResync = now; } }
     }
   },
   /* V-Slice: la voz del jugador se silencia al fallar y vuelve al acertar */
