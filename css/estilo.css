@@ -120,3 +120,17 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
 .btn[disabled] { opacity: .45; pointer-events: none; }
 .ua-off { font-size: 12px; margin-top: 4px; }
 .ua-off input { width: 64px; background: #1d1036; color: #fff; border: 2px solid #8e6bd6; border-radius: 6px; padding: 2px 4px; font: inherit; }
+
+/* v3.7.0: consola de scripts (Optimización → Consola De Scripts o ?consola=1) */
+.script-log { position: fixed; left: max(8px, env(safe-area-inset-left)); bottom: max(8px, env(safe-area-inset-bottom)); z-index: 41; pointer-events: none;
+  max-width: min(560px, 70vw); padding: 6px 9px; border-radius: 8px; background: rgba(10, 4, 22, .78); border: 1px solid rgba(255, 255, 255, .14);
+  font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #e8e2f5; text-shadow: 0 1px 0 #000; }
+.script-log[hidden] { display: none; }
+.script-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.script-log .sl-h { color: #ffd86b; font-weight: 700; margin-bottom: 2px; white-space: normal; }
+.script-log .sl-h b { color: #ff6b8b; }
+.script-log .sl-error { color: #ff8fa6; }
+.script-log .sl-print { color: #a8f0ff; }
+.script-log .sl-info { color: #b9b0cc; }
+.script-log i { color: #c7a8ff; font-style: normal; }
+.script-log u { text-decoration: none; color: #ffd86b; }

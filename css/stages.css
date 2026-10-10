@@ -2,7 +2,7 @@
 #game { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; background: #000;
   image-rendering: auto; }
 /* pantalla de carga mientras llegan los assets del escenario */
-#game.cargando { background: radial-gradient(ellipse at center, #1c0b2e, #000 70%); }
+#game.cargando { background: #000; }   /* v3.7.0: sin degradado improvisado */
 
 /* v3.3.0: lienzo WebGL del mundo (debajo del lienzo del HUD) */
 #gameGL { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; pointer-events: none; background: #000; }
