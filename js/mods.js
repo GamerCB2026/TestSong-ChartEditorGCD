@@ -503,8 +503,8 @@ function uniformProxy(sh) {
 const HOST = (() => {
   const camGame = camObj('game'), camHUD = camObj('hud');
   const members = { indexOf: o => (o && o.__host === 'Strumline' ? 100 : -1), length: 0, __host: 'members' };
-  const addSprite = (o, behind) => { if (o && (o instanceof HxSprite)) { o.behind = !!behind; if (!ModRT.sprites.includes(o)) ModRT.sprites.push(o); } else if (o && !HX.isStub(o)) HX.note('add() de un objeto no imitado'); return o; };
-  const removeSprite = o => { const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); return o; };
+  const addSprite = (o, behind) => { if (o && o.__extraChar) return ExtraChars.add(o); if (o && (o instanceof HxSprite)) { o.behind = !!behind; if (!ModRT.sprites.includes(o)) ModRT.sprites.push(o); } else if (o && !HX.isStub(o)) HX.note('add() de un objeto no imitado'); return o; };
+  const removeSprite = o => { if (o && o.__extraChar) return ExtraChars.remove(o); const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); return o; };
   const stage = {
     __host: 'currentStage', __open: true,
     getBoyfriend: () => CharW.get('bf'), getDad: () => CharW.get('dad'), getGirlfriend: () => CharW.get('gf'),
@@ -515,6 +515,7 @@ const HOST = (() => {
       return propW(p);
     },
     add: o => addSprite(o), remove: o => removeSprite(o), insert: (i, o) => addSprite(o), refresh() {},
+    addCharacter: (c, type) => (c && c.__extraChar ? ExtraChars.add(c, type) : null),   // v3.9.0
     get camZoom() { return Cam.stageZoom; },
   };
   const ps = {
@@ -636,6 +637,8 @@ const HOST = (() => {
   const G_ = {
     PlayState: { __host: 'PlayState', get instance() { return G.chart ? ps : null; } },
     Conductor: { __host: 'Conductor', get instance() { return conductor; } },
+    CharacterDataParser: { __host: 'CharacterDataParser', fetchCharacter: (id, debug) => ExtraChars.make(id), fetchCharacterData: id => ({ __open: true, id }), listCharacterIds: () => ['bf', 'dad', 'gf'] },
+    CharacterType: { BF: 'BF', DAD: 'DAD', GF: 'GF', OTHER: 'OTHER' },
     FlxG: flxg, FlxTween: tween, FlxEase: ease, FlxColor: flxColor, FlxAxes, FlxTimer: { __host: 'FlxTimer', wait: (t, cb) => new HxTimer().start(t, () => cb()), loop: (t, cb, n) => new HxTimer().start(t, tm => cb(tm.elapsedLoops), n), globalManager: { clear: () => ModRT.timers.forEach(t => t.cancel()) } },
     FlxTweenType: { PERSIST: 1, LOOPING: 2, PINGPONG: 4, ONESHOT: 8, BACKWARD: 16 },
     FlxTextBorderStyle: { NONE: 0, SHADOW: 1, OUTLINE: 2, OUTLINE_FAST: 3 }, FlxTextAlign: { LEFT: 'left', CENTER: 'center', RIGHT: 'right', JUSTIFY: 'left' },
@@ -669,6 +672,8 @@ const HOST = (() => {
   G_.CharacterType = { __host: 'CharacterType', BF: 'BF', DAD: 'DAD', GF: 'GF', OTHER: 'OTHER' };
   G_.HapticUtil = { __host: 'HapticUtil', vibrate() {}, increasingVibrate() {}, hapticsAvailable: false };
   const CTORS = {
+    BaseCharacter: a => ExtraChars.make(a[0], a[1]), SparrowCharacter: a => ExtraChars.make(a[0], a[1]), MultiSparrowCharacter: a => ExtraChars.make(a[0], a[1]),
+    AnimateAtlasCharacter: a => ExtraChars.make(a[0], a[1]), PackerCharacter: a => ExtraChars.make(a[0], a[1]),
     FlxTimer: () => new HxTimer(), FlxText: a => new HxText(...a), FunkinSprite: a => new HxSprite(...a), FlxSprite: a => new HxSprite(...a), FlxPoint: a => new HxPoint(...a),
     Map: () => new HX.HxMap(), StringMap: () => new HX.HxMap(), IntMap: () => new HX.HxMap(), ObjectMap: () => new HX.HxMap(), EReg: a => new HX.EReg(a[0], a[1]),
     FlxSound: () => new HxSound({ kind: 'sound', key: '' }), FlxTypedGroup: () => Mods.group(), FlxGroup: () => Mods.group(), FlxSpriteGroup: () => Mods.group(), FlxTypedSpriteGroup: () => Mods.group(),
@@ -695,6 +700,8 @@ const HOST = (() => {
       else if (/NoteKind$/.test(base)) { obj.noteKind = a[0]; obj.description = a[1] ?? ''; obj.noteStyleId = a[2] ?? null; obj.params = a[3] ?? []; obj.noanim = obj.noAnim = !!(a[4] ?? false); obj.suffix = a[5] ?? ''; if (!('scoreable' in obj)) obj.scoreable = true; }
       else if (/Module$/.test(base)) { obj.moduleId = a[0]; obj.priority = a[1] ?? 1000; if (!('active' in obj)) obj.active = true; }
       else if (/Stage$/.test(base)) { obj.stageId = a[0]; }
+      else if (/^Song$/.test(base)) { obj.songId = a[0]; obj.id = a[0]; }                       // v3.9.0
+      else if (/Character$/.test(base)) { obj.characterId = a[0]; }
       else if (/Sprite$|FlxText$/.test(base)) { const s = base === 'FlxText' ? new HxText(...a) : new HxSprite(...a); for (const k of Object.keys(s)) if (!(k in obj)) obj[k] = s[k]; }
     },
     nativeMember(base, obj, n) {
@@ -704,6 +711,8 @@ const HOST = (() => {
       if (/SongEvent$/.test(base)) { if (n === 'getTitle') return () => String(obj.id).replace(/\b\w/g, ch => ch.toUpperCase()); if (n === 'getEventSchema') return () => null; if (n === 'handleEvent' || n === 'precache' || n === 'precacheEvent') return () => null; }
       if (/NoteKind$/.test(base)) { if (n === 'toString') return () => obj.noteKind; if (n === 'getNotes' || n === 'getOtherNotes') return (vis) => (VS.play ? VS.play.notes.filter(x => x.alive && ((x.kind || '') === obj.noteKind) === (n === 'getNotes') && (!vis || x.visible !== false)) : []); }
       if (/Stage$/.test(base)) { const v = StageRT.member(obj, n); if (v !== undefined) return v; }
+      if (/Character$/.test(base) && obj.__real) { const c = obj.__real, v = c[n === 'x' ? 'bx' : n === 'y' ? 'by' : n]; if (v !== undefined) return typeof v === 'function' ? v.bind(c) : v; }
+      if (/^Song$/.test(base)) { if (n === 'id' || n === 'songId') return obj.songId; if (n === 'getRawEventData' || n === 'getVariations') return () => []; }
       if (/^on[A-Z]/.test(n)) return () => null;
       return undefined;
     },
@@ -769,9 +778,50 @@ const NoteKinds = {
 };
 VS.NoteKindManager.fallbacks = { get: k => (k == null || k === '' ? null : NoteKinds.fallback(k)) };
 
+/* ---------- v3.9.0: personajes creados por scripts en tiempo de ejecución ----------
+   CharacterDataParser.fetchCharacter(id) / new BaseCharacter(id) / new SparrowCharacter(id) + add() / addCharacter(c, tipo).
+   Se cargan como personajes reales (mismo cargador), bailan con el ritmo (Bopper.onStepHit), cantan con su strumline
+   según characterType (BF = jugador, DAD = rival) y aceptan PlayAnimation / playAnimation. */
+const ExtraChars = {
+  list: [], ver: 0,
+  roleOf(type) { type = String(type || 'OTHER').toUpperCase(); return type === 'BF' ? 'bf' : type === 'GF' ? 'gf' : 'dad'; },
+  make(id, type) {
+    const st = { id: String(id || ''), real: null, props: {}, type: String(type || 'OTHER').toUpperCase(), added: false, calls: [], failed: false };
+    const map = k => (k === 'x' ? 'bx' : k === 'y' ? 'by' : k);
+    const w = new Proxy(st, {
+      get(t, k) {
+        if (k === '__host') return 'BaseCharacter'; if (k === '__open') return true; if (k === '__extraChar') return t;
+        if (k === 'characterId' || k === 'id') return t.id; if (k === 'characterType') return t.type;
+        if (typeof k === 'symbol') return undefined;
+        if (t.real) { const v = t.real[map(k)]; return typeof v === 'function' ? v.bind(t.real) : v; }
+        if (k in t.props) return t.props[k];
+        if (/^(playAnimation|dance|playSingAnimation|resetCharacter|setPosition|screenCenter|updateHitbox|kill|revive|destroy)$/.test(k)) return (...a) => { t.calls.push([k, a]); return null; };
+        return k === 'alpha' ? 1 : k === 'visible' ? true : null;
+      },
+      set(t, k, v) {
+        if (k === 'characterType') { t.type = String(v).toUpperCase(); if (t.real) t.real.characterType = t.type; return true; }
+        if (t.real) t.real[map(k)] = v; else t.props[k] = v; return true;
+      },
+    });
+    if (st.id) loadCharacter(this.roleOf(st.type), st.id).then(c => {
+      if (!(c instanceof RealChar)) { st.failed = true; if (typeof ScriptLog !== 'undefined') ScriptLog.err('hxc', `personaje ${st.id}: ${c && c.error || 'no se pudo cargar'}`); return; }
+      st.real = c; c.characterType = st.type; c.extra = true;
+      placeChar(c, this.roleOf(st.type)); c.reset();
+      for (const [k, v] of Object.entries(st.props)) c[map(k)] = v;
+      for (const [k, a] of st.calls) { try { if (k === 'setPosition') { c.bx = a[0]; c.by = a[1]; } else if (typeof c[k] === 'function') c[k](...a); } catch (e) {} }
+      st.calls.length = 0; this.ver++;
+    }).catch(e => { st.failed = true; console.warn('[hxc] personaje', st.id, e); });
+    return w;
+  },
+  add(w, type) { const t = w && w.__extraChar; if (!t) return w; if (type != null) w.characterType = type; t.added = true; if (!this.list.includes(t)) { this.list.push(t); this.ver++; } return w; },
+  remove(w) { const t = w && w.__extraChar; const i = t ? this.list.indexOf(t) : -1; if (i >= 0) { this.list.splice(i, 1); this.ver++; } return w; },
+  reals() { const o = []; for (const t of this.list) if (t.real && t.added) o.push(t.real); return o; },
+  clear() { this.list.length = 0; this.ver++; },
+};
+
 /* ---------- registro de scripts ---------- */
 const Mods = {
-  scripts: new Map(), events: new Map(), kinds: new Map(), modules: new Map(), stages: new Map(), classes: new Map(), elapsed: 0, pendingDeath: false, fxLog: [], db: null, ready: null,
+  scripts: new Map(), events: new Map(), kinds: new Map(), modules: new Map(), stages: new Map(), classes: new Map(), songs: new Map(), chars: new Map(), elapsed: 0, pendingDeath: false, fxLog: [], db: null, ready: null,
   BUILTIN_EVENTS: ['FocusCamera', 'ZoomCamera', 'SetCameraBop', 'PlayAnimation', 'SetHealthIcon', 'ScrollSpeed'],
   safe(f) { try { return f(); } catch (e) { console.warn('[hxc] callback', e); HX.note('error en callback: ' + e.message); if (typeof ScriptLog !== 'undefined') ScriptLog.err(HX.R.cur || 'callback', e.message); } },
   fx(kind, which) { this.fxLog.push(`${kind}:${which}@${Math.round(G.songPos)}`); if (this.fxLog.length > 40) this.fxLog.shift(); },
@@ -819,6 +869,19 @@ const Mods = {
         let id = c.name; try { const inst = script.instantiate(c, []); if (!inst.stageId && hasChildren) continue; id = String(inst.stageId || c.name); } catch (e) { console.warn('[hxc] escenario', e); }
         this.stages.set(id, { id, script, cls: c, file: name }); rec.stages = (rec.stages || []).concat(id); rec.modules.push('escenario ' + id);
         StageRT.key = null;
+      } else if (/^Song$/.test(base)) {
+        // v3.9.0: ScriptedSong (class X extends Song { new() super('songid') }) → activo solo con esa canción
+        let inst = null; try { inst = script.instantiate(c, []); } catch (e) { console.warn('[hxc] canción', e); }
+        if (!inst || (!inst.songId && hasChildren)) continue;
+        const id = String(inst.songId || c.name).toLowerCase();
+        this.songs.set(id, { id, inst, script, cls: c, file: name }); this._songT = null;
+        rec.songs = (rec.songs || []).concat(id); rec.modules.push('canción ' + id);
+      } else if (/Character$/.test(base)) {
+        // v3.9.0: ScriptedCharacter (SparrowCharacter/MultiSparrowCharacter/AnimateAtlasCharacter/PackerCharacter/BaseCharacter)
+        // → una instancia por personaje con ese id (también al cambiar de personaje)
+        let id = c.name; try { const inst = script.instantiate(c, []); if (!inst.characterId && hasChildren) continue; id = String(inst.characterId || c.name); } catch (e) { console.warn('[hxc] personaje', e); }
+        this.chars.set(id, { id, script, cls: c, file: name });
+        rec.chars = (rec.chars || []).concat(id); rec.modules.push('personaje ' + id);
       } else rec.others.push(`${c.name}${c.parent ? ' extends ' + c.parent : ''}`);
     }
     this.scripts.set(name, rec);
@@ -832,9 +895,44 @@ const Mods = {
     for (const id of rec.kinds) { this.kinds.delete(id); VS.NoteKindManager.unregister(id); }
     for (const id of rec.modules) this.modules.delete(id); this._modCache = null;
     for (const id of rec.stages || []) { this.stages.delete(id); StageRT.key = null; }
+    for (const id of rec.songs || []) this.songs.delete(id); this._songT = null;
+    for (const id of rec.chars || []) this.chars.delete(id);
     for (const c of rec.script.classes.keys()) this.classes.delete(c);
     HX.R.gen++;
     this.scripts.delete(rec.name);
+  },
+  /* v3.9.0: ¿algún .hxc maneja este evento DENTRO de onSongEvent/onScriptEvent (módulo, canción, escenario…)?
+     p. ej. `if (event.eventData.eventKind == 'WAAHH')`. Entonces no es un evento "sin .hxc". */
+  scriptHandles(kind) {
+    if (!kind) return false;
+    const c = this._handles || (this._handles = new Map()); if (this._handlesN !== this.scripts.size) { c.clear(); this._handlesN = this.scripts.size; }
+    let v = c.get(kind); if (v !== undefined) return v;
+    v = false; const q1 = `'${kind}'`, q2 = `"${kind}"`;
+    for (const r of this.scripts.values()) { const t = r.text || ''; if ((t.includes(q1) || t.includes(q2)) && /\bon(SongEvent|ScriptEvent)\b/.test(t)) { v = true; break; } }
+    c.set(kind, v); return v;
+  },
+  /* v3.9.0: id de la canción actual (mod: carpeta de la canción; si no, el título del chart) */
+  currentSongId() { const m = typeof SongImport !== 'undefined' && SongImport.mod && SongImport.cur; return String(m || (G.chart && (G.chart.songId || G.chart.title)) || '').toLowerCase(); },
+  /* ScriptedSong de la canción actual como destino de PlayState.dispatchEvent (host.song) */
+  songTarget() {
+    if (!this.songs.size) return null;
+    const id = this.currentSongId(), id2 = id.replace(/\s+/g, '-');
+    const ent = this.songs.get(id) || this.songs.get(id2) || null;
+    if (!ent) return null;
+    if (!this._songT || this._songT.__ent !== ent) this._songT = this.target(ent, 'Song');
+    return this._songT;
+  },
+  /* ScriptedCharacter: instancia por personaje real (se crea al aparecer; onCreate) */
+  charTarget(c) {
+    if (!c || !this.chars.size) return null;
+    const ent = this.chars.get(c.id); if (!ent) return null;
+    if (c.__scriptT && c.__scriptT.__ent.cls === ent.cls) return c.__scriptT;
+    let inst; try { inst = ent.script.instantiate(ent.cls, []); } catch (e) { console.warn('[hxc] personaje', e); return null; }
+    Object.defineProperty(inst, '__real', { value: c, enumerable: false });
+    const e2 = { id: ent.id, inst, script: ent.script, cls: ent.cls, file: ent.file };
+    c.__scriptT = this.target(e2, 'BaseCharacter');
+    if (ent.script.findMethod(ent.cls, 'onCreate')) this.safe(() => ent.script.callMethod(inst, 'onCreate', [{ __host: 'ScriptEvent', type: 'CREATE' }]));
+    return c.__scriptT;
   },
   /* v3.8.0: adaptadores para ScriptEventDispatcher.callEvent (onScriptEvent y luego el método del tipo) */
   target(ent, kind) {
@@ -899,7 +997,7 @@ const Mods = {
   resetRuntime(retry) {
     ModRT.tweenMgr.clear(); ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
-    CamFX.reset(); StrumState.reset(); CharW.cache = {}; HOST.camGame._filters = []; HOST.camHUD._filters = [];
+    CamFX.reset(); StrumState.reset(); CharW.cache = {}; if (retry) ExtraChars.clear();   // v3.9.0: al saltar se conservan los personajes añadidos HOST.camGame._filters = []; HOST.camHUD._filters = [];
     for (const c of Object.values(Scene.chars)) if (c) { c.visible = true; }
     void retry;
   },
@@ -988,7 +1086,7 @@ const StageRT = {
     const S = HOST.ps.currentStage;
     switch (n) {
       case 'buildStage': return () => this.superBuild(obj);
-      case 'addCharacter': return () => null;
+      case 'addCharacter': return (c, type) => (c && c.__extraChar ? ExtraChars.add(c, type) : null);   // v3.9.0
       case 'fetchAssetPaths': return () => [];
       case 'getNamedProp': return name => S.getNamedProp(name);
       case 'getBoyfriend': return () => CharW.get('bf');

@@ -233,6 +233,7 @@ function togglePanel(id) {
   document.body.classList.toggle('panel-abierto', !!UI.panel);   // el botón de pantalla completa no tapa el panel
   if (UI.panel === 'assets') { renderAssetList(); renderHxcData(); }
   if (UI.panel === 'chart') SongImport.render();
+  if (UI.panel) VfsUI.renderAll();   // v3.9.0: carpeta imaginaria + mods guardados
   syncTimeBar();
 }
 function syncTimeBar() { $('timeBar').hidden = !(UI.kind === 'pause' && UI.menu === 'pause' && !UI.panel); }

@@ -223,6 +223,8 @@ function renderWorld(dt, bump, R) {
     if (role === 'gf' && !Optim.s.gf) continue;                                 // Optimización → GF oculta
     if (c) pushLayer(c.z, 1, c);
   }
+  // v3.9.0: personajes añadidos por scripts (CharacterDataParser.fetchCharacter + add)
+  if (typeof ExtraChars !== 'undefined' && ExtraChars.list.length) { const xs = ExtraChars.reals(); for (let i = 0; i < xs.length; i++) if (xs[i].visible !== false) pushLayer(xs[i].z ?? 250, 1, xs[i]); }
   // parlantes de GF (parlantes.js), detrás de ella
   if (Speaker.cur && Optim.s.gf && Speaker.place()) pushLayer(Speaker.cur.z, 4, Speaker);
   // sprites creados por scripts .hxc (FunkinSprite añadidos a PlayState/escenario)

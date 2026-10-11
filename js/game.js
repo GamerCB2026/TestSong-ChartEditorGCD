@@ -179,7 +179,13 @@ const STAGE_HOST = {
   _list: [],
   characters() {   // dad, bf, gf (orden de Stage.dispatchToCharacters); se rehace solo si cambian
     const c = Scene.chars;
-    if (this._d !== c.dad || this._b !== c.bf || this._g !== c.gf) { this._d = c.dad; this._b = c.bf; this._g = c.gf; this._list = [c.dad, c.bf, c.gf].filter(Boolean); }
+    // v3.9.0: + personajes añadidos por scripts + la instancia de su ScriptedCharacter (después de cada personaje)
+    if (this._d !== c.dad || this._b !== c.bf || this._g !== c.gf || this._xv !== ExtraChars.ver || this._sv !== Mods.chars.size) {
+      this._d = c.dad; this._b = c.bf; this._g = c.gf; this._xv = ExtraChars.ver; this._sv = Mods.chars.size;
+      const base = [c.dad, c.bf, c.gf].filter(Boolean).concat(ExtraChars.reals());
+      this._chars = base; this._list = [];
+      for (const ch of base) { this._list.push(ch); const t = Mods.charTarget(ch); if (t) this._list.push(t); }
+    }
     return this._list;
   },
 };
@@ -187,7 +193,7 @@ const STAGE_HOST = {
 const STAGE_TARGET = { __host: 'Stage', __callEvent(e) { if (e.type === 'SONG_STEP_HIT') propsStep(e.step); StageRT.adapter.__callEvent(e); } };
 const PLAY_HOST = {
   modules: () => Mods.moduleTargets(),
-  song: null,
+  get song() { return Mods.songTarget(); },   // v3.9.0: ScriptedSong de la canción actual
   stageScript: () => STAGE_TARGET,
   vocals: VOCALS,
   _warned: new Set(),
@@ -207,18 +213,18 @@ const PLAY_HOST = {
   afterHoldDrop(hn) { if (hn.parent) hn.parent.dropped = true; },
   /* HealthIcon.onStepHit: bop cada 4 steps */
   onStepHit(step) {
-    if (step % 4 === 0) for (const k in Scene.icons) { const ic = Scene.icons[k]; if (ic && ic.shouldBop !== false) ic.bop(); }
+    if (step % 4 === 0 && !VS.play.seekReplay) for (const k in Scene.icons) { const ic = Scene.icons[k]; if (ic && ic.shouldBop !== false) ic.bop(); }
     if (step >= 0 && ScriptHub.on) ScriptHub.step(step);
   },
   onBeatHit(beat) {
-    Speaker.beat(beat);
-    if (beat >= -4 && beat <= -1) { Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME); ScriptHub.countdown(beat + 4); }   // introTHREE/TWO/ONE/GO
+    if (!VS.play.seekReplay) Speaker.beat(beat);
+    if (beat >= -4 && beat <= -1 && !VS.play.seekReplay) { Sfx.play('count' + (beat + 4), FNF.COUNTDOWN_VOLUME); ScriptHub.countdown(beat + 4); }   // introTHREE/TWO/ONE/GO
     if (beat >= 0 && ScriptHub.on) ScriptHub.beat(beat);
   },
   onHealthZero() { if (!isBot() && !G.paused) openOverlay('over'); },
   onEventFired: (ev, canceled) => Events.onFired(ev, canceled),
   /* FlxState.update de los miembros: animaciones de los personajes */
-  updateMembers(elapsed) { const l = STAGE_HOST.characters(); for (let i = 0; i < l.length; i++) l[i].animation.update(elapsed); },
+  updateMembers(elapsed) { STAGE_HOST.characters(); const l = STAGE_HOST._chars || []; for (let i = 0; i < l.length; i++) l[i].animation.update(elapsed); },
 };
 VS.play = new VS.PlayCore(PLAY_HOST);
 VS.play.currentStage = STAGE_HOST;
@@ -312,6 +318,14 @@ function seekTo(pos) {
   P.regenNoteData(pos);
   P.startingSong = false; P.isInCountdown = false;
   P.conductor.update(pos, false, true);
+  // v3.9.0: se reconstruye el estado de los scripts reproduciendo stepHit/beatHit desde el step 0 hasta el destino
+  // (rápido, sin sonidos ni bop): `if (curStep == 128)`, mapas por tiempo, personajes añadidos… quedan como si se hubiera jugado.
+  // Los scripts pueden mirar PlayState.instance.seekReplay / Conductor.instance.replaying.
+  if (P.conductor.currentStep >= 0) {
+    P.seekReplay = true; G.seekReplay = true;
+    try { P.conductor.replaySteps(0, P.conductor.currentStep, -999, -999); } catch (e) { console.warn('[seek] reconstrucción', e); }
+    finally { P.seekReplay = false; G.seekReplay = false; }
+  }
   P.processSongEvents();
   P.resetCamera(false, true, true);
   if (P.cameraZoomTween) P.cameraZoomTween.cancel();
@@ -418,26 +432,22 @@ function resize() {
   V.s = Math.min(W / V.w, H / V.h); V.ox = (W - V.w * V.s) / 2; V.oy = (H - V.h * V.s) / 2;
   const vsArrows = G.mode === 'mobile' && Opts.vslice === 'arrows', vsToque = G.mode === 'mobile' && Opts.vslice === 'toque';
   for (const s of ['player', 'opponent']) { LAYOUT[s].lanes = null; LAYOUT[s].tintIdle = null; LAYOUT[s].strumAlpha = null; }
-  if (vsToque) {
-    // v3.5.0 "Toque" = disposición de V-Slice móvil: 4 receptores GRANDES del jugador repartidos abajo
-    // (← abajo-izquierda, ↓ a su derecha, ↑ y → en la mitad derecha), morados/grises semitransparentes;
-    // se tocan directamente (cada uno con ~¼ del ancho a su alrededor). El centro queda libre para los
-    // personajes. Rival pequeño arriba a la izquierda, con sus flechas que brillan. Ajustes: TOQUE_CFG.
-    const T = TOQUE_CFG, kp = T.escala, ko = T.escalaRival;
-    LAYOUT.player.lanes = T.lanes.map(f => f * V.w);
-    Object.assign(LAYOUT.player, { x: 0, y: V.h - NOTE_W * kp - T.margenAbajo, k: kp, spacing: 1, down: true, alpha: 1, strumAlpha: T.alphaReceptor, tintIdle: T.tinte, splitX: null, hideNotes: false });
-    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET - 30, y: FNF.STRUMLINE_Y_OFFSET * 0.4, k: ko, spacing: 1, down: false, alpha: 1, splitX: null, hideNotes: false });
-    Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: V.h * 0.1 });
-  } else if (vsArrows) {
-    // FunkinHitbox "Arrows" (PlayState.initNoteHitbox): strumline del jugador grande abajo al centro, downscroll forzado,
-    // rival en mini modo (0.4, solo receptores) arriba a la izquierda, barra de vida arriba
-    const amp = (V.w / V.h) / (FNF.WIDTH / FNF.HEIGHT);
-    const kp = (V.h / V.w) * 1.95 * amp, pitch = (V.h / V.w) * 2.8 * amp * FNF.NOTE_SPACING, ko = 0.4 * amp;
-    const px = V.w / 2 - (FNF.INITIAL_OFFSET * kp + 1.5 * pitch) - NOTE_W * kp / 2;
-    Object.assign(LAYOUT.player, { x: px, y: (V.h - NOTE_W * kp) * 0.95 - 24, k: kp, spacing: pitch / (FNF.NOTE_SPACING * kp), down: true, alpha: 1, splitX: null, hideNotes: false });
-    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET - 30, y: FNF.STRUMLINE_Y_OFFSET * 0.3, k: ko, spacing: 1, down: false, alpha: 1, splitX: null, hideNotes: true });
+  if (vsToque || vsArrows) {
+    // v3.9.0: Control V-Slice = PlayState.initNoteHitbox + Strumline.getXPos (#if mobile, esquema Arrows) del código del juego:
+    //  · jugador: strumlineScale = (h/w)·1.95·amp, setNoteSpacing((h/w)·2.8·amp), separación extra pos = 35·amp
+    //    (← en -2pos, ↓ en -2pos+1·esp, ↑ en pos+2·esp, → en pos+3·esp), centrado: x = (w - ancho)/2 + 48, abajo (downscroll)
+    //  · notas: trueScale = escala - (h/w)·0.2·amp · colas (SustainTrail) sin escalar · rival en mini modo 0.4·amp arriba
+    const T = TOQUE_CFG, amp = (V.w / V.h) / (FNF.WIDTH / FNF.HEIGHT);
+    const kp = (V.h / V.w) * 1.95 * amp, sp = (V.h / V.w) * 2.8 * amp, step = FNF.NOTE_SPACING * sp * kp, pos = 35 * amp, ko = 0.4 * amp;
+    const width = 4 * FNF.NOTE_SPACING * sp * kp, x0 = (V.w - width) / 2 + FNF.STRUMLINE_X_OFFSET;
+    const rw = NOTE_W * kp, xs = [-pos * 2, -pos * 2 + step, pos + 2 * step, pos + 3 * step];
+    LAYOUT.player.lanes = xs.map(xp => x0 + xp + FNF.INITIAL_OFFSET + rw / 2);
+    Object.assign(LAYOUT.player, { x: x0, y: (V.h - rw) * 0.95 - FNF.STRUMLINE_Y_OFFSET, k: kp, noteK: kp - (V.h / V.w) * 0.2 * amp, holdK: 1, speedK: 1, spacing: sp, down: true, alpha: 1,
+      strumAlpha: vsToque ? T.alphaReceptor : null, tintIdle: vsToque ? T.tinte : null, splitX: null, hideNotes: false });
+    Object.assign(LAYOUT.opponent, { x: FNF.STRUMLINE_X_OFFSET - 30, y: FNF.STRUMLINE_Y_OFFSET * 0.3, k: ko, noteK: null, holdK: null, speedK: null, spacing: 1, down: false, alpha: 1, splitX: null, hideNotes: true });
     Object.assign(LAYOUT.bar, { x: (V.w - FNF.HEALTH_BAR_W) / 2, y: V.h * 0.1 });
   } else {
+    for (const sd of ['player', 'opponent']) Object.assign(LAYOUT[sd], { noteK: null, holdK: null, speedK: null });
     const down = Opts.isDown(), sy = down ? V.h - NOTE_W - FNF.STRUMLINE_Y_OFFSET : FNF.STRUMLINE_Y_OFFSET;
     const mid = Opts.middlescroll, centerX = V.w / 2 - (FNF.INITIAL_OFFSET + 1.5 * FNF.NOTE_SPACING) - NOTE_W / 2;
     // middlescroll (como Psych/V-Slice): jugador al centro; rival a los lados (2 y 2) y transparente

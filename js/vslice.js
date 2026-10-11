@@ -258,6 +258,7 @@ const VS = (() => {
       this.currentMeasure = 0; this.currentBeat = 0; this.currentStep = 0; this.currentMeasureTime = 0; this.currentBeatTime = 0; this.currentStepTime = 0;
       this.instrumentalOffset = 0; this.formatOffset = 0; this.globalOffset = 0;
       this.onStepHit = null; this.onBeatHit = null; this.onMeasureHit = null;
+      this.catchUp = false; this.replaying = false;   // v3.9.0: catchUp lo activa el PlayState de la página
     }
     get bpm() {
       if (this.bpmOverride != null) return this.bpmOverride;
@@ -310,9 +311,36 @@ const VS = (() => {
       }
       this.currentStep = Math.floor(this.currentStepTime); this.currentBeat = Math.floor(this.currentBeatTime); this.currentMeasure = Math.floor(this.currentMeasureTime);
       if (silent) return;
+      // v3.9.0 (extra de este motor): si se saltaron steps (frames lentos), se despachan TODOS en orden
+      // (V-Slice solo despacha el último). Así `if (curStep == 128)` en onStepHit nunca se pierde.
+      let ob = oldBeat, om = oldMeasure;
+      if (this.catchUp && this.onStepHit && this.currentStep > oldStep + 1 && oldStep > -1000) {
+        const r = this.replaySteps(oldStep + 1, this.currentStep - 1, oldBeat, oldMeasure); ob = r.beat; om = r.measure;
+      }
       if (this.currentStep !== oldStep && this.onStepHit) this.onStepHit();
-      if (this.currentBeat !== oldBeat && this.onBeatHit) this.onBeatHit();
-      if (this.currentMeasure !== oldMeasure && this.onMeasureHit) this.onMeasureHit();
+      if (this.currentBeat !== ob && this.onBeatHit) this.onBeatHit();
+      if (this.currentMeasure !== om && this.onMeasureHit) this.onMeasureHit();
+    }
+    /* v3.9.0: despacha stepHit (y beatHit/measureHit cuando cambian) para los steps a..b en orden, con la
+       posición/tiempos de cada step; al final deja el estado como estaba. Devuelve el último beat/compás despachado. */
+    replaySteps(a, b, prevBeat, prevMeasure) {
+      const keep = [this.songPosition, this.currentStep, this.currentBeat, this.currentMeasure, this.currentStepTime, this.currentBeatTime, this.currentMeasureTime, this.currentTimeChange];
+      if (b - a > 20000) a = b - 20000;
+      this.replaying = true;
+      try {
+        for (let st = a; st <= b; st++) {
+          const t = this.getStepTimeInMs(st);
+          this.songPosition = t; this.currentStep = st; this.currentStepTime = st; this.currentBeatTime = st / C.STEPS_PER_BEAT; this.currentBeat = Math.floor(this.currentBeatTime);
+          this.currentMeasureTime = this.getTimeInMeasures(t); this.currentMeasure = Math.floor(this.currentMeasureTime + 1e-9);
+          this.onStepHit();
+          if (this.currentBeat !== prevBeat) { prevBeat = this.currentBeat; if (this.onBeatHit) this.onBeatHit(); }
+          if (this.currentMeasure !== prevMeasure) { prevMeasure = this.currentMeasure; if (this.onMeasureHit) this.onMeasureHit(); }
+        }
+      } finally {
+        this.replaying = false;
+        [this.songPosition, this.currentStep, this.currentBeat, this.currentMeasure, this.currentStepTime, this.currentBeatTime, this.currentMeasureTime, this.currentTimeChange] = keep;
+      }
+      return { beat: prevBeat, measure: prevMeasure };
     }
     static stepLen(tc) { return (((C.SECS_PER_MIN / tc.bpm) * C.MS_PER_SEC) * (4 / tc.timeSignatureDen)) / C.STEPS_PER_BEAT; }
     getTimeInMeasures(ms) {
@@ -631,7 +659,7 @@ const VS = (() => {
     handleEvent(data) {
       const h = this.getEvent(data.eventKind);
       if (h != null) h.handleEvent(data);
-      else if (VS.play) VS.play.warn(`WARNING: No event handler for event with kind: ${data.eventKind}`);
+      else if (VS.play && !(typeof Mods !== 'undefined' && Mods.scriptHandles(data.eventKind))) VS.play.warn(`WARNING: No event handler for event with kind: ${data.eventKind}`);   // v3.9.0: lo maneja un script en onSongEvent → sin aviso
       data.activated = true;
     },
     queryEvents(events, currentTime, startIndex) {
@@ -889,6 +917,7 @@ const VS = (() => {
       this.startTimestamp = 0; this.startingSong = true; this.isInCountdown = false;
       this.currentStage = null; this.subState = null;
       this.conductor.onStepHit = () => this.stepHit();
+      this.conductor.catchUp = true;
       this.conductor.onBeatHit = () => this.beatHit();
       this.log = [];
     }
@@ -966,7 +995,8 @@ const VS = (() => {
       const event = new SongTimeScriptEvent('SONG_STEP_HIT', this.conductor.currentBeat, this.conductor.currentStep);
       this.dispatchEvent(event);
       if (event.eventCanceled) return false;
-      if (this.host.onStepHit) this.host.onStepHit(this.conductor.currentStep);   // iconos
+      if (this.host.onStepHit) this.host.onStepHit(this.conductor.currentStep);   // iconos + scripts .lua/.hx
+      if (this.seekReplay) return true;   // v3.9.0: reconstrucción al saltar: sin bop de cámara
       if (this.zoomCameraPref && this.camHUD.zoom < (1.35 * this.defaultHUDCameraZoom) && this.cameraZoomRate > 0
         && (this.conductor.currentStep + this.cameraZoomRateOffset * C.STEPS_PER_BEAT) % (this.cameraZoomRate * C.STEPS_PER_BEAT) === 0) {
         this.cameraBopMultiplier = this.cameraBopIntensity;

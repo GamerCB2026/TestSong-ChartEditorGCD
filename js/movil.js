@@ -74,7 +74,8 @@ const TOQUE_CFG = {
   mostrar: params.get('zonas') === '1',
 };
 /* zonas de "Toque" en px de pantalla: ¼ del ancho alrededor de cada receptor (si se solapan, gana la flecha más cercana) */
-function toqueZones() {
+function toqueZones() { return arrowHints(); }   // v3.9.0: una zona por flecha que sigue al receptor (FunkinHitbox.follow)
+function toqueZonesViejas() {
   const cy = strumCY('player');
   return [0, 1, 2, 3].map(i => {
     const cx = laneX('player', i), w = V.w * TOQUE_CFG.ancho;

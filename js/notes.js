@@ -67,7 +67,7 @@ async function loadNoteSkin() {
 /* ---------- Geometría (unidades del HUD) ---------- */
 function laneX(side, i) { const s = LAYOUT[side]; if (s.lanes) return s.lanes[i]; const x0 = (s.splitX != null && i >= 2) ? s.splitX : s.x; return x0 + (FNF.INITIAL_OFFSET + i * FNF.NOTE_SPACING * s.spacing) * s.k + NOTE_W * s.k / 2; }
 function strumCY(side) { const s = LAYOUT[side]; return s.y + NOTE_W * s.k / 2; }
-function pxPerMs(side) { return FNF.PIXELS_PER_MS * VS.play[side === 'player' ? 'playerStrumline' : 'opponentStrumline'].scrollSpeed * LAYOUT[side].k; }   // v3.8.0: Strumline.scrollSpeed (evento ScrollSpeed)
+function pxPerMs(side) { const s = LAYOUT[side]; return FNF.PIXELS_PER_MS * VS.play[side === 'player' ? 'playerStrumline' : 'opponentStrumline'].scrollSpeed * (s.speedK ?? s.k); }   // v3.9.0: speedK (Control V-Slice: sin escalar, como el juego)   // v3.8.0: Strumline.scrollSpeed (evento ScrollSpeed)
 function noteY(side, t) { const s = LAYOUT[side], d = (t - G.songPos) * pxPerMs(side); return strumCY(side) + (s.down ? -d : d); }
 
 function drawFrameCentered(frames, t, cx, cy, sc, alpha = 1, loop = false, glow = null) {
@@ -102,7 +102,7 @@ function drawTinted(frames, cx, cy, sc, tint) {
 
 /* --- cola de sustain: de yA (cabeza/receptor) a yB (final) --- */
 function drawSustain(side, lane, x, yA, yB, alpha) {
-  const sk = Scene.notes, k = LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, down = LAYOUT[side].down;
+  const sk = Scene.notes, k = LAYOUT[side].holdK ?? LAYOUT[side].k, sc = FNF.NOTE_SCALE * k, down = LAYOUT[side].down;   // v3.9.0: SustainTrail no se escala con la strumline
   const piece = sk && sk.piece[lane], end = sk && sk.end[lane];
   const len = Math.abs(yB - yA); if (len <= 1) return;
   ctx.save(); ctx.globalAlpha *= alpha;
@@ -215,8 +215,8 @@ function drawNotesOf(only) {
     const a = n.missed ? 0.35 : 1;
     // note kind con estilo propio (noteStyleId del .hxc + data/notestyles/<id>.json)
     const st = n.kind ? NoteStyles.headFor(n.kind) : null;
-    if (st && st.head && st.head[n.lane]) drawFrameCentered(st.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k * (st.scale || 1), a);
-    else if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * k, a);   // sin nota real: nada
+    if (st && st.head && st.head[n.lane]) drawFrameCentered(st.head[n.lane], 0, x, y, FNF.NOTE_SCALE * (LAYOUT[side].noteK ?? k) * (st.scale || 1), a);
+    else if (hasImg && sk.head[n.lane]) drawFrameCentered(sk.head[n.lane], 0, x, y, FNF.NOTE_SCALE * (LAYOUT[side].noteK ?? k), a);   // sin nota real: nada
   }
   ctx.globalAlpha = ga;
 }

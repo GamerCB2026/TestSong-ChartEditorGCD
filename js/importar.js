@@ -80,9 +80,13 @@ const SongImport = {
     const scriptRx = engine === 'vslice' ? /\.hxc$/i : engine === 'codename' ? /\.(hx|hxs)$/i : /\.lua$/i;
     for (const e of m.entries) if (scriptRx.test(e.name)) m.scripts.push(e.path);
     if (engine === 'vslice') {
-      for (const e of m.entries) {
-        if (!/\.hxc$/i.test(e.name)) continue;
-        try { m.recs.push(Mods.load(e.name, ModText.get(e.path))); }
+      // v3.9.0: TODOS los .hxc del mod (módulos, canciones en data/songs/<id>/ o scripts/songs, escenarios, personajes, eventos, note kinds);
+      // si dos archivos se llaman igual en carpetas distintas se registran por ruta (antes el segundo pisaba al primero)
+      const hx = m.entries.filter(e => /\.hxc$/i.test(e.name)), cnt = new Map();
+      for (const e of hx) cnt.set(e.name.toLowerCase(), (cnt.get(e.name.toLowerCase()) || 0) + 1);
+      for (const e of hx) {
+        const nm = cnt.get(e.name.toLowerCase()) > 1 ? e.path : e.name;
+        try { m.recs.push(Mods.load(nm, ModText.get(e.path))); }
         catch (err) { console.warn('[hxc]', e.path, err); m.fails.push(`${e.name}: ${err.message}`); Mods.failed = Mods.failed || new Map(); Mods.failed.set(e.name, err.message); }
       }
       m.songs = await this.vsSongs(m.entries);
@@ -97,7 +101,8 @@ const SongImport = {
     const m = this.mod; if (!m) return { txt: '' };
     if (m.engine !== 'vslice') return { txt: `${m.scripts.length} script(s) ${m.engine === 'codename' ? '.hx' : '.lua'}` };
     const n = k => m.recs.reduce((a, r) => a + (r[k] ? r[k].length : 0), 0);
-    return { txt: `${m.scripts.length} .hxc (${n('events')} eventos · ${n('kinds')} note kinds · ${n('stages')} escenarios · ${n('modules') - n('stages')} módulos)` };
+    const extra = n('songs') + n('chars');
+    return { txt: `${m.scripts.length} .hxc (${n('events')} eventos · ${n('kinds')} note kinds · ${n('stages')} escenarios · ${n('songs')} canciones · ${n('chars')} personajes · ${n('modules') - n('stages') - extra} módulos)` };
   },
   /* V-Slice: data/songs/<id>/<id>-chart[-var].json + <id>-metadata[-var].json; audio en songs/<id>/ */
   async vsSongs(entries) {
@@ -227,6 +232,7 @@ const SongImport = {
       else run(this.pickMod(a === 'zip'));
     }));
     box.querySelectorAll('[data-song]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); run(this.play(b.dataset.song)); }));
+    if (typeof VfsUI !== 'undefined') { ModStore.renderList($('mgBoxChart')); if (UI.panel === 'assets') VfsUI.render($('vfsBox')); }   // v3.9.0
   },
 };
 

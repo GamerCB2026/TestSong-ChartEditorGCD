@@ -87,7 +87,7 @@ const Events = {
     this.fired++; this.log.push(ev.eventKind + '@' + Math.round(ev.time) + (canceled ? '(cancelado)' : '')); if (this.log.length > 20) this.log.shift();
     let handled = false;
     if (!canceled && typeof ScriptHub !== 'undefined') handled = ScriptHub.event({ t: ev.time, e: ev.eventKind, v: ev.value, pe: ev.pe, ce: ev.ce, psych: ev.psych });
-    if (!canceled && !handled && !VS.SongEventRegistry.getEvent(ev.eventKind)) this.unhandled(ev);   // un .lua/.hx que lo maneja: no se buscan medios
+    if (!canceled && !handled && !VS.SongEventRegistry.getEvent(ev.eventKind) && !Mods.scriptHandles(ev.eventKind)) this.unhandled(ev);   // un .lua/.hx que lo maneja: no se buscan medios
   },
   /* evento sin SongEvent registrado: V-Slice solo avisa. Extra de este motor: cambio de personaje / medios que nombra */
   unhandled(data) {
@@ -292,7 +292,7 @@ const Events = {
   },
   summary() {
     const c = {}; for (const e of this.list) c[e.e] = (c[e.e] || 0) + 1;
-    return Object.entries(c).map(([k, n]) => `${k}×${n}${this.isBuiltin(k) ? '' : VS.SongEventRegistry.getEvent(k) ? ' (.hxc)' : CHANGE_CHAR_RX.test(k) ? ' (imitado: cambio de personaje)' : ' (sin .hxc)'}`).join(', ') || 'ninguno';
+    return Object.entries(c).map(([k, n]) => `${k}×${n}${this.isBuiltin(k) ? '' : VS.SongEventRegistry.getEvent(k) ? ' (.hxc)' : Mods.scriptHandles(k) ? ' (lo maneja un script)' : CHANGE_CHAR_RX.test(k) ? ' (imitado: cambio de personaje)' : ' (sin .hxc)'}`).join(', ') || 'ninguno';
   },
   statusLines() {
     const out = [];
