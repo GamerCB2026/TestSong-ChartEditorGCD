@@ -134,3 +134,15 @@ body.cargando #pauseBtn, body.cargando #overlay { display: none !important; }
 .script-log .sl-info { color: #b9b0cc; }
 .script-log i { color: #c7a8ff; font-style: normal; }
 .script-log u { text-decoration: none; color: #ffd86b; }
+
+/* v3.9.0: carpeta imaginaria + mods guardados */
+.vfs-tree { max-height: 260px; overflow: auto; font-size: 12.5px; line-height: 1.55; background: rgba(0,0,0,.25); border-radius: 6px; padding: 4px 8px; }
+.vfs-tree details > .vfs-kids { padding-left: 14px; }
+.vfs-tree summary { cursor: pointer; }
+.vfs-tree small, .mg-list small { color: #c9bbef; }
+.vfs-file { cursor: pointer; padding-left: 16px; }
+.vfs-file:hover, .vfs-file.sel { background: rgba(255,255,255,.12); }
+.vfs-prev img { max-width: 100%; max-height: 220px; display: block; margin-top: 4px; background: repeating-conic-gradient(#444 0 25%, #333 0 50%) 0 0 / 16px 16px; }
+.vfs-prev pre { max-height: 220px; overflow: auto; font-size: 11.5px; background: rgba(0,0,0,.35); padding: 6px; border-radius: 6px; white-space: pre-wrap; }
+.mg-list { list-style: none; margin: 4px 0 8px; padding: 0; font-size: 12.5px; }
+.mg-list li { margin: 3px 0; }
