@@ -763,9 +763,10 @@ const ScriptHub = {
   countdown(tick) {
     if (PsychRT.scripts.length) { if (tick === 0) { PsychRT.setAll('startedCountdown', true); PsychRT.callAll('onCountdownStarted', []); } PsychRT.callAll('onCountdownTick', [tick]); }
     if (CneRT.scripts.length) CneRT.call('onCountdown', [CneRT.ev({ __host: 'CountdownEvent', swagCounter: tick })]);
-    if (Mods.hasHooks) { if (tick === 0) this.hx('onCountdownStart', { __host: 'CountdownScriptEvent' }); this.hx('onCountdownStep', { __host: 'CountdownScriptEvent', step: ['THREE', 'TWO', 'ONE', 'GO'][tick] || 'AFTER' }); }
+    // v4.0.0: event.cancel() en onCountdownStart = la cuenta atrás espera (cinemática) hasta PlayState.instance.startCountdown()
+    if (Mods.hasHooks) { if (tick === 0) { const g0 = Cutscene.gen, e = this.hx('onCountdownStart', { __host: 'CountdownScriptEvent' }); if (e && e.eventCanceled && !Cutscene.hold && Cutscene.gen === g0) { Cutscene.start('countdown'); return; } } this.hx('onCountdownStep', { __host: 'CountdownScriptEvent', step: ['THREE', 'TWO', 'ONE', 'GO'][tick] || 'AFTER' }); }
   },
-  hx(name, ev) { try { Mods.hook(name, ev); } catch (e) { ScriptLog.err('hxc', `${name}: ${e && e.message || e}`); } },
+  hx(name, ev) { try { return Mods.hook(name, ev); } catch (e) { ScriptLog.err('hxc', `${name}: ${e && e.message || e}`); return null; } },
   songStart() {
     if (PsychRT.scripts.length) { PsychRT.callAll('onSongStart', []); PsychRT.callAll('start', [G.chart ? G.chart.title : '']); }
     if (CneRT.scripts.length) CneRT.call('onSongStart', []);   // (.hxc: SONG_START lo despacha PlayCore.startSong)
@@ -783,7 +784,8 @@ const ScriptHub = {
   songEnd() {
     if (PsychRT.scripts.length) PsychRT.callAll('onEndSong', []);
     if (CneRT.scripts.length) CneRT.call('onSongEnd', []);
-    if (Mods.hasHooks) this.hx('onSongEnd', { __host: 'ScriptEvent' });
+    if (Mods.hasHooks) return this.hx('onSongEnd', { __host: 'ScriptEvent' });
+    return null;
   },
   /* ms totales gastados en scripts (medición de lag) */
   cost() { let ms = 0, calls = 0; for (const s of PsychRT.scripts) { ms += s.ms; calls += s.calls; } for (const s of CneRT.scripts) { ms += s.ms; calls += s.calls; } return { ms, calls }; },

@@ -18,9 +18,9 @@ const rgbColor = c => { const k = argb(c); return `rgb(${k.r},${k.g},${k.b})`; }
 
 /* ---------- efectos de cámara (camGame / camHUD) ---------- */
 const CamFX = {
-  game: null, hud: null, frameShake: { game: [0, 0], hud: [0, 0] },
+  game: null, hud: null, cut: null, frameShake: { game: [0, 0], hud: [0, 0], cut: [0, 0] },
   blank() { return { angle: 0, alpha: 1, visible: true, x: 0, y: 0, flash: null, fade: null, shake: null }; },
-  reset() { this.game = this.blank(); this.hud = this.blank(); },
+  reset() { this.game = this.blank(); this.hud = this.blank(); this.cut = this.blank(); },   // v4.0.0: + camCutscene (encima del HUD)
   active(w) { const s = this[w]; return s.angle !== 0 || s.alpha < 1 || !s.visible || s.x !== 0 || s.y !== 0 || !!s.shake; },
   /* una vez por frame: desplazamiento aleatorio del shake (FlxCamera.updateShake) */
   tick() {
@@ -53,6 +53,7 @@ const CamFX = {
   /* flash / fade encima de la cámara */
   overlay(w) {
     const s = this[w], now = G.gameTime;
+    if (!s || (w === 'cut' && (!s.visible || s.alpha <= 0) && !s.fade && !s.flash)) return;
     ctx.save(); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     if (s.fade) {
       const f = s.fade, k = f.dur <= 0 ? 1 : clamp((now - f.t0) / f.dur, 0, 1);
@@ -253,7 +254,7 @@ class HxSprite {
   }
   get camera() { return this.cameras ? this.cameras[0] : HOST.camGame; }
   set camera(c) { this.cameras = [c]; }
-  get onHud() { return !!(this.cameras && this.cameras.some(c => c && c.__which === 'hud')); }
+  get onHud() { return !!(this.cameras && this.cameras.some(c => c && (c.__which === 'hud' || c.__which === 'cut'))); }
   get width() { return this.frameW * Math.abs(this.scale.x); }
   set width(v) { if (this.frameW) this.scale.x = v / this.frameW; }
   get height() { return this.frameH * Math.abs(this.scale.y); }
@@ -381,11 +382,23 @@ const SIGNAL_NOP = { __host: 'FlxSignal', add() {}, remove() {}, addOnce() {}, r
 const rgbOf = v => { v = v >>> 0; return (v & 0xFFFFFF) === 0xFFFFFF ? null : [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]; };
 const CharW = {
   cache: {},
-  get(role) {
-    if (this.cache[role]) return this.cache[role];
-    const real = () => Scene.chars[role];
+  pinned: new WeakMap(),
+  /* v4.0.0: el envoltorio queda ATADO al personaje real (como en V-Slice, una referencia a un BaseCharacter
+     sigue siendo ese personaje aunque luego otro ocupe su lugar con Stage.addCharacter) */
+  get(role, ch) {
+    const cur = ch || Scene.chars[role];
+    if (cur) { const w0 = this.pinned.get(cur); if (w0) return w0; }
+    else if (this.cache[role]) return this.cache[role];
+    const real = cur ? () => cur : () => Scene.chars[role];
     const w = {
-      __host: 'BaseCharacter', __open: true, __role: role,
+      __host: 'BaseCharacter', __open: true, __role: role, get __real() { return real() || null; },
+      // v4.0.0: kill/revive, origen de los pies, icono (scripts que cambian personajes a mitad de canción)
+      kill() { const c = real(); if (c) { c.visible = false; c.alive = false; } }, revive() { const c = real(); if (c) { c.visible = true; c.alive = true; } },
+      get alive() { const c = real(); return !!c && c.alive !== false; }, get exists() { return this.alive; },
+      get characterOrigin() { const c = real(); return vsPt(c && c.ref ? c.ref.w * c.ts / 2 : 0, c && c.ref ? c.ref.h * c.ts : 0); },
+      get globalOffsets() { const c = real(); return c ? (c.offsets || [0, 0]).slice() : [0, 0]; },
+      initHealthIcon(isOpponent) { const c = real(); if (!c) return; const hi = (c.data && c.data.healthIcon) || {}; Events.setIcon(isOpponent ? 1 : 0, { id: hi.id || c.id, scale: hi.scale ?? 1, flipX: !!hi.flipX, isPixel: !!hi.isPixel, offsets: hi.offsets || [0, 0] }, true); },
+      get healthIcon() { return null; }, debug: false,
       // v3.8.0: BaseCharacter / Bopper de verdad (vslice.js): exclusiones, holdTimer, dance, idleSuffix…
       playAnimation(name, restart = false, ignoreOther = false) { const c = real(); if (c) c.playAnimation(String(name), !!restart, !!ignoreOther); },
       playSingAnimation(dir, miss = false, suffix = '') { const c = real(); const lane = typeof dir === 'number' ? dir : LANE_DIRS.indexOf(String(dir).toUpperCase()); if (c && lane >= 0) c.playSingAnimation(lane, !!miss, suffix ?? ''); },
@@ -423,7 +436,8 @@ const CharW = {
       get zIndex() { const c = real(); return c ? c.z : 0; }, set zIndex(v) { const c = real(); if (c) c.z = +v || 0; },
       angle: 0, setPosition(x = 0, y = 0) { w.x = x; w.y = y; }, getMidpoint() { return new HxPoint(w.x + w.width / 2, w.y + w.height / 2); },
     };
-    return (this.cache[role] = w);
+    if (cur) this.pinned.set(cur, w); else this.cache[role] = w;
+    return w;
   },
 };
 const StrumState = { player: null, opponent: null, reset() { for (const s of ['player', 'opponent']) this[s] = { alpha: 1, visible: true, x: 0, y: 0, lane: [1, 1, 1, 1].map(a => ({ alpha: a, visible: true, dx: 0, dy: 0, angle: 0 })) }; } };
@@ -448,7 +462,7 @@ function strumlineW(side) {
 function camObj(which) {
   const s = () => CamFX[which];
   const o = {
-    __host: which === 'game' ? 'camGame' : 'camHUD', __which: which, __open: true,
+    __host: which === 'game' ? 'camGame' : which === 'cut' ? 'camCutscene' : 'camHUD', __which: which, __open: true,
     // v3.8.0: FlxG.camera.zoom / camHUD.zoom reales (PlayState los recalcula cada frame si cameraZoomRate > 0)
     get zoom() { return which === 'game' ? VS.play.camera.zoom : VS.play.camHUD.zoom; },
     set zoom(v) { v = +v; if (!isFinite(v)) return; if (which === 'game') VS.play.camera.zoom = v; else VS.play.camHUD.zoom = v; },
@@ -491,6 +505,13 @@ function propW(p) {
     get shader() { return p.shader || null; }, set shader(v) { p.shader = v || null; },
     get frame() { return { angle: 0 }; }, get name() { return p.name; },
     playAnimation(n, force) { anim.play(n, force); }, setPosition(x = 0, y = 0) { p.pos = [+x, +y]; },
+    // v4.0.0: movimiento de props por script (nubes, coches: velocity / angularVelocity de FlxObject)
+    get velocity() { return p.vel || (p.vel = vsPt(0, 0)); }, get acceleration() { return p.acc || (p.acc = vsPt(0, 0)); },
+    get angle() { return p.angle || 0; }, set angle(v) { p.angle = +v || 0; }, get angularVelocity() { return p.angVel || 0; }, set angularVelocity(v) { p.angVel = +v || 0; },
+    get danceEvery() { return p.danceEvery || 0; }, set danceEvery(v) { p.danceEvery = +v || 0; },
+    get width() { const f = p.frames && p.frames[0]; return (f ? f.fw || f.w : (p.img ? p.img.naturalWidth || p.img.width : 0)) * (p.scale ? p.scale[0] : 1); },
+    get height() { const f = p.frames && p.frames[0]; return (f ? f.fh || f.h : (p.img ? p.img.naturalHeight || p.img.height : 0)) * (p.scale ? p.scale[1] : 1); },
+    kill() { p.visible = false; p.alive = false; }, revive() { p.visible = true; p.alive = true; }, get alive() { return p.alive !== false; },
   });
 }
 /* v3.7.0: shader cuyas propiedades desconocidas son uniforms (Codename CustomShader / Psych createRuntimeShader) */
@@ -500,29 +521,49 @@ function uniformProxy(sh) {
     set(t, k, v) { if (typeof k === 'symbol' || k in t || String(k).startsWith('_')) t[k] = v; else t.vals[k] = Array.isArray(v) ? v.map(Number) : typeof v === 'boolean' ? v : +v; return true; },
   });
 }
+function stagePos(role) { const sc = Scene.stage && Scene.stage.data && Scene.stage.data.characters && Scene.stage.data.characters[role]; const p = sc && sc.position || (role === 'bf' ? [989.5, 885] : role === 'dad' ? [335, 885] : [751.5, 787]); return vsPt(+p[0] || 0, +p[1] || 0); }
+/* v4.0.0: PlayState.instance.currentSong (Song): id, difficulties (Map variación → Map dificultad → SongDifficulty) */
+function songObj() {
+  const ch = G.chart || {}, v = G.variation || 'default', d = ch.difficulty || 'normal';
+  const diff = { __host: 'SongDifficulty', __open: true, difficulty: d, variation: v, songName: ch.title, songArtist: ch.artist, stage: Scene.stage && Scene.stage.id, noteStyle: ch.noteStyle || 'funkin',
+    characters: { player: Scene.chars.bf && Scene.chars.bf.id, opponent: Scene.chars.dad && Scene.chars.dad.id, girlfriend: Scene.chars.gf && Scene.chars.gf.id, __host: 'SongCharacterData' },
+    get scrollSpeed() { return VS.play.chartScrollSpeed; }, get timeChanges() { return []; }, getEvents: () => VS.play.songEvents, get notes() { return VS.play.notes; } };
+  if (ExtraChars.orig) diff.characters = { player: ExtraChars.orig.bf && ExtraChars.orig.bf.id, opponent: ExtraChars.orig.dad && ExtraChars.orig.dad.id, girlfriend: ExtraChars.orig.gf && ExtraChars.orig.gf.id, __host: 'SongCharacterData' };
+  const byD = new Map([[d, diff]]), diffs = new Map([[v, byD]]);
+  return { __host: 'Song', __open: true, id: Mods.currentSongId(), songName: ch.title, songArtist: ch.artist, difficulties: diffs, variations: [v],
+    getDifficulty: () => diff, listDifficulties: () => [d], hasDifficulty: x => x == null || x === d, getVariationsByCharacterId: () => [v] };
+}
 const HOST = (() => {
-  const camGame = camObj('game'), camHUD = camObj('hud');
+  const camGame = camObj('game'), camHUD = camObj('hud'), camCut = camObj('cut');
   const members = { indexOf: o => (o && o.__host === 'Strumline' ? 100 : -1), length: 0, __host: 'members' };
-  const addSprite = (o, behind) => { if (o && o.__extraChar) return ExtraChars.add(o); if (o && (o instanceof HxSprite)) { o.behind = !!behind; if (!ModRT.sprites.includes(o)) ModRT.sprites.push(o); } else if (o && !HX.isStub(o)) HX.note('add() de un objeto no imitado'); return o; };
-  const removeSprite = o => { if (o && o.__extraChar) return ExtraChars.remove(o); const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); return o; };
+  const addSprite = (o, behind) => { if (o && o.__extraChar) return ExtraChars.add(o); if (o && o.__video) return o; if (o && (o instanceof HxSprite)) { o.behind = !!behind; if (!ModRT.sprites.includes(o)) ModRT.sprites.push(o); } else if (o && !HX.isStub(o)) HX.note('add() de un objeto no imitado'); return o; };
+  const removeSprite = o => { if (o && o.__extraChar) return ExtraChars.remove(o); if (o && o.__video) { o.hideVideo && o.hideVideo(); return o; } const i = ModRT.sprites.indexOf(o); if (i >= 0) ModRT.sprites.splice(i, 1); return o; };
   const stage = {
     __host: 'currentStage', __open: true,
     getBoyfriend: () => CharW.get('bf'), getDad: () => CharW.get('dad'), getGirlfriend: () => CharW.get('gf'),
     getCharacter: id => (['bf', 'dad', 'gf'].find(r => Scene.chars[r] && Scene.chars[r].id === id) ? CharW.get(['bf', 'dad', 'gf'].find(r => Scene.chars[r] && Scene.chars[r].id === id)) : null),
+    // v4.0.0: Stage.getBoyfriendPosition / getDadPosition / getGirlfriendPosition (pies, datos del escenario)
+    getBoyfriendPosition: () => stagePos('bf'), getDadPosition: () => stagePos('dad'), getGirlfriendPosition: () => stagePos('gf'),
     getNamedProp(name) {
       const p = Scene.stage && Scene.stage.props.find(p => p.name === name);
       if (!p) { HX.note(`getNamedProp("${name}"): no existe en el escenario cargado (se ignora)`); return propW({ name, alpha: 1, pos: [0, 0], scale: [1, 1], z: 0, ghost: true }); }   // en vez de romper el script
       return propW(p);
     },
     add: o => addSprite(o), remove: o => removeSprite(o), insert: (i, o) => addSprite(o), refresh() {},
-    addCharacter: (c, type) => (c && c.__extraChar ? ExtraChars.add(c, type) : null),   // v3.9.0
+    addCharacter: (c, type) => ExtraChars.place(c, type),   // v3.9.0 / v4.0.0: BF/DAD/GF reemplaza al personaje de ese rol
     get camZoom() { return Cam.stageZoom; },
   };
   const ps = {
     __host: 'PlayState.instance',
-    get currentStage() { return stage; }, get camGame() { return camGame; }, get camHUD() { return camHUD; }, get camCutscene() { return camHUD; }, get camOther() { return camHUD; },
-    isMinimalMode: false, isPracticeMode: false, isChartingMode: false, playbackRate: 1, startingSong: false, isInCutscene: false, disableKeys: false,
+    get currentStage() { return stage; }, get camGame() { return camGame; }, get camHUD() { return camHUD; }, get camCutscene() { return camCut; }, get camOther() { return camCut; },   // v4.0.0: cámara propia (su alpha/visible ya no esconde las flechas)
+
+    isMinimalMode: false, isPracticeMode: false, isChartingMode: false, playbackRate: 1, isInCutscene: false, disableKeys: false,
+    get startingSong() { return VS.play.startingSong; }, set startingSong(v) {},
     get isBotPlayMode() { return isBot(); },
+    // v4.0.0: estado de la cuenta atrás de PlayState (scripts de cinemáticas)
+    get startTimestamp() { return VS.play.startTimestamp || 0; }, set startTimestamp(v) { if (isFinite(+v)) VS.play.startTimestamp = +v; },
+    get isInCountdown() { return VS.play.isInCountdown; }, set isInCountdown(v) { VS.play.isInCountdown = !!v; },
+    get mayPauseGame() { return true; }, set mayPauseGame(v) {}, get songLength() { return songLength(); },
     // v3.8.0: health / songScore de PlayState sin recortar al asignar (se recorta en update, como V-Slice)
     get health() { return VS.play.health; }, set health(v) { v = +v; if (isFinite(v)) VS.play.health = v; },
     get songScore() { return VS.play.songScore; }, set songScore(v) { VS.play.songScore = +v || 0; },
@@ -548,6 +589,7 @@ const HOST = (() => {
     cancelScrollSpeedTweens: () => VS.play.cancelScrollSpeedTweens(),
     get currentStep() { return VS.play.conductor.currentStep; },
     get currentChart() { return { songName: G.chart.title, songArtist: G.chart.artist, difficulty: G.chart.difficulty, variation: G.variation || 'default', characters: { player: Scene.chars.bf?.id, opponent: Scene.chars.dad?.id, girlfriend: Scene.chars.gf?.id }, stage: Scene.stage?.id, __host: 'currentChart' }; },
+    get currentSong() { return songObj(); },
     get currentDifficulty() { return G.chart.difficulty; }, get currentVariation() { return G.variation || 'default'; },
     get vocals() { return VS.play.host.vocals; },
     members, add: o => addSprite(o), insert: (i, o) => addSprite(o, i < 100), remove: o => removeSprite(o),
@@ -558,6 +600,7 @@ const HOST = (() => {
   // getTimeInSteps / getStepTimeInMs / getBeatTimeInMs / getTimeInMeasures (crochet / stepCrochet = nombres de Psych)
   const conductor = new Proxy({}, {
     get(_, k) { const c = VS.play.conductor; if (k === '__host') return 'Conductor.instance'; if (k === '__open') return true; if (k === 'crochet') return c.beatLengthMs; if (k === 'stepCrochet') return c.stepLengthMs;
+      if (k === 'update') return (pos, ...a) => { if (pos != null && !isFinite(+pos)) return; return c.update(pos == null ? c.songPosition : +pos, ...a); };   // v4.0.0: sin NaN
       const v = c[k]; return typeof v === 'function' ? v.bind(c) : v; },
     set(_, k, v) { VS.play.conductor[k] = v; return true; },
     has(_, k) { return k in VS.play.conductor || k === 'crochet' || k === 'stepCrochet' || k === '__host'; },
@@ -690,7 +733,7 @@ const HOST = (() => {
   };
   for (const [cls, key] of Object.entries(SPR_CLASS_FRAG)) CTORS[cls] = () => new SprShader(null, cls).fromKey(key);
   return {
-    camGame, camHUD, ps,
+    camGame, camHUD, ps, G_, CTORS,   // v4.0.0: expuestos para cinematicas.js
     global(n) { return n in G_ ? G_[n] : undefined; },
     construct(base, args, full) { if (CTORS[base]) return CTORS[base](args); HX.note(`new ${full}() no se imita`); return HX.stub('new ' + base); },
     findClass(n) { return Mods.classes.get(n) || null; },
@@ -793,14 +836,19 @@ const ExtraChars = {
         if (k === '__host') return 'BaseCharacter'; if (k === '__open') return true; if (k === '__extraChar') return t;
         if (k === 'characterId' || k === 'id') return t.id; if (k === 'characterType') return t.type;
         if (typeof k === 'symbol') return undefined;
-        if (t.real) { const v = t.real[map(k)]; return typeof v === 'function' ? v.bind(t.real) : v; }
+        if (t.real) {
+          const v = t.real[map(k)]; if (v !== undefined && k !== 'animation' && k !== 'scale' && k !== 'visible' && k !== 'alive') return typeof v === 'function' ? v.bind(t.real) : v;
+          const w = CharW.get(ExtraChars.roleOf(t.type), t.real); if (k in w) return w[k];   // v4.0.0: mismo API que los personajes principales
+          return v;
+        }
+        if (k === 'characterOrigin') { t.originPending = true; return vsPt(0, 0); }   // v4.0.0: aún cargando → se corrige al cargar
         if (k in t.props) return t.props[k];
-        if (/^(playAnimation|dance|playSingAnimation|resetCharacter|setPosition|screenCenter|updateHitbox|kill|revive|destroy)$/.test(k)) return (...a) => { t.calls.push([k, a]); return null; };
+        if (/^(playAnimation|dance|playSingAnimation|resetCharacter|setPosition|screenCenter|updateHitbox|kill|revive|destroy|initHealthIcon|setGraphicSize|refresh)$/.test(k)) return (...a) => { t.calls.push([k, a]); return null; };
         return k === 'alpha' ? 1 : k === 'visible' ? true : null;
       },
       set(t, k, v) {
         if (k === 'characterType') { t.type = String(v).toUpperCase(); if (t.real) t.real.characterType = t.type; return true; }
-        if (t.real) t.real[map(k)] = v; else t.props[k] = v; return true;
+        if (t.real) { const w = CharW.get(ExtraChars.roleOf(t.type), t.real); const d = Object.getOwnPropertyDescriptor(w, k); if (d && d.set) w[k] = v; else t.real[map(k)] = v; } else t.props[k] = v; return true;
       },
     });
     if (st.id) loadCharacter(this.roleOf(st.type), st.id).then(c => {
@@ -808,15 +856,45 @@ const ExtraChars = {
       st.real = c; c.characterType = st.type; c.extra = true;
       placeChar(c, this.roleOf(st.type)); c.reset();
       for (const [k, v] of Object.entries(st.props)) c[map(k)] = v;
-      for (const [k, a] of st.calls) { try { if (k === 'setPosition') { c.bx = a[0]; c.by = a[1]; } else if (typeof c[k] === 'function') c[k](...a); } catch (e) {} }
+      if (st.originPending && c.ref) { if ('x' in st.props) c.bx = +st.props.x - c.ref.w * c.ts / 2; if ('y' in st.props) c.by = +st.props.y - c.ref.h * c.ts; }
+      for (const [k, a] of st.calls) { try { if (k === 'setPosition') { c.bx = a[0]; c.by = a[1]; } else if (typeof c[k] === 'function') c[k](...a); else { const w = CharW.get(this.roleOf(st.type), c); if (typeof w[k] === 'function') w[k](...a); } } catch (e) {} }
       st.calls.length = 0; this.ver++;
+      if (st.onReal) { const f = st.onReal; st.onReal = null; f(c); }
     }).catch(e => { st.failed = true; console.warn('[hxc] personaje', st.id, e); });
     return w;
   },
   add(w, type) { const t = w && w.__extraChar; if (!t) return w; if (type != null) w.characterType = type; t.added = true; if (!this.list.includes(t)) { this.list.push(t); this.ver++; } return w; },
   remove(w) { const t = w && w.__extraChar; const i = t ? this.list.indexOf(t) : -1; if (i >= 0) { this.list.splice(i, 1); this.ver++; } return w; },
   reals() { const o = []; for (const t of this.list) if (t.real && t.added) o.push(t.real); return o; },
-  clear() { this.list.length = 0; this.ver++; },
+  clear() { this.restore(); this.pending = {}; this.list.length = 0; this.ver++; },
+  /* v4.0.0: Stage.addCharacter(c, BF|DAD|GF) → c pasa a ser el personaje de ese rol (canta, enfoca la cámara);
+     el anterior queda en el escenario como extra (el script suele hacerle kill() o un fade). */
+  orig: null,
+  place(w, type) {
+    if (!w) return null;
+    const T = String(type ?? 'OTHER').toUpperCase(), role = /^(BF|DAD|GF)$/.test(T) ? this.roleOf(T) : null;
+    const t = w.__extraChar;
+    if (!role) return t ? this.add(w, type) : w;
+    const swap = real => this.swapMain(role, real, T);
+    this.pending = this.pending || {};
+    if (t) { t.type = T; if (t.real) { this.pending[role] = null; swap(t.real); } else { this.pending[role] = t; t.onReal = real => { if (this.pending[role] === t) { this.pending[role] = null; swap(real); } }; } return w; }
+    const real = w.__real; this.pending[role] = null; if (real && real !== Scene.chars[role]) swap(real);
+    return w;
+  },
+  swapMain(role, real, T) {
+    const old = Scene.chars[role]; if (!real || old === real) return;
+    if (!this.orig) this.orig = { bf: Scene.chars.bf, dad: Scene.chars.dad, gf: Scene.chars.gf };
+    const i = this.list.findIndex(t => t.real === real); if (i >= 0) this.list.splice(i, 1);
+    if (old && !this.list.some(t => t.real === old)) { old.extra = true; this.list.push({ id: old.id, real: old, props: {}, type: old.characterType || T, added: true, calls: [], parked: true }); }
+    real.extra = false; real.characterType = T; Scene.chars[role] = real;
+    if (real.visible === false && real.alive !== false) real.visible = true;
+    this.ver++; if (typeof Scene !== 'undefined') Scene.swapVer = (Scene.swapVer || 0) + 1;
+  },
+  restore() {
+    if (!this.orig) return;
+    for (const r of ['bf', 'dad', 'gf']) { const c = this.orig[r]; if (c) { c.extra = false; c.role = r; c.visible = true; c.alive = true; c.alpha = 1; Scene.chars[r] = c; } }
+    this.orig = null;
+  },
 };
 
 /* ---------- registro de scripts ---------- */
@@ -907,8 +985,10 @@ const Mods = {
     if (!kind) return false;
     const c = this._handles || (this._handles = new Map()); if (this._handlesN !== this.scripts.size) { c.clear(); this._handlesN = this.scripts.size; }
     let v = c.get(kind); if (v !== undefined) return v;
-    v = false; const q1 = `'${kind}'`, q2 = `"${kind}"`;
-    for (const r of this.scripts.values()) { const t = r.text || ''; if ((t.includes(q1) || t.includes(q2)) && /\bon(SongEvent|ScriptEvent)\b/.test(t)) { v = true; break; } }
+    // v4.0.0: sin distinguir mayúsculas y aunque el nombre esté en otro archivo que el onSongEvent (clases base, constantes, switch/case)
+    v = false; const k = String(kind).toLowerCase(), q1 = `'${k}'`, q2 = `"${k}"`;
+    const anyHandler = [...this.scripts.values()].some(r => /\bon(SongEvent|ScriptEvent)\b/.test(r.text || ''));
+    if (anyHandler) for (const r of this.scripts.values()) { const t = (r.lt || (r.lt = (r.text || '').toLowerCase())); if (t.includes(q1) || t.includes(q2)) { v = true; break; } }
     c.set(kind, v); return v;
   },
   /* v3.9.0: id de la canción actual (mod: carpeta de la canción; si no, el título del chart) */
@@ -919,7 +999,11 @@ const Mods = {
     const id = this.currentSongId(), id2 = id.replace(/\s+/g, '-');
     const ent = this.songs.get(id) || this.songs.get(id2) || null;
     if (!ent) return null;
-    if (!this._songT || this._songT.__ent !== ent) this._songT = this.target(ent, 'Song');
+    if (!this._songT || this._songT.__ent !== ent) {
+      this._songT = this.target(ent, 'Song');
+      // v4.0.0: onCreate de la canción al empezar a usarla (PlayState.create)
+      if (ent.script.findMethod(ent.cls, 'onCreate')) { const t = this._songT; setTimeout(() => this.safe(() => { HX.R.cur = ent.file; ent.script.callMethod(ent.inst, 'onCreate', [new VS.ScriptEvent('CREATE')]); }), 0); void t; }
+    }
     return this._songT;
   },
   /* ScriptedCharacter: instancia por personaje real (se crea al aparecer; onCreate) */
@@ -981,12 +1065,14 @@ const Mods = {
     const e = type === 'PAUSE' ? new VS.PauseScriptEvent(false) : type.startsWith('COUNTDOWN') ? new VS.CountdownScriptEvent(type, ev && ev.step) : new VS.ScriptEvent(type, type === 'GAME_OVER' || type === 'SONG_END');
     VS.play.dispatchEvent(e); return e;
   },
-  get hasHooks() { return this.modules.size > 0 || !!StageRT.cur; },
+  get hasHooks() { return this.modules.size > 0 || this.songs.size > 0 || this.chars.size > 0 || !!StageRT.cur; },   // v4.0.0: + canciones y personajes
   update(dt) {
     this.elapsed = dt / 1000;
     StageRT.tick(); VideoSync.tick();
+    if (Scene.stage && !G.paused) for (const p of Scene.stage.props) if (p.vel || p.angVel) { const e = this.elapsed; if (p.acc) { p.vel.x += p.acc.x * e; p.vel.y += p.acc.y * e; } if (p.vel) p.pos = [p.pos[0] + p.vel.x * e, p.pos[1] + p.vel.y * e]; if (p.angVel) p.angle = (p.angle || 0) + p.angVel * e; }   // v4.0.0
     ScriptHub.update(dt);   // v3.7.0: onUpdate de .lua / update de .hx (y onSongStart al cruzar 0)
     if (this.pendingDeath) { this.pendingDeath = false; if (G.health <= 0 && !isBot()) openOverlay('over'); }
+    if (typeof Cutscene !== 'undefined') { SongSeq.tick(); Cutscene.tick(); Ptr.frame(); }   // v4.0.0
   },
   /* v3.8.0: tweens/timers de los scripts = FlxTween.globalManager / FlxTimer (antes de la lógica del estado) */
   updatePlugins(dt) {
@@ -995,6 +1081,7 @@ const Mods = {
   },
   /* reiniciar / buscar: se borra todo lo que crearon los scripts */
   resetRuntime(retry) {
+    if (typeof Cutscene !== 'undefined') { Cutscene.reset(); SongSeq.clear(); }   // v4.0.0
     ModRT.tweenMgr.clear(); ModRT.tweens.length = 0; ModRT.timers.length = 0; ModRT.sprites.length = 0; StageRT.key = null; VideoSync.clear(); CamFilters.clear('hxc:');
     for (const s of ModRT.sounds) s.stop(); ModRT.sounds.length = 0;
     CamFX.reset(); StrumState.reset(); CharW.cache = {}; if (retry) ExtraChars.clear();   // v3.9.0: al saltar se conservan los personajes añadidos HOST.camGame._filters = []; HOST.camHUD._filters = [];
@@ -1004,7 +1091,8 @@ const Mods = {
   /* la nota ES el NoteSprite (vslice.js le pone noteData, getParam, hasBeenHit, mayHit…) */
   noteW(n) { return n; },
   playVideo(p) {
-    const r = ModRes.parsePath(p); const url = ModRes.get('video', r.key, r.lib);
+    if (G.seekReplay) return;   // v4.0.0: al reconstruir un salto no se abren videos viejos
+    const r = ModRes.parsePath(p); const url = typeof modVideoUrl === 'function' ? modVideoUrl(r) : ModRes.get('video', r.key, r.lib);
     if (!url) { HX.note(`video ${r.key}: falta el archivo`); return; }
     VideoSync.play(url, r.key);
   },
@@ -1152,7 +1240,7 @@ const StageRT = {
     const call = (n, ev) => { if (rec.script.findMethod(rec.cls, n)) { try { HX.R.cur = rec.file; rec.script.callMethod(inst, n, [ev || {}]); } catch (e) { console.warn('[hxc escenario]', n, e); HX.note(`${n}: ${e.message}`); } } };
     call('buildStage'); call('onCreate', { __host: 'ScriptEvent' });
     for (const r of ['bf', 'dad', 'gf']) if (Scene.chars[r]) this.addChar(r);
-    call('onSongLoaded', { __host: 'ScriptEvent' });
+    // v4.0.0: onSongLoaded llega por PlayState.dispatchEvent (regenNoteData), con id/notes/events reales
   },
   addChar(r) {
     this.chars[r] = Scene.chars[r];
@@ -1187,17 +1275,21 @@ const VideoSync = {
     v.className = 'hx-video' + (opts.gif ? ' hx-gif' : ''); v.src = url; v.dataset.key = key;
     if (!opts.gif) { v.playsInline = true; v.preload = 'auto'; v.onended = () => this.remove(it); }
     v.onclick = () => this.remove(it);
-    const it = { v, t0, key, gif: !!opts.gif, until: opts.ms ? t0 + opts.ms : null };
+    if (!opts.gif) v.onerror = () => { console.warn('[video] no se puede reproducir', key); if (opts.onError) Mods.safe(() => opts.onError()); this.remove(it); };
+    if (opts.onMeta && !opts.gif) v.addEventListener('loadedmetadata', () => Mods.safe(() => opts.onMeta(v)), { once: true });
+    const it = { v, t0, key, gif: !!opts.gif, until: opts.ms ? t0 + opts.ms : null, free: !!opts.free, onEnd: opts.onEnd || null };
+    if (opts.muted) v.muted = true; if (opts.volume != null) v.volume = Math.max(0, Math.min(1, +opts.volume));
     document.body.appendChild(v); this.list.push(it);
     if (!opts.gif) v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });   // sin gesto: arranca en silencio
     return it;
   },
-  remove(it) { it.v.remove(); const i = this.list.indexOf(it); if (i >= 0) this.list.splice(i, 1); },
-  clear() { for (const it of [...this.list]) this.remove(it); },
+  remove(it, silent) { it.v.remove(); const i = this.list.indexOf(it); if (i >= 0) this.list.splice(i, 1); else return; if (!silent && it.onEnd) { const f = it.onEnd; it.onEnd = null; Mods.safe(() => f()); } },
+  clear() { for (const it of [...this.list]) this.remove(it, true); },
   tick() {
     for (const it of [...this.list]) {
       if (it.until !== null && G.songPos >= it.until) { this.remove(it); continue; }
       if (it.gif) continue;
+      if (it.free) { const v = it.v; if (G.paused) { if (!v.paused) v.pause(); } else if (v.paused && !v.ended && !it.userPaused) v.play().catch(() => {}); continue; }   // v4.0.0: cinemática (no sigue a la canción)
       const v = it.v, want = (G.songPos - it.t0) / 1000;
       if (want < 0) { this.remove(it); continue; }
       if (G.paused) { if (!v.paused) v.pause(); continue; }

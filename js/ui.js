@@ -267,10 +267,12 @@ function hideOverlay() { overlay.classList.remove('show'); document.body.classLi
 function openOverlay(kind, menu) {
   if (Loader.active) return;
   const prevKind = G.overlayKind;
+  // v4.0.0: event.cancel() en onSongEnd (cinemática final) → la canción espera a PlayState.instance.endSong(true)
+  if (kind === 'end' && prevKind !== 'end' && !Cutscene.endOk && !Cutscene.hold) { const g0 = Cutscene.gen, e = ScriptHub.songEnd(); if (e && e.eventCanceled && !Cutscene.hold && Cutscene.gen === g0 && G.overlayKind !== 'end') { Cutscene.start('end'); return; } }
   G.paused = true; UI.kind = G.overlayKind = kind; UI.openedAt = performance.now();
   if (kind === 'over') Mods.hook('onGameOver');   // v3.8.0: GAME_OVER por PlayState.dispatchEvent
   // v3.7.0: onPause / onEndSong de los scripts (.lua, .hx, .hxc)
-  if (kind === 'pause' && !prevKind) ScriptHub.pause(); else if (kind === 'end' && prevKind !== 'end') ScriptHub.songEnd();
+  if (kind === 'pause' && !prevKind) ScriptHub.pause(); else if (kind === 'end' && prevKind !== 'end' && Cutscene.endOk) { /* (onSongEnd ya se despachó) */ }
   VideoSync.pauseAll();
   Music.pause();                                   // guarda la posición exacta y detiene las fuentes (síncrono)
   G.songPos = Music.position();
@@ -295,7 +297,7 @@ function closeOverlay() {
   hideOverlay();
   if (wasPause) ScriptHub.resume();
   G.paused = false; lastFrame = performance.now();
-  if (G.songPos >= songLength()) return;
+  if (G.songPos >= songLength() || Cutscene.hold) return;   // (cinemática: la canción sigue retenida)
   Music.play(G.songPos);                           // reanuda EXACTAMENTE donde se pausó (mismo reloj para notas y audio)
 }
 /* alternar pausa con protección contra pulsaciones repetidas muy rápidas */

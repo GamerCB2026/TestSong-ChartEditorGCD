@@ -27,11 +27,12 @@ async function loadScene(ids) {
   };
   // "stage" (legacy/Kade) = mainStage, halloween = spookyMansion… salvo que el mod traiga su propio escenario con ese id (Psych/Codename)
   const stageId = EngineData.hasOwnStage(ids.stage) ? ids.stage : ids.stage in ASSET_CFG.stageAlias ? ASSET_CFG.stageAlias[ids.stage] : (KADE_STAGES[ids.stage] || ids.stage);
+  const nsCfg = noteStyleCfg(G.chart && G.chart.noteStyle), nsKey = nsCfg ? nsCfg.key : 'funkin';   // v4.0.0: noteStyle de la canción
   const [stage, bf, dad, gf, notes] = await Promise.all([
     loadStage(stageId).then(s => s || (stageId !== ASSET_CFG.stage ? loadStage(ASSET_CFG.stage) : null)),
-    loadRole('bf'), loadRole('dad'), loadRole('gf'), Scene.notes ? Scene.notes : loadNoteSkin()]);
+    loadRole('bf'), loadRole('dad'), loadRole('gf'), Scene.notes && Scene.notesKey === nsKey ? Scene.notes : loadNoteSkin(nsCfg)]);
   if (token !== Scene.token) return;
-  Scene.stage = stage; Scene.notes = notes;
+  Scene.stage = stage; Scene.notes = notes; Scene.notesKey = nsKey;
   const st = [];
   for (const [role, c] of [['bf', bf], ['dad', dad], ['gf', gf]]) {
     if (c instanceof RealChar) {
@@ -110,7 +111,7 @@ function statusLines() {
   out.push(ms.length ? `✔ sonidos de fallo: ${ms.length}/3` : '✘ sonidos de fallo: faltan shared/sounds/missnote1.ogg, missnote2.ogg, missnote3.ogg');
   out.push(Sfx.found.pauseMusic ? `✔ música de pausa: ${Sfx.found.pauseMusic}` : '✘ música de pausa: falta music/breakfast/breakfast.ogg');
   out.push(Sfx.found.scrollMenu ? `✔ sonido de menú: ${Sfx.found.scrollMenu}` : '✘ sonido de menú: falta sounds/scrollMenu.ogg');
-  out.push(Music.has ? `✔ música de la canción: ${Music.tracks.map(t => (t.name || t.role) + ' [' + t.role + ']').join(', ')} · ${Music.mode === 'webaudio' ? 'Web Audio (reloj del AudioContext)' : '<audio> + resincronización'}` : '✘ música de la canción: no hay Inst/Voices (demo sin audio)');
+  out.push(Music.pending ? '· música de la canción: decodificando…' : Music.has ? `✔ música de la canción: ${Music.tracks.map(t => (t.name || t.role) + ' [' + t.role + ']').join(', ')} · ${Music.mode === 'webaudio' ? 'Web Audio (reloj del AudioContext)' : '<audio> + resincronización'}` : '✘ música de la canción: no hay Inst/Voices (demo sin audio)');
   if (G.chart) out.push(`✔ chart: ${G.chart.title} · formato ${G.chart.format || '?'} · ${G.chart.notes.length} notas · dificultad ${G.chart.difficulty || '—'} · eventos: ${Events.summary()}`);
   if (G.pack) out.push(`✔ variación: ${G.variation} · disponibles: ${G.pack.vars.map(v => v.id).join(', ')} · ${G.pack.entries.length} dificultades`);
   out.push(...StageRT.status());
@@ -195,6 +196,7 @@ const PLAY_HOST = {
   modules: () => Mods.moduleTargets(),
   get song() { return Mods.songTarget(); },   // v3.9.0: ScriptedSong de la canción actual
   stageScript: () => STAGE_TARGET,
+  songId: () => Mods.currentSongId(), difficulty: () => (G.chart && G.chart.difficulty) || 'normal',
   vocals: VOCALS,
   _warned: new Set(),
   warn(m) { if (this._warned.has(m)) return; this._warned.add(m); console.warn('[V-Slice]', m); },
@@ -331,6 +333,7 @@ function seekTo(pos) {
   if (P.cameraZoomTween) P.cameraZoomTween.cancel();
   P.camera.zoom = P.currentCameraZoom * P.cameraBopMultiplier;
   G.songPos = pos; Music.seek(pos);
+  if (!G.paused && !G.overlayKind && !Music.playing && Music.has) Music.play(pos);   // v4.0.0: una cinemática retenida se suelta al saltar
   G.demoHold = [null, null, null, null];
 }
 function songLength() { return Math.max(G.chart.endTime - 1800, Music.duration || 0) || G.chart.endTime; }
@@ -387,7 +390,7 @@ function update(dt) {
   if (ip) ip.updateAnim(G.health); if (io) io.updateAnim(FNF.HEALTH_MAX - G.health);
   updatePopups(dt);
   const end = Math.max(c.endTime, Music.duration + 300);
-  if (G.songPos > end) { if (G.mode === 'demo') restart(); else openOverlay('end'); }
+  if (G.songPos > end && !Cutscene.hold) { if (G.mode === 'demo') restart(); else openOverlay('end'); }
 }
 function autoFocusStep() {
   const P = VS.play, pos = G.songPos, cr = P.conductor.beatLengthMs * 2;
@@ -516,6 +519,7 @@ function render(dt = 16) {
   CamFX.overlay('game');        // camGame.flash / fade
   if (hudLayer) CamFX.drawLayer(hudLayer, 'hud'); else drawHudLayer();
   CamFX.overlay('hud');
+  CamFX.overlay('cut');         // v4.0.0: camCutscene (fundidos de cinemáticas, encima de todo)
   if (Shaders.list.length && Shaders.target === 'todo' && Shaders.active()) {
     try {
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);

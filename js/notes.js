@@ -18,19 +18,41 @@ function frameFromImg(img) {
   return { img, x: 0, y: 0, w, h, fw: w, fh: h, dw: w, dh: h, offX: 0, offY: 0, rot: false };
 }
 
-async function loadNoteSkin() {
+/* v4.0.0: noteStyle de la canción (metadata playData.noteStyle → data/notestyles/<id>.json del mod) */
+function noteStyleCfg(id) {
+  id = String(id || '').trim(); if (!id || id === 'funkin' || typeof ModText === 'undefined') return null;
+  let json = null;
+  for (let k = 0, cur = id; k < 4 && cur && cur !== 'funkin'; k++) {   // con "fallback" encadenado
+    const t = ModText.map.get(ModText.key(`data/notestyles/${cur}.json`)); if (!t) break;
+    let j; try { j = JSON.parse(t); } catch (e) { break; }
+    json = json ? { assets: Object.assign({}, j.assets || {}, json.assets || {}) } : j; cur = j.fallback;
+  }
+  if (!json || !json.assets) return null;
+  const A = json.assets, bases = ap => { if (!ap) return []; const r = parseAssetPath(ap), lib = r.lib && r.lib !== 'preload' ? r.lib + '/' : ''; return uniq([`${lib}images/${r.path}`, `images/${r.path}`, `shared/images/${r.path}`]); };
+  const D = ['left', 'down', 'up', 'right'], dd = (o, k) => (o && o.data && o.data[k] && o.data[k].prefix) || null;
+  return {
+    id, key: 'ns:' + id,
+    note: A.note && { bases: bases(A.note.assetPath), prefix: D.map(d => dd(A.note, d)) },
+    strum: A.noteStrumline && { bases: bases(A.noteStrumline.assetPath), st: D.map(d => dd(A.noteStrumline, d + 'Static')), pr: D.map(d => dd(A.noteStrumline, d + 'Press')), cf: D.map(d => dd(A.noteStrumline, d + 'Confirm')) },
+    hold: A.holdNote && A.holdNote.assetPath && { bases: bases(A.holdNote.assetPath).map(b => b + '.png') },
+    splash: A.noteSplash && A.noteSplash.assetPath && { bases: bases(A.noteSplash.assetPath), pfx: D.map(d => ((A.noteSplash.data || {})[d + 'Splashes'] || []).map(x => x && x.prefix).filter(Boolean)) },
+  };
+}
+async function loadNoteSkin(style) {
   const skin = { head: [], piece: [], end: [], strum: [], press: [], confirm: [], splash: [], placeholder: [false, false, false, false], src: {} };
   const Dirs = ['Left', 'Down', 'Up', 'Right'];
+  const S = style || {}, pre = (o, def) => (o && o.bases ? [...o.bases, ...def] : def);
   const [sheetV, sheetL, sheetS, holdImg] = await Promise.all([
-    loadSparrowSheet(ASSET_CFG.strumSheets), loadSparrowSheet(ASSET_CFG.legacyNoteSheets), loadSparrowSheet(ASSET_CFG.splashSheets), loadImg(ASSET_CFG.holdSheets)]);
+    loadSparrowSheet(pre(S.strum, ASSET_CFG.strumSheets)), loadSparrowSheet(pre(S.note, ASSET_CFG.legacyNoteSheets)), loadSparrowSheet(pre(S.splash, ASSET_CFG.splashSheets)), loadImg(pre(S.hold, ASSET_CFG.holdSheets))]);
   await Promise.all([0, 1, 2, 3].map(async i => {
     const v = { color: ASSET_CFG.noteColors[i], dir: LANE_NAMES[i], DIR: LANE_DIRS[i], Dir: Dirs[i] };
     const f = list => (Array.isArray(list) ? list : [list]).map(t => ASSET_CFG.noteDir + fillT(t, v));
     const fromSheet = (sh, prefix) => { if (!sh) return null; const fr = sparrowFrames(sh.atlas, prefix, null, sh.img); return fr.length ? fr : null; };
     // las PNG sueltas (NoteAssets/) solo se buscan si las hojas no traen lo necesario (menos peticiones 404)
-    const sheetHead = fromSheet(sheetL, v.color + '0') || fromSheet(sheetL, v.color + ' instance');
+    const sheetHead = (S.note && S.note.prefix[i] && fromSheet(sheetL, S.note.prefix[i])) || fromSheet(sheetL, v.color + '0') || fromSheet(sheetL, v.color + ' instance') || fromSheet(sheetL, 'note' + v.Dir);
     const sheetHold = holdImg || fromSheet(sheetL, v.color + ' hold piece');
-    const sheetStrum = fromSheet(sheetV, 'static' + v.Dir + '0');
+    const sp = (k, def) => (S.strum && S.strum[k][i] && fromSheet(sheetV, S.strum[k][i])) || fromSheet(sheetV, def);
+    const sheetStrum = sp('st', 'static' + v.Dir + '0');
     const none = Promise.resolve(null);
     const [head, piece, end, st, pr, cf] = await Promise.all([
       sheetHead ? none : loadImg(f(ASSET_CFG.noteHead)), sheetHold ? none : loadImg(f(ASSET_CFG.holdPiece)), sheetHold ? none : loadImg(f(ASSET_CFG.holdEnd)),
@@ -47,14 +69,14 @@ async function loadNoteSkin() {
       skin.end[i] = end ? frameFromImg(end) : (fromSheet(sheetL, v.color + ' hold end') || fromSheet(sheetL, v.dir === 'left' ? 'pruple end hold' : '\0') || [])[0] || null;
     }
     // receptores
-    skin.strum[i] = fromSheet(sheetV, 'static' + v.Dir + '0') || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR) || fromSheet(sheetL, 'arrow static instance ' + [1, 2, 4, 3][i] + '0');
-    skin.press[i] = fromSheet(sheetV, 'press' + v.Dir + '0') || (pr && [frameFromImg(pr)]) || fromSheet(sheetL, v.dir + ' press');
-    skin.confirm[i] = fromSheet(sheetV, 'confirm' + v.Dir + '0') || (cf && [frameFromImg(cf)]) || fromSheet(sheetL, v.dir + ' confirm');
+    skin.strum[i] = sheetStrum || (st && [frameFromImg(st)]) || fromSheet(sheetL, 'arrow' + v.DIR) || fromSheet(sheetL, 'arrow static instance ' + [1, 2, 4, 3][i] + '0');
+    skin.press[i] = sp('pr', 'press' + v.Dir + '0') || (pr && [frameFromImg(pr)]) || fromSheet(sheetL, v.dir + ' press');
+    skin.confirm[i] = sp('cf', 'confirm' + v.Dir + '0') || (cf && [frameFromImg(cf)]) || fromSheet(sheetL, v.dir + ' confirm');
     // v3.7.0: sin receptor real no se genera uno gris a partir de la nota
     skin.placeholder[i] = !skin.strum[i];
     // splashes (2 variantes por color)
     const col = v.color;
-    skin.splash[i] = [fromSheet(sheetS, 'note impact 1 ' + col), fromSheet(sheetS, 'note impact 2 ' + col), fromSheet(sheetS, 'note impact 1  ' + col)].filter(Boolean);
+    skin.splash[i] = [...(S.splash ? S.splash.pfx[i].map(p => fromSheet(sheetS, p)) : []), fromSheet(sheetS, 'note impact 1 ' + col), fromSheet(sheetS, 'note impact 2 ' + col), fromSheet(sheetS, 'note impact 1  ' + col)].filter(Boolean);
   }));
   skin.ok = skin.head.some(Boolean);
   skin.src = { strumSheet: sheetV && sheetV.where, legacySheet: sheetL && sheetL.where, splashSheet: sheetS && sheetS.where,

@@ -30,6 +30,10 @@ const Music = {
     this.clear();
     list = (list || []).filter(x => x && (x.blob || x.buffer));
     if (!list.length) return;
+    this.pending = true;   // v4.0.0: decodificando (no es "sin audio")
+    try { await this._set(list); } finally { this.pending = false; }
+  },
+  async _set(list) {
     const c = Sfx.ensureCtx();
     const decoded = await Promise.all(list.map(async x => {
       try {

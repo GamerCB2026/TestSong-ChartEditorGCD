@@ -364,7 +364,9 @@ function buildSongPack(charts, metas, audio) {
     const inChart = Object.keys(va.chart.notes || {}).filter(k => Array.isArray(va.chart.notes[k]));
     const listedD = va.meta && va.meta.playData && Array.isArray(va.meta.playData.difficulties) ? va.meta.playData.difficulties.map(String) : [];
     const ds = listedD.length ? uniq([...listedD.filter(d => inChart.includes(d)), ...inChart.filter(d => !listedD.includes(d))]) : inChart;
-    for (const d of ds) entries.push({ v: va.id, d, label: va.id === 'default' ? d : `${d} (${va.id})` });
+    // v4.0.0: las dificultades vacías (0 notas, p. ej. "normal": [] que deja el editor) no se ofrecen si hay otras con notas
+    const nn = d => (Array.isArray(va.chart.notes[d]) ? va.chart.notes[d].length : 0), anyN = ds.some(d => nn(d) > 0);
+    for (const d of ds) if (!anyN || nn(d) > 0) entries.push({ v: va.id, d, label: va.id === 'default' ? d : `${d} (${va.id})` });
   }
   return { vars, entries, audio, missing };
 }
@@ -387,6 +389,7 @@ function packAudio(pack, vid) {
   };
   voice('player', ch.player, ch.playerVocals);
   voice('opponent', ch.opponent, ch.opponentVocals);
-  if (!out.some(t => t.role !== 'inst')) { const v = (suf && get('Voices' + suf)) || get('Voices'); if (v) out.push({ blob: v.blob, role: 'voices', name: v.name }); }
+  // v4.0.0: como el juego, si no hay Voices-<personaje> se usa Voices[-variación].ogg (y ya no es un aviso)
+  if (!out.some(t => t.role !== 'inst')) { const v = (suf && get('Voices' + suf)) || get('Voices'); if (v) { out.push({ blob: v.blob, role: 'voices', name: v.name }); for (let i = notes.length - 1; i >= 0; i--) if (notes[i].startsWith('sin voces')) notes.splice(i, 1); } }
   return { list: out, notes };
 }

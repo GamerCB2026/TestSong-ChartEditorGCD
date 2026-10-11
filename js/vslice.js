@@ -1,3 +1,5 @@
+/* v4.0.0: punto tipo FlxPoint (set/add/subtract) para targetOffset y similares */
+function vsPt(x = 0, y = 0) { return { x, y, set(a = 0, b = a) { this.x = +a || 0; this.y = +b || 0; return this; }, add(a = 0, b = 0) { this.x += +a || 0; this.y += +b || 0; return this; }, subtract(a = 0, b = 0) { this.x -= +a || 0; this.y -= +b || 0; return this; }, scale(a = 1, b = a) { this.x *= a; this.y *= b; return this; }, copyFrom(p) { if (p) { this.x = +p.x || 0; this.y = +p.y || 0; } return this; }, put() {}, toString() { return `(x: ${this.x} | y: ${this.y})`; } }; }
 /* =====================================================================
    vslice.js — v3.8.0: puerto a JS del código de FNF V-Slice (FunkinCrew/Funkin, rama main,
    commit b2215482) y de las piezas de HaxeFlixel (FunkinCrew/flixel 141f23c) que usan los
@@ -186,7 +188,7 @@ const VS = (() => {
   class FlxCamera {
     constructor(w = 1280, h = 720) {
       this.width = w; this.height = h; this.scroll = { x: 0, y: 0 }; this.zoom = 1; this.target = null; this.followLerp = 1;
-      this.followActive = true; this.deadzone = null; this._scrollTarget = { x: 0, y: 0 }; this.targetOffset = { x: 0, y: 0 };
+      this.followActive = true; this.deadzone = null; this._scrollTarget = { x: 0, y: 0 }; this.targetOffset = vsPt();
     }
     follow(target, lerp = 1) {
       this.target = target; this.followLerp = lerp;
@@ -644,15 +646,31 @@ const VS = (() => {
     getEventSchema() { return [{ name: 'char', title: 'Character', defaultValue: 0, type: 'enum', keys: { Player: 0, Opponent: 1 } }, { name: 'id', title: 'Health Icon ID', defaultValue: 'bf', type: 'string' }, { name: 'scale', title: 'Scale', defaultValue: 1.0, type: 'float' }, { name: 'flipX', title: 'Flip X?', defaultValue: false, type: 'bool' }, { name: 'isPixel', title: 'Is Pixel?', defaultValue: false, type: 'bool' }, { name: 'offsetX', title: 'X Offset', defaultValue: 0, type: 'float' }, { name: 'offsetY', title: 'Y Offset', defaultValue: 0, type: 'float' }]; }
   }
 
+  /* v4.0.0: SetProperty (eventos de mods: {property:'camGame.alpha', value:'0'}) → ruta con puntos sobre PlayState.instance */
+  class SetPropertySongEvent extends SongEvent {
+    constructor() { super('SetProperty', { processOldEvents: true }); }
+    handleEvent(data) {
+      const ps = (typeof HOST !== 'undefined' && HOST.ps) || P(); if (ps == null) return;
+      const v = data.value || {}, path = String(v.property ?? v.prop ?? v.name ?? '').trim(); if (!path) return;
+      let val = v.value; if (typeof val === 'string') { const t = val.trim(); val = t === 'true' ? true : t === 'false' ? false : t !== '' && isFinite(+t) ? +t : val; }
+      const parts = path.split('.'); let o = ps;
+      for (let i = 0; i < parts.length - 1 && o != null; i++) o = o[parts[i]];
+      if (o == null) { P().warn && P().warn('SetProperty: no existe ' + path); return; }
+      try { o[parts[parts.length - 1]] = val; } catch (e) { P().warn && P().warn('SetProperty: ' + e.message); }
+    }
+    getTitle() { return 'Set Property'; }
+    getEventSchema() { return [{ name: 'property', title: 'Property', type: 'string', defaultValue: 'camGame.alpha' }, { name: 'value', title: 'Value', type: 'string', defaultValue: '1' }]; }
+  }
+
   /* ---------- funkin.data.event.SongEventRegistry ---------- */
   const SongEventRegistry = {
     eventCache: new Map(), nextEventIndex: 0, allEventHandlers: [],
     registerBaseEvents() {
-      for (const E of [FocusCameraSongEvent, ZoomCameraSongEvent, SetCameraBopSongEvent, ScrollSpeedEvent, SetTargetBopSpeedSongEvent, PlayAnimationSongEvent, SetHealthIconSongEvent]) { const e = new E(); this.eventCache.set(e.id, e); }
+      for (const E of [FocusCameraSongEvent, ZoomCameraSongEvent, SetCameraBopSongEvent, ScrollSpeedEvent, SetTargetBopSpeedSongEvent, PlayAnimationSongEvent, SetHealthIconSongEvent, SetPropertySongEvent]) { const e = new E(); this.eventCache.set(e.id, e); }
     },
     register(ev) { this.eventCache.set(ev.id, ev); },
     unregister(id) { this.eventCache.delete(id); if (!this.builtinIds.has(id)) { /* vuelve el integrado si lo había */ } },
-    builtinIds: new Set(['FocusCamera', 'ZoomCamera', 'SetCameraBop', 'ScrollSpeed', 'SetTargetBopSpeed', 'PlayAnimation', 'SetHealthIcon']),
+    builtinIds: new Set(['FocusCamera', 'ZoomCamera', 'SetCameraBop', 'ScrollSpeed', 'SetTargetBopSpeed', 'PlayAnimation', 'SetHealthIcon', 'SetProperty']),
     listEventIds() { return [...this.eventCache.keys()]; },
     getEvent(id) { return this.eventCache.get(id) || null; },
     getEventSchema(id) { const e = this.getEvent(id); return e ? e.getEventSchema() : null; },
@@ -996,7 +1014,7 @@ const VS = (() => {
       this.dispatchEvent(event);
       if (event.eventCanceled) return false;
       if (this.host.onStepHit) this.host.onStepHit(this.conductor.currentStep);   // iconos + scripts .lua/.hx
-      if (this.seekReplay) return true;   // v3.9.0: reconstrucción al saltar: sin bop de cámara
+      if (this.seekReplay) { this._replayEvents = true; try { this.processSongEvents(); } finally { this._replayEvents = false; } return true; }   // v3.9.0: sin bop de cámara · v4.0.0: los eventos pasados (cambios de personaje/escenario…) también se reproducen
       if (this.zoomCameraPref && this.camHUD.zoom < (1.35 * this.defaultHUDCameraZoom) && this.cameraZoomRate > 0
         && (this.conductor.currentStep + this.cameraZoomRateOffset * C.STEPS_PER_BEAT) % (this.cameraZoomRate * C.STEPS_PER_BEAT) === 0) {
         this.cameraBopMultiplier = this.cameraBopIntensity;
@@ -1028,7 +1046,7 @@ const VS = (() => {
         const toActivate = SongEventRegistry.queryEvents(this.songEvents, this.conductor.songPosition);
         for (const ev of toActivate) {
           const eventAge = this.conductor.songPosition - ev.time;
-          if (eventAge > 1000) {
+          if (eventAge > 1000 && !this._replayEvents) {
             const h = SongEventRegistry.getEvent(ev.eventKind);
             if (h == null || !h.processOldEvents) { ev.activated = true; continue; }
           }
@@ -1059,7 +1077,10 @@ const VS = (() => {
           this.initNoteSprite(n, s);
         }
       }
-      this.setSongEvents(this.songEvents);   // regenNoteData → SongLoadScriptEvent → resetEvents
+      // v4.0.0: regenNoteData → SongLoadScriptEvent (módulos, canción, escenario, personajes) → resetEvents
+      const le = new SongLoadScriptEvent(this.host.songId ? this.host.songId() : '', this.host.difficulty ? this.host.difficulty() : '', this.notes || [], this.songEvents || []);
+      try { this.dispatchEvent(le); } catch (e) { console.warn('[V-Slice] onSongLoaded', e); }
+      this.setSongEvents(this.songEvents);
     }
     initNoteSprite(n, strumline) {
       const kind = NoteKindManager.getNoteKind(n.kind);

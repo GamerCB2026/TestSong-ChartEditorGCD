@@ -289,7 +289,8 @@ const Render = {
     const m = typeof Optim !== 'undefined' ? Optim.s.renderer : 'auto';
     if (m === 'canvas') return false;
     if (!GLW.init() || GLW.lost) return false;
-    return m === 'webgl' || !GLW.software;
+    // v4.0.0: en celular Auto = WebGL siempre que exista (Canvas iba a ~9 fps en mods pesados)
+    return m === 'webgl' || !GLW.software || (typeof Movil !== 'undefined' && Movil.isTouch());
   },
   maxTexSize() { return this.wantGL() ? GLW.max : 16384; },
   glAstcAvailable() { return this.wantGL() && !!GLW.astc; },
