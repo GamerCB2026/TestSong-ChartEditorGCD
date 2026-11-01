@@ -1,5 +1,5 @@
 /* =====================================================================
-   gcdhandoff.js — Chart Editor GCD → Vista → "FNF GCD".
+   gcdhandoff.js (v4.2.0) — Chart Editor GCD → Vista → "FNF GCD".
    El editor deja el chart (.fnfc: chart + metadata + Inst + Voices) en
    IndexedDB (mismo origen: gamercb2026.github.io) o lo envía por postMessage
    (editor abierto en file:// u otro origen). Aquí se carga y se juega; luego
@@ -53,6 +53,7 @@ const GCDHandoff = {
     }
     this.done = true;
     toast('Chart recibido del Chart Editor GCD: ' + (data.song || G.chart.title || ''), 3500);
+    this.full = true;   // v4.2.0: siempre se piden personajes / stage (lo que ya existe sale con ✔)
     this.checkMissing();
   },
   /* v4.1.0: asistente de assets faltantes al recibir un chart del Chart Editor GCD.
@@ -64,17 +65,40 @@ const GCDHandoff = {
     const sc = (G.chart && G.chart.scene) || {}, out = { chars: [], stage: null, events: [], extras: [] };
     for (const role of ['bf', 'dad', 'gf']) {
       const c = Scene.chars[role];
-      if (sc[role] && (!c || c.error || c.fallbackFrom)) out.chars.push({ role, id: sc[role], fallback: c && !c.error ? (c.id || c.name || ASSET_CFG.chars[role]) : null });
+      const falta = sc[role] && (!c || c.error || c.fallbackFrom);
+      if (falta || this.full) out.chars.push({ role, id: sc[role] || (c && c.id) || '—', falta: !!falta, fallback: falta && c && !c.error ? (c.id || c.name || ASSET_CFG.chars[role]) : null });
     }
-    const st = Scene.stage; if (sc.stage && (!st || st.error || st.fallbackFrom)) out.stage = sc.stage;
+    const st = Scene.stage; out.stageFalta = !!(sc.stage && (!st || st.error || st.fallbackFrom));
+    if (out.stageFalta || this.full) out.stage = sc.stage || (st && st.id) || '—';
     try { const u = ModUI.unknown(G.chart); out.events = [...u.ev.entries()].map(([k, n]) => ({ id: k, n })); out.kinds = [...u.nk.entries()].map(([k, n]) => ({ id: k, n })); } catch (e) { out.kinds = []; }
     try { out.extras = ModUI.requirements().filter(r => r.type !== 'note' && r.type !== 'module' && r.type !== 'class' && ModUI.reqStatus(r) === 'missing'); } catch (e) {}
     return out;
   },
+  /* asistente completo (pide todo aunque exista): tras un chart del editor o desde los botones Importar */
+  open(focus) { this.full = true; this.need = this.scan(); try { openOverlay('pause'); } catch (e) {} this.render(); const t = focus && this.box().querySelector(`[data-a="${focus}"]`); if (t) t.scrollIntoView({ block: 'center' }); },
+  /* Test Song → "Chart GCD": abre el Chart Editor GCD para elegir un chart; el editor lo devuelve por postMessage */
+  EDITOR_URL: 'https://gamercb2026.github.io/Chart-Editor-GCD/',
+  pickFromEditor() {
+    const win = window.open(this.EDITOR_URL + '?testsong=' + Date.now(), '_blank');
+    if (!win) { toast('El navegador bloqueó la pestaña. Permite ventanas emergentes.', 4000); return; }
+    toast('Chart Editor GCD abierto: elige un chart y pulsa "Jugar en Test Song"', 5000);
+    if (this._pick) removeEventListener('message', this._pick);
+    this._pick = async e => {
+      if (e.source !== win) return;
+      const d = e.data;
+      if (d && d.type === 'gcd-picker-ready') { try { win.postMessage({ type: 'gcd-picker-ack' }, '*'); } catch (err) {} return; }
+      if (!d || d.type !== 'gcd-song' || !Array.isArray(d.files)) return;
+      removeEventListener('message', this._pick); this._pick = null;
+      try { win.close(); } catch (err) {}
+      try { window.focus(); } catch (err) {}
+      try { this.viaEditor = true; await this.play(d); } catch (err) { console.error('[GCD]', err); toast('Chart del editor inválido: ' + err.message, 5000); }
+    };
+    addEventListener('message', this._pick);
+  },
   checkMissing() {
     const m = this.scan();
     this.need = m;
-    if (!m.chars.length && !m.stage && !m.events.length && !(m.kinds || []).length && !m.extras.length) return;
+    if (!this.full && !m.chars.length && !m.stage && !m.events.length && !(m.kinds || []).length && !m.extras.length) return;
     try { openOverlay('pause'); } catch (e) {}
     this.render();
   },
@@ -94,12 +118,12 @@ const GCDHandoff = {
     const B = (a, txt, bg, extra = '') => `<button data-a="${a}" ${extra} style="margin:4px 4px 0 0;padding:7px 10px;border:0;border-radius:8px;cursor:pointer;font-weight:bold;background:${bg};color:${bg === '#444' || bg === '#2a2a36' ? '#fff' : '#111'}">${txt}</button>`;
     const ok = v => v ? '<span style="color:#7dff9a">✔</span>' : '<span style="color:#ff6b6b">✘</span>';
     const sec = (t, body) => `<div style="margin:10px 0;padding:8px 10px;background:#1e1e28;border-radius:8px"><b style="color:#ff91f1">${t}</b><div style="margin-top:4px">${body}</div></div>`;
-    let h = `<b style="font-size:16px;color:#ff91f1">Chart del Chart Editor GCD: faltan assets</b><div style="opacity:.8;margin:4px 0 6px">Agrega lo que falte o pulsa <b>Omitir</b>. Con <b>Quedarme con lo implementado</b> se aplica lo que ya cargaste y se juega.</div>`;
+    let h = `<b style="font-size:16px;color:#ff91f1">${this.full ? 'Chart GCD: personajes, stage e iconos' : 'Chart del Chart Editor GCD: faltan assets'}</b><div style="opacity:.8;margin:4px 0 6px">Agrega lo que falte o pulsa <b>Omitir</b>. Con <b>Quedarme con lo implementado</b> se aplica lo que ya cargaste y se juega.</div>`;
     // personajes
     if (m.chars.length) h += sec('1 · Personajes (.json + sprites)', m.chars.map(c => {
       const rec = UA.roles[c.role], kind = rec ? (rec.atlas ? 'Animate Atlas' : rec.multi ? 'MultiSparrow' : 'Sparrow') : '';
       const spr = rec ? UA.ready(rec) : false;
-      return `<div style="margin:6px 0">${ok(rec && spr)} <b>${esc(UA.ROLE_ES[c.role])}</b>: "${esc(c.id)}"${c.fallback ? ` <span style="opacity:.6">(ahora: ${esc(c.fallback)})</span>` : ''}<br>` +
+      return `<div style="margin:6px 0">${ok(rec && spr)} <b>${esc(UA.ROLE_ES[c.role])}</b>: "${esc(c.id)}"${c.falta ? ' <span style="color:#ff6b6b">(falta)</span>' : ''}${c.fallback ? ` <span style="opacity:.6">(ahora: ${esc(c.fallback)})</span>` : ''}<br>` +
         `${ok(rec)} JSON ${rec ? esc(rec.json.name) + ' · ' + kind : ''} ${B('cjson', 'Seleccionar .json', '#ff91f1', `data-r="${c.role}"`)}<br>` +
         `${ok(spr)} Sprites ${rec ? (rec.atlas ? '(carpeta con Animation.json + spritemap)' : rec.multi ? '(varios .xml + .png)' : '(.xml + .png / .astc)') : '(primero el .json)'} ` +
         `${B('cspr', 'Archivos', '#7fd3ff', `data-r="${c.role}"`)}${B('cdir', 'Carpeta', '#7fd3ff', `data-r="${c.role}"`)}` +
@@ -108,7 +132,7 @@ const GCDHandoff = {
     // escenario
     if (m.stage) {
       const st = UA.stage, have = st ? st.needs.filter(n => n.file).length : 0;
-      h += sec('2 · Escenario', `Falta: "${esc(m.stage)}"<br>${ok(st)} .json del stage ${st ? esc(st.fileName) : ''} ${B('sjson', 'Seleccionar .json', '#ff91f1')}<br>` +
+      h += sec('2 · Escenario', `${m.stageFalta ? 'Falta' : 'Actual'}: "${esc(m.stage)}"<br>${ok(st)} .json del stage ${st ? esc(st.fileName) : ''} ${B('sjson', 'Seleccionar .json', '#ff91f1')}<br>` +
         `${ok(st && have === st.needs.length)} Carpeta del stage ${st ? `(${have}/${st.needs.length} imágenes)` : '(primero el .json)'} ${B('sdir', 'Seleccionar carpeta', '#7fd3ff')}`);
     }
     // eventos
@@ -118,6 +142,7 @@ const GCDHandoff = {
       if (m.extras.length) body += `<div style="margin-top:6px"><b>Extras que piden los eventos:</b>${m.extras.map((r, i) => `<div>✘ ${esc(typeof ModUI.reqLabel === 'function' ? ModUI.reqLabel(r) : (r.kind ? r.kind + ': ' : '') + r.key)} ${B('extra', 'Agregar', '#7fd3ff', `data-i="${i}"`)}</div>`).join('')}</div>`;
       h += sec('3 · Eventos (.hxc) y extras', body);
     }
+    if (this.full) h += sec('4 · Iconos', ['bf', 'dad'].map(r => `${ok(UA.iconIds && UA.iconIds[r])} ${esc(UA.ROLE_ES[r])} ${B('icon', 'Importar icono', '#7fd3ff', `data-r="${r}"`)}`).join('<br>'));
     h += `<div style="margin-top:10px;display:flex;flex-wrap:wrap">${B('keep', 'Quedarme con lo implementado', '#7dff9a')}${B('skip', 'Omitir', '#444')}</div>`;
     box.innerHTML = h; box.hidden = false;
   },
@@ -126,6 +151,7 @@ const GCDHandoff = {
     e.stopPropagation();
     const a = b.dataset.a, r = b.dataset.r, UA = UserAssets, box = this.box();
     try {
+      if (a === 'skip' || a === 'keep') this.full = false;
       if (a === 'skip') { box.hidden = true; try { if (G.overlayKind) closeOverlay(); } catch (err) {} toast('Assets omitidos: se juega con los de por defecto', 3000); return; }
       if (a === 'keep') {
         box.hidden = true;
@@ -136,6 +162,7 @@ const GCDHandoff = {
       if (a === 'cjson') await UA.loadChar(r);
       else if (a === 'cspr') await UA.charFiles(r, false);
       else if (a === 'cdir') await UA.charFiles(r, true);
+      else if (a === 'icon') await UA.assignIcon(r);
       else if (a === 'sjson') await UA.loadStageJson();
       else if (a === 'sdir') await UA.stageFolder();
       else if (a === 'hxc') await ModUI.loadHxc(await ModUI.pick('.hxc', true));

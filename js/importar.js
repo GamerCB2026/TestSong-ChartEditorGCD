@@ -208,7 +208,8 @@ const SongImport = {
     const esc = escHtml, h = [], m = this.mod, L = ENGINE_LAYOUT[this.sel];
     h.push(`<h4>Motor</h4><div class="imp-eng">${Object.entries(ENGINE_LAYOUT).map(([k, v]) => `<button class="btn mini ${k === this.sel ? 'sel' : 'alt'}" type="button" data-eng="${k}">${esc(v.name)}</button>`).join('')}</div>`);
     h.push(`<p class="hint">${esc(L.hint)}</p>`);
-    h.push(`<div class="imp-row"><button class="btn mini" type="button" data-imp="dir" ${this.busy ? 'disabled' : ''}>📁 Carpeta del mod</button><button class="btn mini alt" type="button" data-imp="zip" ${this.busy ? 'disabled' : ''}>🗜 .zip del mod</button>${this.sel === 'vslice' ? '<button class="btn mini alt" type="button" data-imp="gcd">📀 Chart GCD</button>' : ''}</div>`);
+    h.push(`<div class="imp-row"><button class="btn mini" type="button" data-imp="dir" ${this.busy ? 'disabled' : ''}>📁 Carpeta del mod</button><button class="btn mini alt" type="button" data-imp="zip" ${this.busy ? 'disabled' : ''}>🗜 .zip del mod</button></div>`);
+    h.push(`<div class="imp-row"><button class="btn mini" type="button" data-imp="gcd" title="Abre el Chart Editor GCD para elegir un chart y jugarlo aquí">📀 Chart GCD</button><button class="btn mini alt" type="button" data-imp="chars">🧍 Importar personajes</button><button class="btn mini alt" type="button" data-imp="stages">🏞 Importar stages</button><button class="btn mini alt" type="button" data-imp="icons">🙂 Importar iconos</button></div>`);
     if (this.busy) h.push('<div class="imp-st">⏳ Leyendo el mod…</div>');
     if (m) {
       const c = this.counts();
@@ -228,7 +229,8 @@ const SongImport = {
     box.querySelectorAll('[data-imp]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation(); e.preventDefault();
       const a = b.dataset.imp;
-      if (a === 'gcd') toast('Chart GCD: Próximamente');
+      if (a === 'gcd') GCDHandoff.pickFromEditor();
+      else if (a === 'chars' || a === 'stages' || a === 'icons') { if (!G.chart) { toast('Primero carga o elige un chart'); return; } GCDHandoff.open(a === 'chars' ? 'cjson' : a === 'stages' ? 'sjson' : 'icon'); }
       else run(this.pickMod(a === 'zip'));
     }));
     box.querySelectorAll('[data-song]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); run(this.play(b.dataset.song)); }));
